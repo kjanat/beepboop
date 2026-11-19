@@ -143,6 +143,7 @@ export interface ReleaseOptions {
 	version?: string;
 	yes: boolean;
 	dryRun: boolean;
+	force: boolean;
 	auto?: boolean | undefined;
 	merge?: AutoMergeMethod | undefined;
 }
@@ -371,7 +372,7 @@ export function releaseRepository(
 		}
 		if (options.dryRun) return out.log(look.note('Dry run: Beepboop started nothing.'));
 		if (
-			!options.yes
+			!options.yes && !options.force
 			&& !(yield* unprompted(
 				prompted(() =>
 					ask({
@@ -399,6 +400,7 @@ export function releaseRepository(
 				sourceSha: summary.sourceSha,
 				planId: summary.planId,
 				...(merging ? { versionPrMerge: merging } : {}),
+				...(options.force ? { force: true } : {}),
 			}),
 			created =>
 				`${created.operation === 'promote' ? 'Release' : 'Preparation'} ${look.id(created.id)} is ${created.state}`,
@@ -414,14 +416,13 @@ export function releaseRepository(
 		}
 		if (started) {
 			out.log(
-				!pending
+				options.force
+					? 'Beepboop publishes without waiting on checks, the commit signature or package metadata.'
+					: !pending
 					? 'Beepboop publishes once the commit is verified and its checks pass.'
 					: committing
 					? `Beepboop commits the version bump to ${repository.defaultBranch}, then publishes once that commit is verified and its checks pass.`
 					: 'Beepboop opens the version PR. Merging it publishes the release, and nothing asks again.',
-			);
-			out.log(
-				look.note('Failing checks or package metadata problems stop the release with a reason.'),
 			);
 			return yield* followRelease(client, out, {
 				repository: repository.name,

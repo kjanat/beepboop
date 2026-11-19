@@ -68,14 +68,26 @@ async function dashboard(path: string, body: unknown): Promise<Response> {
 	);
 }
 
-async function release(send: (path: string, body: unknown) => Promise<{ status: number; body: unknown }>, id: number) {
-	const request = { repositoryId: id, stream: 'main', version: { bump: 'patch' } };
+async function release(
+	send: (path: string, body: unknown) => Promise<{ status: number; body: unknown }>,
+	id: number,
+	options: { version?: unknown; force?: boolean } = {},
+) {
+	const started = await prepared(send, id, options);
+	expect(started.status).toBe(200);
+	return decodeSync(execution, started.body);
+}
+
+async function prepared(
+	send: (path: string, body: unknown) => Promise<{ status: number; body: unknown }>,
+	id: number,
+	{ version = { bump: 'patch' }, force }: { version?: unknown; force?: boolean },
+) {
+	const request = { repositoryId: id, stream: 'main', version };
 	const planned = await send('/api/releases/plan', request);
 	expect(planned.status).toBe(200);
 	const { sourceSha, planId } = decodeSync(plan, planned.body);
-	const started = await send('/api/releases/prepare', { ...request, sourceSha, planId });
-	expect(started.status).toBe(200);
-	return decodeSync(execution, started.body);
+	return send('/api/releases/prepare', { ...request, sourceSha, planId, ...(force ? { force } : {}) });
 }
 
 async function fromDashboard(path: string, body: unknown) {
@@ -287,6 +299,81 @@ test('failing checks on the bump commit stop a started release with a reason', a
 		expect.objectContaining({ state: 'failed', reason: 'The release stopped: test failure', approvedBy: 'start' }),
 	]);
 	expect(repository.runs).toEqual([]);
+});
+
+test('starting a release that stopped on checks again publishes it once its checks pass', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
+	await release(api, repository.id);
+	await world.wait(16_000);
+	const head = world.github.head(repository);
+	repository.checks.set(head, [{ name: 'test', status: 'completed', conclusion: 'cancelled', runId: 1 }]);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const [stopped] = await promotions(api);
+	expect(stopped).toMatchObject({ state: 'failed', reason: 'The release stopped: test cancelled' });
+	passChecks(repository, head);
+	const restarted = await release(api, repository.id, { version: '1.0.1' });
+	expect(restarted).toMatchObject({ id: stopped?.id, state: 'awaiting-approval' });
+	await world.wait(16_000);
+	expect(repository.runs.map(run => run.inputs.beepboop_execution_id)).toEqual([stopped?.id]);
+});
+
+test('retrying a release that stopped on checks dispatches it without waiting for another event', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
+	await release(api, repository.id);
+	await world.wait(16_000);
+	const head = world.github.head(repository);
+	repository.checks.set(head, [{ name: 'test', status: 'completed', conclusion: 'cancelled', runId: 1 }]);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const [stopped] = await promotions(api);
+	passChecks(repository, head);
+	expect((await api('/api/executions/recover', { id: stopped?.id, action: 'retry' })).status).toBe(200);
+	await world.wait(1_000);
+	expect(repository.runs.map(run => run.inputs.beepboop_execution_id)).toEqual([stopped?.id]);
+});
+
+test('a forced release publishes over failing checks and missing package metadata', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
+	const stripped = world.github.push(repository, { 'README.md': null }, 'Remove the README');
+	passChecks(repository, stripped.sha);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await release(api, repository.id, { force: true });
+	await world.wait(16_000);
+	const head = world.github.head(repository);
+	repository.checks.set(head, [{ name: 'test', status: 'completed', conclusion: 'failure', runId: 1 }]);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const [promotion, ...more] = await promotions(api);
+	expect(more).toEqual([]);
+	expect(promotion).toMatchObject({ approvedBy: 'start', started: { via: 'cli', force: true } });
+	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === promotion?.id);
+	if (!run || !promotion) throw new Error('The forced release dispatched no run');
+	run.status = 'in_progress';
+	const begun = await begin(world, runIdentity(repository, run, 'publish.yml'), promotion.id, 'main', 'promote');
+	expect(JSON.parse(begun.outputs.context ?? '{}')).toMatchObject({ id: promotion.id, force: true });
+});
+
+test('a stopped release starts again under force and dispatches over its failed check', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
+	await release(api, repository.id);
+	await world.wait(16_000);
+	const head = world.github.head(repository);
+	repository.checks.set(head, [{ name: 'test', status: 'completed', conclusion: 'cancelled', runId: 1 }]);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const [stopped] = await promotions(api);
+	expect(stopped?.state).toBe('failed');
+	await release(api, repository.id, { version: '1.0.1', force: true });
+	await world.wait(1_000);
+	expect(repository.runs.map(run => run.inputs.beepboop_execution_id)).toEqual([stopped?.id]);
+});
+
+test('force is refused for a stream that does not start releases from the CLI', async () => {
+	const { repository, api } = await configured([{ via: 'dashboard' }], 'commit');
+	const refused = await prepared(api, repository.id, { force: true });
+	expect(refused.status).toBe(422);
+	expect(JSON.stringify(refused.body)).toContain('main does not start releases from the CLI, so it cannot force one');
 });
 
 test('missing package metadata stops a started release with a reason', async () => {

@@ -1029,7 +1029,7 @@ test('release follows a started release through the bump, checks, dispatch and p
 	expect(output).toContain(
 		'Beepboop commits the version bump to main, then publishes once that commit is verified and its checks pass.',
 	);
-	expect(output).toContain('Failing checks or package metadata problems stop the release with a reason.');
+	expect(output).not.toContain('Failing checks or package metadata problems');
 	expect(output).not.toContain('runs publish');
 	expect(output).toContain(
 		'package  registry  version  state      \n-------  --------  -------  -----------\nwidget   npm       1.0.1    ✔ succeeded\n',
@@ -1151,6 +1151,57 @@ test('an already raised version with the cli start publishes once after one conf
 	expect(world.github.dispatches.filter(dispatch => dispatch.file === 'publish.yml')).toHaveLength(1);
 	const promoted = (await promotions()).filter(execution => execution.version === '1.0.1');
 	expect(promoted.map(execution => [execution.state, execution.approvedBy])).toEqual([['succeeded', 'start']]);
+});
+
+test('release --force publishes over a failed check without asking', async () => {
+	const repository = await cliStarts();
+	const head = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.1') }, 'Release 1.0.1');
+	repository.checks.set(head.sha, [{ name: 'test', status: 'completed', conclusion: 'cancelled', runId: 1 }]);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			const dispatched = repository.runs.at(-1);
+			const execution = dispatched?.inputs.beepboop_execution_id;
+			if (!dispatched || !execution) throw new Error('The forced release dispatched no run');
+			dispatched.status = 'in_progress';
+			const identity = runIdentity(repository, dispatched, 'publish.yml');
+			await begin(world, identity, execution, 'main', 'promote');
+			world.npm.publish('widget', '1.0.1');
+			await runAction(world, 'report', identity, {
+				EXECUTION_ID: execution,
+				PUBLICATIONS: JSON.stringify([
+					{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.0.1', outcome: 'succeeded' },
+				]),
+			});
+			dispatched.status = 'completed';
+			dispatched.conclusion = 'success';
+			await world.workflowRun(repository, dispatched, 'success', 'workflow_dispatch');
+			await world.wait(16_000);
+		},
+	];
+	spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			await (steps.shift() ?? (() => world.wait(16_000)))();
+		})
+	);
+	const forced = await app.execute(['release', '1.0.1', '--repository', repository.name, '--force'], {
+		isTTY: true,
+		color: false,
+		env: {},
+		prompter: { promptOne: config => Promise.reject(new Error(`Unexpected prompt: ${config.message}`)) },
+	});
+	expect([forced.exitCode, forced.stderr.join('')]).toEqual([0, '']);
+	const output = forced.stdout.join('');
+	expect(output).toContain('Beepboop publishes without waiting on checks, the commit signature or package metadata.');
+	expect(output).not.toContain('Failing checks or package metadata problems');
+	expect(output).toContain('Released 1.0.1 of octo/widget');
+	expect(prepareCalls().map(call => call.body)).toEqual([expect.objectContaining({ force: true })]);
+	const promoted = (await promotions()).filter(execution => execution.version === '1.0.1');
+	expect(promoted).toEqual([
+		expect.objectContaining({ state: 'succeeded', started: expect.objectContaining({ force: true }) }),
+	]);
 });
 
 test('activity output stays out of piped output while the release is followed', async () => {

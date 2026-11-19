@@ -347,7 +347,9 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	titled: Schema.optional(Schema.Boolean),
 	dispatchedAt: Schema.optional(Schema.Finite),
 	approvedBy: Schema.optional(Schema.Literals(['merge', 'start'])),
-	started: Schema.optional(mutableStruct({ via: startChannel, actor: Schema.String })),
+	started: Schema.optional(
+		mutableStruct({ via: startChannel, actor: Schema.String, force: Schema.optional(Schema.Literal(true)) }),
+	),
 	versionPrMerge: Schema.optional(versionPrMerge),
 	approvedAt: Schema.optional(Schema.Finite),
 	publications: mutableArray(packagePublication),

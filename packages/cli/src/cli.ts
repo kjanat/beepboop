@@ -381,6 +381,7 @@ const release = base('release', 'Release this Git checkout: preview a version on
 	.example('beepboop release 1.2.0', 'Release an explicit version')
 	.example('beepboop release patch --yes', 'Skip only the confirmation')
 	.example('beepboop release patch --dry-run', 'Print the preview (packages, version file diffs), start nothing')
+	.example('beepboop release 1.2.0 --force', 'Publish without waiting on checks, the signature or package metadata')
 	.example('beepboop release minor --auto', 'GitHub auto-merges this version PR with the stream method, else squash')
 	.example('beepboop release minor --merge rebase', 'GitHub auto-merges this version PR with a rebase')
 	.example('beepboop release minor --no-auto', 'You merge this version PR yourself')
@@ -391,6 +392,12 @@ const release = base('release', 'Release this Git checkout: preview a version on
 	.flag(
 		'dry-run',
 		flag.boolean().default(false).describe('Plan on the server, print the preview and start nothing'),
+	)
+	.flag(
+		'force',
+		flag.boolean().default(false).describe(
+			'Publish without waiting on commit checks, the commit signature or package metadata, and skip the confirmation. Restarts a release of this version that stopped',
+		),
 	)
 	.flag(
 		'auto',

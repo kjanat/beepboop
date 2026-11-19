@@ -725,7 +725,7 @@ export function publishPackages(runner: Runner): Effect.Effect<LedgerEntry[], In
 				return;
 			}
 			const artifact = built.success;
-			if (artifact.missing.length) {
+			if (artifact.missing.length && !pkg.force) {
 				const reported = yield* report(pkg, {
 					outcome: 'failed',
 					message: `The ${pkg.name} ${pkg.version} package lacks ${artifact.missing.join(', ')}`,

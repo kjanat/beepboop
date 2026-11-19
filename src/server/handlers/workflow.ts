@@ -186,6 +186,7 @@ export const workflowEndpoints = {
 				resolvedInputs: registered.resolvedInputs,
 				package: registered.package,
 				draftRelease: registered.draftRelease,
+				force: registered.started?.force === true,
 			};
 		})),
 	workflowRefsPlan: workflow(

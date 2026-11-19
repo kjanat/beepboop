@@ -127,14 +127,14 @@ const bindingsLayout: Layout = {
 	}),
 };
 
-function stream(name: string, packages: string[], layout: Layout, tagged: boolean) {
+function stream(name: string, packages: string[], layout: Layout, tagged: boolean, approval = 'push') {
 	return {
 		packages,
 		required: packages,
 		credentials: Object.keys(layout.secrets),
 		prepare: { strategy: 'managed' },
 		promote: {
-			approval: 'push',
+			approval,
 			workflow: {
 				file: `publish-${name}.yml`,
 				publications: tagged ? [...packages, 'github-release:octo/lint'] : packages,
@@ -144,13 +144,18 @@ function stream(name: string, packages: string[], layout: Layout, tagged: boolea
 	};
 }
 
-function repositoryWith(layout: Layout, streams: Record<string, string[]>, tagged: boolean): Repository {
+function repositoryWith(
+	layout: Layout,
+	streams: Record<string, string[]>,
+	tagged: boolean,
+	approval = 'push',
+): Repository {
 	const files: Record<string, string> = {
 		...layout.files('1.0.0'),
 		'.github/beepboop.json': JSON.stringify({
 			managers: tagged ? [...layout.managers, 'github-release'] : layout.managers,
 			streams: Object.fromEntries(
-				Object.entries(streams).map(([name, packages]) => [name, stream(name, packages, layout, tagged)]),
+				Object.entries(streams).map(([name, packages]) => [name, stream(name, packages, layout, tagged, approval)]),
 			),
 		}),
 	};
@@ -320,6 +325,32 @@ async function released(streams: Record<string, string[]>, layout = cargoLayout,
 		begun.set(promotion.stream, { execution: promotion, identity });
 	}
 	return { repository, api, begun };
+}
+
+async function forcedRelease() {
+	serveCrates();
+	const repository = repositoryWith(cargoLayout, { main: [core] }, false, 'required');
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await grant(api, repository, ['main'], cargoLayout.secrets);
+	const merged = world.github.push(repository, cargoLayout.files('1.1.0'), 'Release 1.1.0');
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(60_000);
+	const [waiting] = await promotions(api);
+	if (waiting?.state !== 'awaiting-approval') throw new Error(`Promotion is ${waiting?.state}`);
+	await world.coordinator(repository).enqueue({
+		...waiting,
+		approvedBy: 'start',
+		started: { via: 'cli', actor: 'owner', force: true },
+	});
+	await world.wait(60_000);
+	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === waiting.id);
+	if (!run) throw new Error('The forced release dispatched no run');
+	run.status = 'in_progress';
+	const identity = runIdentity(repository, run, 'publish-main.yml');
+	await begin(world, identity, waiting.id, 'main', 'promote');
+	return { execution: waiting, identity };
 }
 
 function started(begun: Map<string, { execution: Execution; identity: RunIdentity }>, name: string) {
@@ -1267,6 +1298,15 @@ test('a crate packaged without a README fails before its claim and its dependent
 	expect((await ledgerOf(repository, execution.id)).records[0]?.attempts.map(attempt => attempt.event)).toEqual([
 		'failed',
 	]);
+}, 60_000);
+
+test('a forced release publishes a crate packaged without a README', async () => {
+	const { execution, identity } = await forcedRelease();
+	const state: Cargo = { commands: [], outcomes: {}, stripped: { 'lint-core': ['README.md'] } };
+	const { result } = await publishing(identity, execution.id, state);
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'published']]);
+	expect(state.commands.map(entry => entry.command)).toContain('publish lint-core');
 }, 60_000);
 
 test('cargo metadata without description, license or repository fails the crate and names each field', async () => {
