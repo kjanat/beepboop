@@ -1587,7 +1587,15 @@ function nodeConditioned(value: unknown): boolean {
 		return (key.startsWith('.') || nodeConditions.has(key) || numeric) && nodeConditioned(branch);
 	});
 }
-const nodeFailures: Record<string, NodeOutcome> = {
+const nodeOutcomes: Partial<Record<string, NodeOutcome>> = {
+	'allows a final null to exclude the export': {
+		require: 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+		import: 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+	},
+	'allows a nested empty array to exclude the export': {
+		require: 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+		import: 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+	},
 	'checks the fallback after an invalid path': { require: 'MODULE_NOT_FOUND', import: 'ERR_MODULE_NOT_FOUND' },
 	'rejects an invalid-only array': { require: 'ERR_INVALID_PACKAGE_TARGET', import: 'ERR_INVALID_PACKAGE_TARGET' },
 	'rejects an invalid target after an exclusion': {
@@ -1637,7 +1645,7 @@ interface NodeOutcome {
 	require: string;
 	import: string;
 }
-const usable = new Set(['loaded', 'ERR_PACKAGE_PATH_NOT_EXPORTED']);
+const loads: NodeOutcome = { require: 'loaded', import: 'loaded' };
 const nodeLoader = `
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -1690,18 +1698,12 @@ test('node loads or excludes exactly the npm exports the publisher accepts', () 
 			mutableArray(mutableStruct({ require: Schema.String, import: Schema.String })),
 			JSON.parse(loaded.stdout),
 		);
-		const observed = (missing: string | undefined, outcome: NodeOutcome | undefined) =>
-			missing === undefined && outcome && usable.has(outcome.require) && usable.has(outcome.import)
-				? 'usable'
-				: outcome;
-		expect(
-			Object.fromEntries(cases.map(([scenario, , missing], index) => [scenario, observed(missing, outcomes[index])])),
-		)
-			.toEqual(
-				Object.fromEntries(
-					cases.map(([scenario, , missing]) => [scenario, missing === undefined ? 'usable' : nodeFailures[scenario]]),
-				),
-			);
+		expect(outcomes.length).toBe(cases.length);
+		expect(cases.flatMap(([scenario, , missing]) => missing !== undefined && !nodeOutcomes[scenario] ? [scenario] : []))
+			.toEqual([]);
+		expect(Object.fromEntries(cases.map(([scenario], index) => [scenario, outcomes[index]]))).toEqual(
+			Object.fromEntries(cases.map(([scenario]) => [scenario, nodeOutcomes[scenario] ?? loads])),
+		);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
