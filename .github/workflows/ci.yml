@@ -38,7 +38,8 @@ jobs:
             ':(exclude)src/server/' ':(exclude)src/styles/' ':(exclude)src/ui/' \
             ':(exclude)src/index.ts' ':(exclude)src/middleware.ts' \
             packages/ ':(exclude)packages/cli/README.md' ':(exclude)packages/cli/LICENSE' \
-            ':(exclude)packages/cli/mod.ts' package.json \
+            ':(exclude)packages/cli/mod.ts' ':(exclude)packages/persistence/migrations/' \
+            ':(exclude)packages/tooling/boundaries-baseline.json' package.json \
             bun.lock bunfig.toml tsconfig.json mise.toml || result=$?
           case "$result" in
             0) echo 'changed=false' >> "$GITHUB_OUTPUT" ;;
@@ -60,7 +61,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5
       - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bunx playwright install --with-deps chromium --only-shell
+      - run: bunx playwright install chromium --only-shell
       - run: bun run test:browser
       - name: Upload browser failure traces
         if: failure()

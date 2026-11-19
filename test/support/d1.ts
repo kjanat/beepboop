@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SqlDatabase, SqlResult, SqlStatement } from '@/persistence/d1/database';
 
-export const migrationsDirectory = join(import.meta.dir, '../../migrations');
+export const migrationsDirectory = join(import.meta.dir, '../../packages/persistence/migrations');
 
 export function migrationFiles(): string[] {
 	return readdirSync(migrationsDirectory).filter(file => file.endsWith('.sql')).sort();

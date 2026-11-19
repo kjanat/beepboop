@@ -79,7 +79,7 @@ entrypoint = "Signer"
 binding        = "DB"
 database_name  = "beepboop"
 database_id    = "19241404-a424-4771-8093-0c13a22b0958"
-migrations_dir = "migrations"
+migrations_dir = "packages/persistence/migrations"
 
 [secrets]
 required = ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET", "VAULT_KEYS"]

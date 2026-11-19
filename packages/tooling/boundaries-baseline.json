@@ -1,0 +1,126 @@
+[
+	{
+		"file": "packages/persistence/src/codecs/configuration.ts",
+		"specifier": "@/domain/configuration"
+	},
+	{
+		"file": "packages/persistence/src/codecs/configuration.ts",
+		"specifier": "@/domain/configuration-value"
+	},
+	{
+		"file": "packages/persistence/src/codecs/repository.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/persistence/src/codecs/repository.ts",
+		"specifier": "@/domain/repository"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/destinations"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/execution"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/outputs"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/package-identity"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/package-publication"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/planning"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/refs"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/setup-types"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/contract/catalog"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/contract/github"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/contract/release-start"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/contract/setup"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/contract/setup-terms"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/contract/views"
+	},
+	{
+		"file": "packages/persistence/src/d1/audit.ts",
+		"specifier": "@/domain/audit"
+	},
+	{
+		"file": "packages/persistence/src/d1/backfill.ts",
+		"specifier": "@/automation/store"
+	},
+	{
+		"file": "packages/persistence/src/d1/changes.ts",
+		"specifier": "@/contract/changes"
+	},
+	{
+		"file": "packages/persistence/src/d1/completions.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/persistence/src/d1/completions.ts",
+		"specifier": "@/contract/semver"
+	},
+	{
+		"file": "packages/persistence/src/d1/credentials.ts",
+		"specifier": "@/automation/schemas"
+	},
+	{
+		"file": "packages/persistence/src/d1/onboarding.ts",
+		"specifier": "@/automation/schemas"
+	},
+	{
+		"file": "packages/persistence/src/d1/projection.ts",
+		"specifier": "@/contract/changes"
+	},
+	{
+		"file": "packages/persistence/src/d1/sessions.ts",
+		"specifier": "@/automation/schemas"
+	},
+	{
+		"file": "packages/persistence/src/identity-keys.ts",
+		"specifier": "@/automation/planning"
+	},
+	{
+		"file": "packages/persistence/src/identity-keys.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/persistence/src/journal.ts",
+		"specifier": "@/contract/changes"
+	}
+]

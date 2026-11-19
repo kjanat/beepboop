@@ -51,4 +51,4 @@ summaries recognize both representations. Reports still validate native package
 identity, exact version, and existing verification requirements.
 
 The core type definitions and their conformance tests are documented in
-[`src/package-url/README.md`](../src/package-url/README.md).
+[`packages/domain/src/purl/README.md`](../packages/domain/src/purl/README.md).

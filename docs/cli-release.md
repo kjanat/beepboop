@@ -77,7 +77,7 @@ skip publication; any difference fails the step and names the changed files.
 
 JSR uses `pkg:jsr/%40kjanat/beepboop`, distinct from `pkg:npm/%40kjanat/beepboop`.
 This is a provisional extension following [PURL proposal #457](https://github.com/package-url/purl-spec/issues/457),
-not a registered upstream definition. Its JSON definition lives in `src/package-url/extensions`;
+not a registered upstream definition. Its JSON definition lives in `packages/domain/src/purl/extensions`;
 the same generator produces its TypeScript identity and runtime validation. All JSR packages
 require an `@scope`, lowercase registry names, and an optional SemVer version.
 Upstream refreshes leave local extensions intact. Historical

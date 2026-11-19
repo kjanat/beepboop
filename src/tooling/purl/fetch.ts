@@ -7,7 +7,7 @@ import source from '@/package-url/source.json';
 import { definitionFiles } from '@/tooling/purl/definition-files';
 import { attempt, attemptPromise, main, refuse, run, temporaryDirectory } from '@/tooling/runtime';
 
-const root = resolve(import.meta.dir, '../../package-url');
+const root = resolve(import.meta.dir, '../../../packages/domain/src/purl');
 
 function git(args: string[], cwd?: string) {
 	return attempt(() => runGit(args, { stderr: 'inherit', ...(cwd === undefined ? {} : { cwd }) })).pipe(

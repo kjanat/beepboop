@@ -1,0 +1,13 @@
+{
+	"name": "@beepboop/persistence",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./*": "./src/*"
+	},
+	"dependencies": {
+		"@beepboop/domain": "workspace:*",
+		"@beepboop/kernel": "workspace:*",
+		"effect": "^4.1.2"
+	}
+}

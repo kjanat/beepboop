@@ -66,7 +66,7 @@ export async function migrateDatabase({ mode, persistTo }: Migration) {
 				compatibility_date: source.compatibility_date,
 				d1_databases: [{
 					...database,
-					migrations_dir: join(root, 'migrations'),
+					migrations_dir: join(root, 'packages/persistence/migrations'),
 					...(mode === 'remote' ? { remote: true } : {}),
 				}],
 			}),
