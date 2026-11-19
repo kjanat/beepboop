@@ -17,7 +17,7 @@ await main(Effect.gen(function*() {
 	yield* attemptPromise(() =>
 		build({
 			cwd: directory,
-			entry: { cli: resolve(root, 'src/cli/cli.ts') },
+			entry: { cli: resolve(directory, 'src/cli.ts') },
 			tsconfig: resolve(root, 'tsconfig.json'),
 			outDir: directory,
 			format: 'esm',

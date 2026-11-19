@@ -9,7 +9,7 @@
 	},
 	"type": "module",
 	"bin": {
-		"beepboop": "src/cli/cli.ts",
+		"beepboop": "packages/cli/src/cli.ts",
 		"winget": "actions/runtime/generate-winget.ts"
 	},
 	"workspaces": [
@@ -19,7 +19,7 @@
 		"actions:check": "bun src/tooling/actions/bundle.ts --check",
 		"app:manifest": "./scripts/app-manifest.ts",
 		"astro": "astro",
-		"beepboop": "bun src/cli/cli.ts",
+		"beepboop": "bun packages/cli/src/cli.ts",
 		"boundaries": "bun src/tooling/workspace/boundaries.ts",
 		"prebuild": "run -s types check",
 		"build": "astro build",
