@@ -6,7 +6,7 @@ import type { Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { call, mask, serviceOrigin } from '@root/actions/runtime/session.ts';
 import type { Scope } from 'effect';
-import { Clock, Effect, Schema } from 'effect';
+import { Clock, Effect, Result, Schema } from 'effect';
 import { githubSecretNamePattern } from '@/contract/ids.ts';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, settledStep } from '@/contract/ledger.ts';
@@ -131,28 +131,27 @@ export function distributionLicensed(file: string, entries: readonly string[]): 
 	});
 }
 
-interface EntryPoint {
-	readonly path: string;
-	readonly pattern: boolean;
-}
+type EntryPoint =
+	| { readonly kind: 'file'; readonly path: string }
+	| { readonly kind: 'pattern'; readonly path: string; readonly parts: readonly string[] };
 
 const mainProbes = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'];
 const declarationProbes = ['', '.d.ts', '.ts', '.tsx', '/index.d.ts', '/index.ts', '/index.tsx'];
 
-function entryPoint(value: string, pattern: boolean): EntryPoint {
-	return { path: posix.normalize(value), pattern: pattern && value.includes('*') };
-}
-
 function entryPoints(value: unknown): EntryPoint[] {
-	if (typeof value === 'string') return [entryPoint(value, false)];
+	if (typeof value === 'string') return [{ kind: 'file', path: posix.normalize(value) }];
 	return value !== null && typeof value === 'object' ? Object.values(value).flatMap(entryPoints) : [];
 }
 
 type Resolution =
 	| { readonly kind: 'target'; readonly entry: EntryPoint }
+	| { readonly kind: 'unusable'; readonly value: string }
 	| { readonly kind: 'invalid'; readonly value: unknown }
+	| { readonly kind: 'malformed'; readonly reason: string }
 	| { readonly kind: 'excluded' }
 	| { readonly kind: 'unmatched' };
+
+type Chosen = Extract<Resolution, { readonly kind: 'target' | 'unusable' }>;
 
 function validTarget(value: string): boolean {
 	const forbidden = value.slice(2).split(/[/\\]/).some(segment =>
@@ -163,6 +162,24 @@ function validTarget(value: string): boolean {
 	return value.startsWith('./') && !forbidden;
 }
 
+function exportTarget(value: string, pattern: boolean): Chosen {
+	const { href, pathname } = new URL(value, 'file:///package/');
+	const path = posix.normalize(pathname.slice('/package/'.length));
+	const pieces = pattern && path.includes('*') ? path.split('*') : [path];
+	const parts = Result.getOrUndefined(Result.all(pieces.map(piece => attempt(() => decodeURIComponent(piece)))));
+	if (parts === undefined || /%2f|%5c/i.test(href)) return { kind: 'unusable', value };
+	const [file = ''] = parts;
+	return {
+		kind: 'target',
+		entry: parts.length > 1 ? { kind: 'pattern', path: parts.join('*'), parts } : { kind: 'file', path: file },
+	};
+}
+
+function arrayIndex(key: string): boolean {
+	const index = Number(key);
+	return String(index) === key && index >= 0 && index < 0xffffffff;
+}
+
 interface World {
 	readonly active: readonly string[];
 	readonly inactive: readonly string[];
@@ -170,11 +187,11 @@ interface World {
 
 interface Pending {
 	readonly world: World;
-	readonly resolution: Exclude<Resolution, { readonly kind: 'target' }>;
+	readonly resolution: Exclude<Resolution, Chosen>;
 }
 
 interface Resolved {
-	readonly targets: readonly EntryPoint[];
+	readonly chosen: readonly Chosen[];
 	readonly pending: readonly Pending[];
 }
 
@@ -256,37 +273,44 @@ function simplifyPending(items: readonly Pending[]): Pending[] {
 }
 
 function resolveTargets(value: unknown, world: World, pattern: boolean, outer: ReadonlySet<string>): Resolved {
+	const settle = (resolution: Pending['resolution']): Resolved => ({
+		chosen: [],
+		pending: [{ world: project(world, outer), resolution }],
+	});
 	if (typeof value === 'string') {
 		return validTarget(value)
-			? { targets: [entryPoint(value, pattern)], pending: [] }
-			: { targets: [], pending: [{ world: project(world, outer), resolution: { kind: 'invalid', value } }] };
+			? { chosen: [exportTarget(value, pattern)], pending: [] }
+			: settle({ kind: 'invalid', value });
 	}
-	if (value === null || (Array.isArray(value) && value.length === 0)) {
-		return { targets: [], pending: [{ world: project(world, outer), resolution: { kind: 'excluded' } }] };
-	}
+	if (value === null || (Array.isArray(value) && value.length === 0)) return settle({ kind: 'excluded' });
 	if (Array.isArray(value)) {
-		const targets: EntryPoint[] = [];
+		const chosen: Chosen[] = [];
+		const thrown: Pending[] = [];
 		let pending: Pending[] = [{ world: project(world, namedLater(outer, value)), resolution: { kind: 'unmatched' } }];
 		for (const [index, fallback] of value.entries()) {
 			const keep = namedLater(outer, value.slice(index + 1));
 			const next: Pending[] = [];
 			for (const previous of pending) {
 				const resolved = resolveTargets(fallback, previous.world, pattern, keep);
-				targets.push(...resolved.targets);
+				chosen.push(...resolved.chosen);
 				for (const outcome of resolved.pending) {
+					if (outcome.resolution.kind === 'malformed') {
+						thrown.push({ world: project(outcome.world, outer), resolution: outcome.resolution });
+						continue;
+					}
 					const resolution = outcome.resolution.kind === 'unmatched' ? previous.resolution : outcome.resolution;
 					next.push({ world: project(outcome.world, keep), resolution });
 				}
 			}
 			pending = simplifyPending(next);
 		}
-		return { targets, pending };
+		return { chosen, pending: simplifyPending([...thrown, ...pending]) };
 	}
-	if (typeof value !== 'object') {
-		return { targets: [], pending: [{ world: project(world, outer), resolution: { kind: 'invalid', value } }] };
-	}
+	if (typeof value !== 'object') return settle({ kind: 'invalid', value });
+	const numeric = Object.keys(value).find(arrayIndex);
+	if (numeric !== undefined) return settle({ kind: 'malformed', reason: `numeric key ${JSON.stringify(numeric)}` });
 	const entries = Object.entries(value);
-	const targets: EntryPoint[] = [];
+	const chosen: Chosen[] = [];
 	const settled: Pending[] = [];
 	let unmatched: World[] = [project(world, namedLater(outer, value))];
 	for (const [index, [condition, branch]] of entries.entries()) {
@@ -300,7 +324,7 @@ function resolveTargets(value: unknown, world: World, pattern: boolean, outer: R
 			}
 			if (!always) next.push(project(assume(current, condition, false), keep));
 			const resolved = resolveTargets(branch, always ? current : assume(current, condition, true), pattern, keep);
-			targets.push(...resolved.targets);
+			chosen.push(...resolved.chosen);
 			for (const outcome of resolved.pending) {
 				if (outcome.resolution.kind === 'unmatched') next.push(project(outcome.world, keep));
 				else settled.push({ world: project(outcome.world, outer), resolution: outcome.resolution });
@@ -309,7 +333,7 @@ function resolveTargets(value: unknown, world: World, pattern: boolean, outer: R
 		unmatched = simplify(next);
 	}
 	return {
-		targets,
+		chosen,
 		pending: simplifyPending(
 			[
 				...settled,
@@ -324,27 +348,35 @@ function resolveTargets(value: unknown, world: World, pattern: boolean, outer: R
 
 function exportResolutions(value: unknown, pattern: boolean): Resolution[] {
 	const resolved = resolveTargets(value, { active: [], inactive: [] }, pattern, new Set());
-	return [
-		...resolved.targets.map((entry): Resolution => ({ kind: 'target', entry })),
-		...resolved.pending.map(outcome => outcome.resolution),
-	];
+	return [...resolved.chosen, ...resolved.pending.map(outcome => outcome.resolution)];
 }
 
 function packageExports(field: unknown): Resolution[] {
 	if (field === undefined) return [];
 	if (field === null || typeof field !== 'object' || Array.isArray(field)) return exportResolutions(field, false);
 	const subpaths = Object.entries(field);
-	return subpaths.length && subpaths.every(([key]) => key.startsWith('.'))
+	const subpath = subpaths.find(([key]) => key.startsWith('.'));
+	const condition = subpaths.find(([key]) => !key.startsWith('.'));
+	if (subpath && condition) {
+		const reason = `subpath key ${JSON.stringify(subpath[0])} beside condition key ${JSON.stringify(condition[0])}`;
+		return [{ kind: 'malformed', reason }];
+	}
+	return subpath
 		? subpaths.flatMap(([key, value]) => exportResolutions(value, key.includes('*')))
 		: exportResolutions(field, false);
 }
 
 function shipped(files: ReadonlySet<string>, entry: EntryPoint, probes: readonly string[]): boolean {
-	const candidates = entry.path.endsWith('/') ? probes.filter(probe => probe.startsWith('/')) : probes;
-	if (!entry.pattern) return candidates.some(probe => files.has(posix.normalize(`${entry.path}${probe}`)));
-	const [head = '', ...rest] = entry.path.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
+	if (entry.kind === 'file') {
+		const candidates = entry.path.endsWith('/') ? probes.filter(probe => probe.startsWith('/')) : probes;
+		return candidates.some(probe => files.has(posix.normalize(`${entry.path}${probe}`)));
+	}
+	const [head = '', ...rest] = entry.parts.map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 	const pattern = new RegExp(`^${head}(?<wildcard>.+)${rest.join('\\k<wildcard>')}$`);
-	return [...files].some(file => pattern.test(file));
+	return [...files].some(file => {
+		const wildcard = pattern.exec(file)?.groups?.wildcard;
+		return wildcard !== undefined && !wildcard.split('/').some(segment => /^node_modules$/i.test(segment));
+	});
 }
 
 function unresolved(field: unknown): string[] {
@@ -354,6 +386,19 @@ function unresolved(field: unknown): string[] {
 			? [`a published version for ${name} (${range})`]
 			: []
 	);
+}
+
+function exportProblem(resolution: Resolution): string[] {
+	switch (resolution.kind) {
+		case 'invalid':
+			return [`a valid exports target (found ${JSON.stringify(resolution.value)})`];
+		case 'unusable':
+			return [`a resolvable exports target (found ${JSON.stringify(resolution.value)})`];
+		case 'malformed':
+			return [`a valid exports map (found ${resolution.reason})`];
+		default:
+			return [];
+	}
 }
 
 function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManifest>): string[] {
@@ -376,11 +421,7 @@ function npmMissing(files: readonly string[], manifest: Decoded<typeof npmManife
 			repository: typeof repository === 'string' ? filled(repository) : filled(repository?.url),
 		}),
 		...new Set([...main, ...declarations, ...declared].map(entry => entry.path)),
-		...new Set(
-			exports.flatMap(resolution =>
-				resolution.kind === 'invalid' ? [`a valid exports target (found ${JSON.stringify(resolution.value)})`] : []
-			),
-		),
+		...new Set(exports.flatMap(exportProblem)),
 		...[manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].flatMap(unresolved),
 	];
 }

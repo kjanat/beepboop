@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command, Runner } from '@root/actions/runtime/publish.ts';
 import {
@@ -1423,7 +1425,7 @@ test(
 	60_000,
 );
 
-const exportFallbacks: [string, unknown, string | undefined][] = [
+const exportFallbacks: [string, unknown, string | undefined, string[]?][] = [
 	['checks the fallback after an invalid path', ['./dist/../index.js', './missing.js'], 'missing.js'],
 	['skips encoded parent segments', ['./dist/%2E%2e/index.js', './index.js'], undefined],
 	['skips encoded node_modules segments', ['./%4eode_modules/index.js', './index.js'], undefined],
@@ -1475,25 +1477,134 @@ const exportFallbacks: [string, unknown, string | undefined][] = [
 		[...Array.from({ length: 24 }, (_, index) => ({ [`c${index}`]: { [`d${index}`]: './index.js' } })), './index.js'],
 		undefined,
 	],
+	['decodes an escaped target', ['./index%2ejs', './missing.js'], undefined],
+	[
+		'checks the decoded file of an escaped target',
+		['./main%2ejs', './index.js'],
+		'main.js',
+		['main%2ejs'],
+	],
+	['decodes an escaped space', './a%20b.js', undefined, ['a b.js']],
+	['drops a target query', './index.js?x', undefined],
+	['drops a target fragment', './index.js#x', undefined],
+	[
+		'rejects an encoded slash before its fallback',
+		['./lib%2fmain.js', './index.js'],
+		'a resolvable exports target (found "./lib%2fmain.js")',
+		['lib/main.js'],
+	],
+	[
+		'rejects an encoded backslash',
+		'./lib%5cmain.js',
+		'a resolvable exports target (found "./lib%5cmain.js")',
+		['lib\\main.js'],
+	],
+	[
+		'rejects an encoded slash in a query',
+		'./index.js?%2f',
+		'a resolvable exports target (found "./index.js?%2f")',
+	],
+	['skips a pattern match inside node_modules', { './*': './lib/*' }, 'lib/*', ['lib/node_modules/x.js']],
+	['rejects a malformed escape', './100%.js', 'a resolvable exports target (found "./100%.js")', ['100%.js']],
+	['decodes an escaped pattern target', { './*': './lib/%2e*.js' }, undefined, ['lib/.x.js']],
+	[
+		'rejects a numeric condition key',
+		{ 0: './index.js', default: './index.js' },
+		'a valid exports map (found numeric key "0")',
+	],
+	[
+		'rejects a numeric key before an array fallback',
+		[{ 1.5: './index.js' }, './index.js'],
+		'a valid exports map (found numeric key "1.5")',
+	],
+	['allows a negative condition key', { '-1': './index.js', default: './index.js' }, undefined],
+	[
+		'rejects a numeric key a condition reaches',
+		{ import: { 1: './index.js', default: './index.js' }, default: './index.js' },
+		'a valid exports map (found numeric key "1")',
+	],
+	[
+		'rejects mixed subpath and condition keys',
+		{ '.': './index.js', import: './index.js' },
+		'a valid exports map (found subpath key "." beside condition key "import")',
+	],
 ];
 
-test.each(exportFallbacks)('npm exports %s', async (_scenario, exports, missing) => {
-	world.npm.publish(npm, '1.0.0');
-	const { begun } = await released({ main: [npmId] }, bindingsLayout);
-	const { execution, identity } = started(begun, 'main');
-	const state: Bindings = { commands: [], entries: { exports } };
-	const { result } = await publishing(identity, execution.id, {
-		run: bindings(state, '1.1.0'),
-		credentials: bindingCredentials,
+for (const [scenario, exports, missing, added] of exportFallbacks) {
+	test(`npm exports ${scenario}`, async () => {
+		world.npm.publish(npm, '1.0.0');
+		const { begun } = await released({ main: [npmId] }, bindingsLayout);
+		const { execution, identity } = started(begun, 'main');
+		const state: Bindings = { commands: [], entries: { exports }, added };
+		const { result } = await publishing(identity, execution.id, {
+			run: bindings(state, '1.1.0'),
+			credentials: bindingCredentials,
+		});
+		if (result._tag === 'Failure') throw new Error(result.failure.message);
+		expect(states(result.success)).toEqual(
+			missing
+				? [['pkg:npm/%40octo/lint@1.1.0', 'failed-retryable', `The @octo/lint 1.1.0 package lacks ${missing}`]]
+				: [['pkg:npm/%40octo/lint@1.1.0', 'published']],
+		);
+		expect(state.commands.some(entry => entry.command.startsWith('npm publish'))).toBe(missing === undefined);
+	}, 60_000);
+}
+
+const nodeConditions = new Set(['import', 'require', 'node', 'default']);
+function nodeConditioned(value: unknown): boolean {
+	if (Array.isArray(value)) return value.every(nodeConditioned);
+	if (value === null || typeof value !== 'object') return true;
+	return Object.entries(value).every(([key, branch]) => {
+		const index = Number(key);
+		const numeric = String(index) === key && index >= 0 && index < 0xffffffff;
+		return (key.startsWith('.') || nodeConditions.has(key) || numeric) && nodeConditioned(branch);
 	});
-	if (result._tag === 'Failure') throw new Error(result.failure.message);
-	expect(states(result.success)).toEqual(
-		missing
-			? [['pkg:npm/%40octo/lint@1.1.0', 'failed-retryable', `The @octo/lint 1.1.0 package lacks ${missing}`]]
-			: [['pkg:npm/%40octo/lint@1.1.0', 'published']],
-	);
-	expect(state.commands.some(entry => entry.command.startsWith('npm publish'))).toBe(missing === undefined);
-}, 60_000);
+}
+const nodeLoader = `
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const { root, cases } = JSON.parse(await new Response(process.stdin).text());
+const verdicts = [];
+for (const [index, { exports, files }] of cases.entries()) {
+	const home = join(root, String(index));
+	const pkg = join(home, 'node_modules', 'pkg');
+	mkdirSync(pkg, { recursive: true });
+	writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'pkg', exports }));
+	for (const file of files) {
+		mkdirSync(dirname(join(pkg, file)), { recursive: true });
+		writeFileSync(join(pkg, file), 'module.exports = 1;');
+	}
+	const specifier = typeof exports === 'object' && exports !== null && Object.keys(exports).includes('./*') ? 'pkg/x' : 'pkg';
+	writeFileSync(join(home, 'entry.mjs'), 'export * from ' + JSON.stringify(specifier) + ';');
+	const failures = [];
+	try { createRequire(join(home, 'entry.cjs'))(specifier); } catch (error) { failures.push(error.code); }
+	try { await import(pathToFileURL(join(home, 'entry.mjs')).href); } catch (error) { failures.push(error.code); }
+	verdicts.push(failures.every(code => code === 'ERR_PACKAGE_PATH_NOT_EXPORTED'));
+}
+process.stdout.write(JSON.stringify(verdicts));
+`;
+
+test('node loads or excludes exactly the npm exports the publisher accepts', () => {
+	const cases = exportFallbacks.filter(([, exports]) => nodeConditioned(exports));
+	const root = mkdtempSync(join(tmpdir(), 'beepboop-node-exports-'));
+	try {
+		const loaded = spawnSync('node', ['--input-type=module', '--eval', nodeLoader], {
+			input: JSON.stringify({
+				root,
+				cases: cases.map(([, exports, , added]) => ({ exports, files: ['index.js', ...added ?? []] })),
+			}),
+			encoding: 'utf8',
+		});
+		expect(loaded.stderr).toBe('');
+		expect(Object.fromEntries(cases.map(([scenario], index) => [scenario, JSON.parse(loaded.stdout)[index]]))).toEqual(
+			Object.fromEntries(cases.map(([scenario, , missing]) => [scenario, missing === undefined])),
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
 
 function workspacePacker(files: readonly string[], main: string) {
 	const commands: string[] = [];
