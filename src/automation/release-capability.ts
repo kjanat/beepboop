@@ -1,5 +1,6 @@
 import { versionsInFiles } from '@/automation/managers';
-import type { Inventory, RepositoryRecord, Stream, WorkflowBinding } from '@/automation/types';
+import { hasTagPromotion } from '@/automation/release-version';
+import type { Inventory, ReleasePlan, RepositoryRecord, Stream, WorkflowBinding } from '@/automation/types';
 import type { StreamRelease } from '@/contract/views';
 import { operations } from '@/domain/configuration';
 
@@ -45,7 +46,39 @@ export function releaseCapability(stream: Stream, inventory: Inventory): Release
 		return { kind: 'prepares', through: { kind: 'files', paths: stream.versionFiles.map(rule => rule.path) }, lands };
 	}
 	if (workflow) return { kind: 'prepares', through: { kind: 'workflow', file: workflow.file }, lands };
-	return { kind: 'promotes', workflow: publisher.file, automatic: stream.promote.approval === 'push' };
+	return {
+		kind: 'promotes',
+		workflow: publisher.file,
+		automatic: stream.promote.approval === 'push' || streamStartRefusal('', stream) === undefined,
+	};
+}
+
+function streamStartRefusal(name: string, stream: Stream): string | undefined {
+	if (stream.versioning === 'independent') return `${name} cannot start releases: it needs one shared version`;
+	if (stream.versionSource?.kind === 'tags' && !hasTagPromotion(stream, stream.versionSource.prefix)) {
+		return `${name} needs a dispatchable promotion that publishes a version tag with prefix "${stream.versionSource.prefix}"`;
+	}
+	return undefined;
+}
+
+export function startRefusal(
+	name: string,
+	stream: Stream,
+	plan: ReleasePlan,
+	inventory: Inventory,
+): string | undefined {
+	const refusal = streamStartRefusal(name, stream);
+	if (refusal) return refusal;
+	if (stream.versionSource?.kind === 'tags') {
+		return plan.requiresPreparation && stream.prepare.strategy === 'workflow'
+			? `${name} needs managed preparation to start a tag-based release`
+			: undefined;
+	}
+	if (!plan.edits.length && !plan.requiresPreparation) return undefined;
+	const capability = releaseCapability(stream, inventory);
+	return capability.kind === 'prepares' && capability.through.kind === 'files'
+		? `${name} writes its version only to version files, and merging them does not start publication`
+		: undefined;
 }
 
 export function releasable(
@@ -71,7 +104,11 @@ export function capabilitySentence(name: string, capability: ReleaseCapability):
 		case 'unpublishable':
 			return `${name} has no publishing workflow. Add one in release setup.`;
 		case 'promotes':
-			return `${name} has no version to write. The release goes straight to ${capability.workflow} and publishes once the commit is verified and its checks pass.`;
+			return `${name} has no version to write. The release goes straight to ${capability.workflow} and ${
+				capability.automatic
+					? 'publishes once the commit is verified and its checks pass'
+					: 'waits for you to publish it'
+			}.`;
 		case 'prepares': {
 			const { through } = capability;
 			if (through.kind === 'workflow') return `${through.file} prepares the new version of ${name}.`;

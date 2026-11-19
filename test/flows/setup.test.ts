@@ -1790,9 +1790,9 @@ test("the adoption text states each stream's own publishWhen", async () => {
 	const adoption = (plan.adoption ?? []).join('\n');
 	const section = (name: string) =>
 		adoption.slice(adoption.indexOf(`### Stream \`${name}\``)).split('### Stream')[1] ?? '';
-	expect(section('alpha')).toContain('`publishWhen: version-pr-merged` applies:');
+	expect(section('alpha')).toContain('without a start follows `publishWhen: version-pr-merged`:');
 	expect(section('alpha')).not.toContain('`approved-in-beepboop`');
-	expect(section('beta')).toContain('`publishWhen: approved-in-beepboop` applies');
+	expect(section('beta')).toContain('without a start follows `publishWhen: approved-in-beepboop`');
 });
 
 const releaseText = async (setup: { stream: Record<string, unknown>; preset?: boolean }) => {
@@ -1819,7 +1819,7 @@ const widgetStream = (prepare: Record<string, unknown>, approval: string) => ({
 
 test('the adoption text uses the publishWhen a preset supplies', async () => {
 	const text = await releaseText({ stream: widgetStream({}, 'version-pr-merged'), preset: true });
-	expect(text).toContain('`publishWhen: version-pr-merged` applies');
+	expect(text).toContain('without a start follows `publishWhen: version-pr-merged`');
 	expect(text).not.toContain('approved-in-beepboop');
 });
 
@@ -1827,8 +1827,10 @@ test('the adoption text describes a direct-commit release without a version PR',
 	const text = await releaseText({
 		stream: widgetStream({ versionLands: 'via-direct-commit' }, 'version-commit-pushed'),
 	});
-	expect(text).toContain('Beepboop pushes a signed commit with the new version to the default branch. Then');
-	expect(text).toContain('`publishWhen: version-commit-pushed` applies');
+	expect(text).toContain(
+		'Beepboop pushes a signed commit with the new version to the default branch. The release then publishes',
+	);
+	expect(text).toContain('without a start follows `publishWhen: version-commit-pushed`');
 	expect(text).toContain('Beepboop pushes the version commit itself.');
 	expect(text).not.toContain('version PR');
 });

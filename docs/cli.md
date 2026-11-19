@@ -317,7 +317,7 @@ nobody chose stays unanswered in the setup PR:
 
 ```sh
 beepboop adopt owner/repository --promote-file release.yml \
-  --start-from cli --start-from dashboard --version-lands via-direct-commit \
+  --start-from action --version-lands via-direct-commit \
   --publish-when version-pr-merged \
   --binary tool --target linux-amd64 --target darwin-arm64
 ```

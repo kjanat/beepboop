@@ -225,6 +225,26 @@ test('a tag-versioned stream with a publishing workflow goes straight to a publi
 	expect((await executions(api)).map(execution => execution.version)).not.toContain('0.14.0');
 });
 
+test('a tag-versioned stream whose workflow publishes no version tag waits for you and refuses force', async () => {
+	const repository = await statute({ workflow: { file: 'tag.yml', publications: [module] } });
+	expect(await release(repository)).toEqual({
+		kind: 'promotes',
+		summary: 'main has no version to write. The release goes straight to tag.yml and waits for you to publish it.',
+	});
+	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
+	const planned = await api('/api/releases/plan', request);
+	expect(planned.status).toBe(200);
+	expect(decodeSync(looseStruct({ starts: Schema.Boolean }), planned.body)).toMatchObject({ starts: false });
+	const forced = await api('/api/releases/prepare', {
+		...request,
+		sourceSha: text(planned.body, 'sourceSha'),
+		planId: text(planned.body, 'planId'),
+		force: true,
+	});
+	expect(forced.status).toBe(422);
+	expect(refusal(forced.body)).toContain('main needs a dispatchable promotion that publishes a version tag');
+});
+
 async function configuredWidget(change: (main: Record<string, unknown>) => void) {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');

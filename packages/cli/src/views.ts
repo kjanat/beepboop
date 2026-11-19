@@ -74,7 +74,9 @@ export function repositoryView(out: Out, repository: RepositoryView) {
 				out,
 				streams.map(([name, stream]) => ({
 					stream: name,
-					starts: stream.start?.map(start => start.via).join(', ') || look.note('none'),
+					'start workflow': stream.start?.some(start => start.via === 'action')
+						? 'start-release.yml'
+						: look.note('none'),
 					bump: stream.prepare?.bump ?? look.note('pr until chosen'),
 					approval: stream.promote?.approval ?? 'required',
 				})),

@@ -86,7 +86,7 @@ test('repositories list, show and discover render tables and keep JSON for scrip
 	expect(listed.parsed).toEqual([expect.objectContaining({ name: 'octo/widget', sha: head })]);
 	const shown = await modes(['repositories', 'show', repository.name], 'Reading octo/widget');
 	expect(shown.tty).toContain(`octo/widget on main at ${head.slice(0, 12)}\n`);
-	expect(shown.tty).toContain('stream  starts  bump             approval\n');
+	expect(shown.tty).toContain('stream  start workflow  bump             approval\n');
 	expect(shown.tty).toContain('widget   npm       1.0.0    1.0.0      ✔ published\n');
 	const discovered = await modes(['repositories', 'discover', repository.name], 'Inspecting octo/widget on GitHub');
 	expect(discovered.parsed).toHaveProperty('sha', head);

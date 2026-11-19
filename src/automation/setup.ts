@@ -444,10 +444,23 @@ function proposalMarkdown(
 				? 'Beepboop pushes a signed commit with the new version to the default branch.'
 				: 'Beepboop opens the version PR.';
 			const after = bump === 'commit' ? 'Then' : 'After you merge it,';
+			const until = stream.approval ? '' : ' until you tick another';
+			const policyName = `\`publishWhen: ${publishWhenNames[policy]}\``;
 			lines.push(
-				`- Start a release with \`beepboop release\` in a checkout or from the dashboard. ${landing} ${after} \`publishWhen: ${
-					publishWhenNames[policy]
-				}\` applies${stream.approval ? '' : ' until you tick another'}: ${publishWhenSentences[policy]}`,
+				...(startable(stream)
+					? [
+						`- Start a release with \`beepboop release\` in a checkout or from the dashboard. ${landing} ${
+							bump === 'commit' ? 'The release then publishes' : 'Merging it publishes the release'
+						} once the commit is verified and its checks pass, and nothing asks again.`,
+						`- A version raised on the default branch without a start follows ${policyName}${until}: ${
+							publishWhenSentences[policy]
+						}`,
+					]
+					: [
+						`- Start a release with \`beepboop release\` in a checkout or from the dashboard. ${landing} ${after} ${policyName} applies${until}: ${
+							publishWhenSentences[policy]
+						}`,
+					]),
 			);
 		} else if (proposal) lines.push(`- ${startCommand(proposal, snapshot)}`);
 		lines.push('');

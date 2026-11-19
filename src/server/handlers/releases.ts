@@ -8,8 +8,7 @@ import { matchesPackage, publishablePackages } from '@/automation/package-identi
 import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
 import { conflictMessage } from '@/automation/refs';
-import { capabilitySentence, releasable, releaseCapability } from '@/automation/release-capability';
-import { startRefusal } from '@/automation/release-start';
+import { capabilitySentence, releasable, releaseCapability, startRefusal } from '@/automation/release-capability';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
 import type { Execution, Inventory, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
