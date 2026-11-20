@@ -711,6 +711,23 @@ test('a tag publisher gets a Beepboop release workflow that only pushes the tag'
 	expect(result).toContain('kjanat/beepboop/actions/publish-refs@v1');
 	expect(result).not.toContain('kjanat/beepboop/actions/publish@v1');
 	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+	const commands = control(
+		role(form, 'promote'),
+		'Shell commands that publish the selected packages',
+		window.HTMLTextAreaElement,
+	);
+	expect(commands.value).toBe('');
+	toggle(
+		control(
+			form,
+			'Keep release.yml with their own triggers; Beepboop observes their runs and publications',
+			window.HTMLInputElement,
+		),
+		false,
+	);
+	expect(commands.value).toBe('beepboop publish');
+	await act(form, 'preview');
+	expect(form.querySelector('.setup-result')?.textContent).toContain('kjanat/beepboop/actions/publish@v1');
 });
 
 test('an inferred stream keeps its workflow until observation is cleared', async () => {

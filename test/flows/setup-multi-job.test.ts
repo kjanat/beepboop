@@ -224,6 +224,12 @@ test('a workflow wired across jobs, or one wired job that depends on another, st
 	const distributed =
 		`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n        with: { files: '["dist/index.js"]' }\n`;
 	expect(integrated(distributed, { files: ['dist/index.js'] }).blockers).toEqual([]);
+	const handBegun = carried.replaceAll('build-package', 'begin');
+	expect(integrated(handBegun).notes).toEqual([
+		'publish.yml: runs Beepboop in jobs begin, publish; setup leaves the workflow unchanged.',
+	]);
+	const writeAll = base.replace('permissions: { contents: read, id-token: write }', 'permissions: write-all');
+	expect(integrated(writeAll).blockers).toEqual([]);
 	const conditional = single.replace('    needs: build\n', "    if: ${{ github.ref == 'refs/heads/main' }}\n");
 	expect(integrated(conditional, { job: 'publish' }).blockers).toEqual([
 		'publish.yml: reusable, matrix, dependent, conditional or container jobs require explicit workflow integration before setup',

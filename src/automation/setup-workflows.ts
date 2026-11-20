@@ -11,6 +11,7 @@ import {
 	assetConflicts,
 	assetSteps,
 	beginJobId,
+	begunSource,
 	binaryJobs,
 	buildJobId,
 	expression,
@@ -164,8 +165,11 @@ export function workflowCredentials(source: string | undefined): WorkflowCredent
 	return [...found.values()];
 }
 function wiredJobs(jobs: Record<string, unknown>, stream: string, operation: string): string[] {
+	const generated = Object.entries(jobs).some(([name, job]) =>
+		name.startsWith('build-') && stepsOf(job).some(step => object(step.with).ref === begunSource)
+	);
 	return Object.keys(jobs).filter(name =>
-		!(name === beginJobId && ownedBinaryJob(name, object(jobs[name])))
+		!(generated && name === beginJobId && ownedBinaryJob(name, object(jobs[name])))
 		&& stepsOf(jobs[name]).some(step =>
 			actionRole(step.uses) === 'begin' && object(step.with).stream === stream
 			&& object(step.with).operation === operation
@@ -222,7 +226,8 @@ function acrossJobs(
 		if (object(begins[0]?.with)['execution-id'] !== executionInput) {
 			problems.push(`job ${name}: begin must take inputs.beepboop_execution_id`);
 		}
-		if (object(object(job).permissions ?? root.permissions)['id-token'] !== 'write') {
+		const permissions = object(job).permissions ?? root.permissions;
+		if (permissions !== 'write-all' && object(permissions)['id-token'] !== 'write') {
 			problems.push(`job ${name} needs id-token: write`);
 		}
 		for (const step of steps) {

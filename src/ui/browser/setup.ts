@@ -267,7 +267,11 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 				picker.disabled = !kept(picker.dataset.workflowRole);
 			}
 		};
-		observing.addEventListener('change', showPickers);
+		observing.addEventListener('change', () => {
+			showPickers();
+			publishing.refresh();
+			preparing.refresh();
+		});
 		showPickers();
 		body.append(groupAdvanced);
 		enabled.addEventListener('change', () => {
