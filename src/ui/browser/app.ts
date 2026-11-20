@@ -25,6 +25,7 @@ import {
 } from '@/ui/browser/dom.ts';
 import { rememberFolds } from '@/ui/browser/folds';
 import { pollChanges } from '@/ui/browser/polling';
+import { submitRelease } from '@/ui/browser/release';
 import { canApplySetup, setup } from '@/ui/browser/setup';
 
 interface Choice {
@@ -494,15 +495,7 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 					sourceSha: reviewed.sourceSha,
 					planId: reviewed.planId,
 				});
-			} else {
-				const request = { ...common, version };
-				const reviewed = yield* api(routes.releasesPlan, request);
-				run = yield* api(routes.releasesPrepare, {
-					...request,
-					sourceSha: reviewed.sourceSha,
-					planId: reviewed.planId,
-				});
-			}
+			} else run = yield* submitRelease({ ...common, version });
 			yield* navigate(`/runs#${encodeURIComponent(run.id)}`);
 		} else if (action === 'discover') {
 			show(`Inspecting ${data.repository ?? 'repository'}…`, form);

@@ -207,6 +207,7 @@ test('a tag-versioned stream with a publishing workflow goes straight to a publi
 		...request,
 		sourceSha: text(planned.body, 'sourceSha'),
 		planId: text(planned.body, 'planId'),
+		start: true,
 	});
 	expect(prepared.status).toBe(200);
 	expect([text(prepared.body, 'operation'), text(prepared.body, 'approvedBy'), text(prepared.body, 'version')])

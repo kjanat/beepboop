@@ -595,7 +595,8 @@ places: a stream that versions each package on its own, a tag-based stream
 without a promotion that publishes the version tag, and, when the release
 writes a new version, a stream that keeps its version only in version files
 or prepares it in its own workflow with `prepare.strategy:
-"workflow"`. The Start release workflow starts a
+"workflow"`, and a release of only some of the stream's packages. The Start
+release workflow starts a
 release only when the stream lists it in `startFrom`:
 
 ```json

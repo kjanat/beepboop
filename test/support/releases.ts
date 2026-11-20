@@ -1,5 +1,5 @@
 import type { Api, Reply } from '@root/test/support/http.ts';
-import { text } from '@root/test/support/http.ts';
+import { field, text } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
 import type { Execution } from '@/automation/types';
 import type { VersionPrMerge } from '@/contract/setup-terms';
@@ -22,6 +22,7 @@ export async function prepareRelease(
 		...preparation,
 		sourceSha: text(plan.body, 'sourceSha'),
 		planId: text(plan.body, 'planId'),
+		start: field(plan.body, 'starts') === true,
 	});
 	return { plan, prepared };
 }

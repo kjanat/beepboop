@@ -28,9 +28,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `beepboop release` and the dashboard start a release on every stream that can start one: they bump the version and publish it, and nothing asks again. A stream that versions each package on its own, a tag-based stream without a promotion that publishes the version tag, and a stream that writes a new version only to version files still only prepare it. `startFrom` only lets the Start release workflow start releases. Setup ignores its `dashboard` and `cli` entries and removes them. Starting a version whose release stopped before its workflow ran restarts that release.
+- `POST /api/releases/prepare` starts a release only when the request carries `"start": true` or `"force": true`. `beepboop release` and the dashboard send `start` when the preview answers `"starts": true`. A request without either, such as one from an older CLI or `beepboop releases prepare`, prepares the release and follows `promote.publishWhen`.
 
 ### Fixed
 
+- A release of only some packages of a shared-version stream only prepares the version, and `start` or `--force` on it is refused. Its merge left the other packages at the old version, and the started release never published.
 - Cargo publishing checks and the App manifest request the repository Variables permission as `actions_variables`, the key GitHub uses. An installation with that permission failed every check with `GitHub App installation lacks required permissions (... variables: read ...)`.
 - npm publication checks skip invalid `exports` targets when selecting an array fallback and reject an array that ends with an invalid target and has no usable fallback. A valid target still needs its file in the tarball.
 - `beepboop release VERSION` for a version that the default branch already carries creates the publication run of the commit that set the version, the same commit a push releases, also after later commits landed. The command fixes that commit when you run it. It failed with `ALREADY_PREPARED` unless `startFrom` listed `cli`.
