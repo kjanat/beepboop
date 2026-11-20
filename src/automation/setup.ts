@@ -620,6 +620,13 @@ function drafted(
 				...(selection.operations ?? []).flatMap(entry =>
 					Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, file: entry.file, alias }))
 				),
+				...(selection.operations ?? []).flatMap(entry =>
+					workflowCredentials(snapshot.files[`.github/workflows/${entry.file}`]).map(credential => ({
+						operation: entry.name,
+						file: entry.file,
+						...credential,
+					}))
+				),
 			];
 			const credentials = [
 				...new Set([

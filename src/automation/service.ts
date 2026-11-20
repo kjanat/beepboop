@@ -892,6 +892,7 @@ export class AutomationService {
 			const workflows = choices.streams.flatMap(stream => [
 				...workflowPath(stream.prepare?.file),
 				...workflowPath(stream.promote?.file),
+				...(stream.operations ?? []).flatMap(entry => workflowPath(entry.file)),
 			]);
 			const merged = yield* this.gateway.snapshot(
 				repository.name,
@@ -922,8 +923,20 @@ export class AutomationService {
 					...(stream.operations ?? []).flatMap(entry =>
 						Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, alias }))
 					),
+					...(stream.operations ?? []).flatMap(entry =>
+						workflowPath(entry.file).flatMap(path =>
+							workflowCredentials(merged.files[path]).map(credential => ({ operation: entry.name, ...credential }))
+						)
+					),
 				];
+				const approved = ready.configuration.streams[stream.name]?.credentials ?? [];
 				for (const { operation, alias, environment } of requested) {
+					if (!approved.includes(alias) || environment?.includes('${{')) {
+						yield* Effect.logWarning('setup.grant.skipped').pipe(
+							Effect.annotateLogs({ repository: repository.name, stream: stream.name, operation, alias, environment }),
+						);
+						continue;
+					}
 					if ((yield* this.credentials.activeVersion(alias)) === undefined) continue;
 					const grant = yield* configuredGrant(ready, {
 						stream: stream.name,

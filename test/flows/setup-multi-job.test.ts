@@ -127,7 +127,7 @@ test('setup names each gap in a workflow that runs Beepboop in several jobs', as
 	const plan = await previewSetup(api, repository.name, choices());
 	expect(plan.blockers).toEqual([
 		'publish.yml: set run-name to ${{ inputs.beepboop_title || github.workflow }}',
-		'publish.yml: job crates-io: check out the release source with a ref expression',
+		'publish.yml: job crates-io: check out the begin context sourceSha, or a job output that carries it',
 		'publish.yml: report a result for pkg:npm/git-remote-refs from a job with a begin step',
 		'publish.yml: tag the release with publish-refs',
 	]);
@@ -165,7 +165,10 @@ test('merging the adoption PR grants each workflow credential in its job environ
 
 const base = readFileSync(join(import.meta.dir, '../fixtures/workflows/multi-job-minimal.yml'), 'utf8');
 
-function integrated(source: string, options: { tagPrefix?: string; release?: boolean; job?: string } = {}) {
+function integrated(
+	source: string,
+	options: { tagPrefix?: string; release?: boolean; job?: string; files?: readonly string[] } = {},
+) {
 	const snapshot = {
 		repository: { id: 1, name: 'octo/widget', defaultBranch: 'main' },
 		sha: 'a'.repeat(40),
@@ -188,6 +191,7 @@ function integrated(source: string, options: { tagPrefix?: string; release?: boo
 		undefined,
 		undefined,
 		options.release,
+		options.files ? [...options.files] : undefined,
 	);
 	if (Result.isFailure(result)) throw result.failure;
 	expect(result.success.content).toBe(source);
@@ -204,6 +208,22 @@ test('a workflow wired across jobs, or one wired job that depends on another, st
 	expect(integrated(single).notes).toEqual([
 		'publish.yml: runs Beepboop in jobs publish; setup leaves the workflow unchanged.',
 	]);
+	const carried = base
+		.replace(
+			'  build:\n    runs-on: ubuntu-latest\n',
+			'  build-package:\n    runs-on: ubuntu-latest\n    outputs:\n      source: ${{ fromJSON(steps.start.outputs.context).sourceSha }}\n',
+		)
+		.replace('    needs: build\n', '    needs: build-package\n')
+		.replace(
+			'      - id: npm\n',
+			'      - uses: actions/checkout@v7\n        with: { ref: "${{ needs.build-package.outputs.source }}" }\n      - id: npm\n',
+		);
+	expect(integrated(carried).notes).toEqual([
+		'publish.yml: runs Beepboop in jobs build-package, publish; setup leaves the workflow unchanged.',
+	]);
+	const distributed =
+		`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n        with: { files: '["dist/index.js"]' }\n`;
+	expect(integrated(distributed, { files: ['dist/index.js'] }).blockers).toEqual([]);
 	const conditional = single.replace('    needs: build\n', "    if: ${{ github.ref == 'refs/heads/main' }}\n");
 	expect(integrated(conditional, { job: 'publish' }).blockers).toEqual([
 		'publish.yml: reusable, matrix, dependent, conditional or container jobs require explicit workflow integration before setup',
@@ -267,7 +287,10 @@ for (
 		[
 			'a begin step without an ID',
 			base.replace('        id: start\n', ''),
-			['job build: begin needs a static step ID'],
+			[
+				'job build: begin needs a static step ID',
+				'job build: check out the begin context sourceSha, or a job output that carries it',
+			],
 		],
 		[
 			'a begin step without the execution input',
@@ -291,7 +314,17 @@ for (
 				'with: { ref: "${{ fromJSON(steps.start.outputs.context).sourceSha }}" }',
 				'with: { fetch-depth: 0 }',
 			),
-			['job build: check out the release source with a ref expression'],
+			['job build: check out the begin context sourceSha, or a job output that carries it'],
+		],
+		[
+			'a checkout of the dispatch commit',
+			base.replace('"${{ fromJSON(steps.start.outputs.context).sourceSha }}"', '"${{ github.sha }}"'),
+			['job build: check out the begin context sourceSha, or a job output that carries it'],
+		],
+		[
+			'a checkout of a job output that carries something else',
+			base.replace('"${{ fromJSON(steps.start.outputs.context).sourceSha }}"', '"${{ needs.publish.outputs.other }}"'),
+			['job build: check out the begin context sourceSha, or a job output that carries it'],
 		],
 		[
 			'a report for another execution',
@@ -312,6 +345,12 @@ for (
 			['report a result for pkg:npm/widget from a job with a begin step'],
 		],
 		['tags without publish-refs', base, ['tag the release with publish-refs'], { tagPrefix: 'v' }],
+		[
+			'a distribution publish-refs step without its files',
+			`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n`,
+			['job publish: pass the distribution files ["dist/index.js"] to publish-refs'],
+			{ files: ['dist/index.js'] },
+		],
 		['a release without publish-release', base, ['publish the GitHub release with publish-release'], { release: true }],
 	] as const
 ) {
@@ -338,14 +377,20 @@ test('workflow credentials carry the environment of their job', () => {
 		'        with: { aliases: \'["npm-token"]\' }',
 		'      - uses: kjanat/beepboop/actions/credentials@v1',
 		'        with: { aliases: not json }',
+		'  third:',
+		'    environment: npm',
+		'    steps:',
+		'      - uses: kjanat/beepboop/actions/publish@v1',
+		'        with: { credentials: \'{"NODE_AUTH_TOKEN": "npm-token"}\' }',
 		'      - uses: actions/checkout@v7',
 	].join('\n');
 	expect(workflowCredentials(source)).toEqual([
 		{ alias: 'crates-io', environment: 'crates-io' },
 		{ alias: 'npm-token' },
+		{ alias: 'npm-token', environment: 'npm' },
 	]);
 	expect(workflowCredentials(undefined)).toEqual([]);
-	expect([...workflowActions(source)].sort()).toEqual(['credentials']);
+	expect([...workflowActions(source)].sort()).toEqual(['credentials', 'publish']);
 });
 
 test('merging a setup PR grants a credential once when the choice and the workflow both request it', async () => {
@@ -407,4 +452,65 @@ test('package tags follow a plain v tag and keep a configured list', async () =>
 	);
 	await discoverSetup(api, repository.name);
 	expect((await stream('v'))?.['packageTags']).toEqual(['pkg:npm/git-remote-refs']);
+});
+
+const extra = readFileSync(join(import.meta.dir, '../fixtures/workflows/multi-job-extra.yml'), 'utf8');
+
+test('an additional operation workflow gets its credential grant in its job environment', async () => {
+	const repository = world.github.create('octo/refs', {
+		'Cargo.toml': '[package]\nname = "git-remote-refs"\nversion = "0.1.0"\nedition = "2024"\nlicense = "MIT"\n',
+		'package.json': '{"name":"git-remote-refs","version":"0.1.0","license":"MIT"}\n',
+		'.github/workflows/publish.yml': workflow,
+		'.github/workflows/extra.yml': extra,
+	});
+	const api = bearer(world, await world.cliSession());
+	await discoverSetup(api, repository.name);
+	const chosen = choices();
+	const [stream] = chosen.streams;
+	if (!stream) throw new Error('No stream');
+	stream.operations = [{
+		name: 'extra',
+		file: 'extra.yml',
+		triggers: 'review',
+		commands: '',
+		publicationSteps: {},
+		needs: ['promote'],
+		publications: ['pkg:npm/git-remote-refs'],
+	}];
+	const plan = await previewSetup(api, repository.name, chosen);
+	expect(plan.blockers).toEqual([]);
+	expect(plan.notes).toContain(
+		'extra.yml: when the repository owner merges this PR, Beepboop grants it the stored extra-token secret for the extra operation in the extra environment.',
+	);
+	expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(200);
+	for (const alias of ['crates-io', 'npm-token', 'extra-token']) await world.sealCredential(alias);
+	expect(await mergedGrants(repository)).toEqual([
+		['crates-io', 'promote', 'publish.yml', 'crates-io'],
+		['extra-token', 'extra', 'extra.yml', 'extra'],
+		['npm-token', 'promote', 'publish.yml', 'npm'],
+	]);
+});
+
+test('merging skips an alias that the merged workflow adds without the configuration listing it', async () => {
+	const repository = refsRepository();
+	const api = bearer(world, await world.cliSession());
+	await discoverSetup(api, repository.name);
+	const plan = await previewSetup(api, repository.name, choices());
+	expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(200);
+	world.github.push(
+		repository,
+		{
+			'.github/workflows/publish.yml': workflow.replace(
+				`aliases: '["crates-io"]'`,
+				`aliases: '["crates-io", "extra-token"]'`,
+			),
+		},
+		'Request another token',
+		'automation/onboarding',
+	);
+	for (const alias of ['crates-io', 'npm-token', 'extra-token']) await world.sealCredential(alias);
+	expect(await mergedGrants(repository)).toEqual([
+		['crates-io', 'promote', 'publish.yml', 'crates-io'],
+		['npm-token', 'promote', 'publish.yml', 'npm'],
+	]);
 });

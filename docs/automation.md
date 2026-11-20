@@ -398,13 +398,19 @@ job. The context holds the requested version and the source commit. Calls from
 the same observed run, stream and operation attach to the same execution.
 
 Setup adopts a dispatch workflow that already calls `begin` in several jobs
-and leaves the file as it is. Every job with `begin` needs `id-token: write`,
-and every checkout in such a job needs a `ref` expression for the release
-source. The
-`report` steps must cover every selected package, and `publish-refs` must tag
-the release when the stream pushes tags. Setup adds the aliases of each
-`actions/credentials` step to the stream's `credentials`. Merging the setup PR
-grants each alias for the environment of its job.
+and leaves the file as it is. Every job with `begin` needs `id-token: write`.
+Every checkout in such a job checks out the begin context `sourceSha`, or a job
+output that carries it. Every other required dispatch input needs a default.
+The `report` steps must cover every selected package, and `publish-refs` must
+tag the release when the stream pushes tags. A distribution release passes its
+files to each `publish-refs` step.
+
+Setup adds the aliases of each `actions/credentials` step, and the aliases in
+the `credentials` input of `actions/publish`, to the stream's `credentials`.
+It reads the prepare, promote and operation workflows. Merging the setup PR
+grants each alias for the environment of its job. A job environment written as
+an expression blocks setup. Merging grants only aliases in the merged
+`credentials` list.
 
 ## Publish through Beepboop
 

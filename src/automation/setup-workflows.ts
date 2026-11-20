@@ -142,12 +142,19 @@ export function workflowCredentials(source: string | undefined): WorkflowCredent
 		const declared = object(job).environment;
 		const environment = typeof declared === 'string' ? declared : object(declared).name;
 		for (const step of stepsOf(job)) {
-			if (beepboopAction(step.uses) !== 'credentials') continue;
-			const aliases = Result.getOrElse(
-				Result.try((): unknown => JSON.parse(String(object(step.with).aliases ?? '[]'))),
+			const action = beepboopAction(step.uses);
+			const input = action === 'credentials'
+				? object(step.with).aliases
+				: action === 'publish'
+				? object(step.with).credentials
+				: undefined;
+			if (input === undefined) continue;
+			const parsed = Result.getOrElse(
+				Result.try((): unknown => JSON.parse(String(input))),
 				(): unknown => [],
 			);
-			for (const alias of Array.isArray(aliases) ? aliases : []) {
+			const aliases: unknown[] = Array.isArray(parsed) ? parsed : Object.values(object(parsed));
+			for (const alias of aliases) {
 				if (typeof alias !== 'string' || !alias) continue;
 				const credential = typeof environment === 'string' ? { alias, environment } : { alias };
 				found.set(JSON.stringify(credential), credential);
@@ -158,7 +165,7 @@ export function workflowCredentials(source: string | undefined): WorkflowCredent
 }
 function wiredJobs(jobs: Record<string, unknown>, stream: string, operation: string): string[] {
 	return Object.keys(jobs).filter(name =>
-		!ownedBinaryJob(name, object(jobs[name]))
+		!(name === beginJobId && ownedBinaryJob(name, object(jobs[name])))
 		&& stepsOf(jobs[name]).some(step =>
 			actionRole(step.uses) === 'begin' && object(step.with).stream === stream
 			&& object(step.with).operation === operation
@@ -171,8 +178,14 @@ function acrossJobs(
 	choice: SetupWorkflow,
 	packages: Package[],
 	release: boolean,
+	distributionFiles: string[] | undefined,
 ): string[] {
 	const problems: string[] = [], jobs = object(root.jobs);
+	const inner = (value: unknown) => /^\$\{\{\s*(.*?)\s*\}\}$/.exec(String(value ?? ''))?.[1]?.replace(/\s+/g, '');
+	const beginId = (job: unknown) => stepsOf(job).find(step => actionRole(step.uses) === 'begin')?.id;
+	const sourceOf = (job: unknown) => `fromJSON(steps.${String(beginId(job))}.outputs.context).sourceSha`;
+	const carriesSource = (job: string, output: string) =>
+		wired.includes(job) && inner(object(object(jobs[job]).outputs)[output]) === sourceOf(jobs[job]);
 	if (workflowEvents(root).some(event => event !== 'workflow_dispatch')) {
 		problems.push('a workflow that runs Beepboop in several jobs must run only on workflow_dispatch');
 	}
@@ -215,11 +228,18 @@ function acrossJobs(
 		for (const step of steps) {
 			const action = beepboopAction(step.uses);
 			if (action) used.add(action);
+			if (typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')) {
+				const ref = inner(object(step.with).ref);
+				const needed = /^needs\.([\w-]+)\.outputs\.([\w-]+)$/.exec(ref ?? '');
+				if (ref !== sourceOf(job) && !(needed?.[1] && needed[2] && carriesSource(needed[1], needed[2]))) {
+					problems.push(`job ${name}: check out the begin context sourceSha, or a job output that carries it`);
+				}
+			}
 			if (
-				typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
-				&& !/^\$\{\{.*\}\}$/.test(String(object(step.with).ref ?? ''))
+				distributionFiles?.length && action === 'publish-refs'
+				&& object(step.with).files !== JSON.stringify(distributionFiles)
 			) {
-				problems.push(`job ${name}: check out the release source with a ref expression`);
+				problems.push(`job ${name}: pass the distribution files ${JSON.stringify(distributionFiles)} to publish-refs`);
 			}
 			if (actionRole(step.uses) !== 'report') continue;
 			if (object(step.with)['execution-id'] !== expression(`steps.${String(id)}.outputs.execution-id`)) {
@@ -492,7 +512,7 @@ function integrate(
 	const wired = original && !choice.binaries && operation !== 'prepare' ? wiredJobs(jobs, stream, operation) : [];
 	const obstacles = jobObstacles(jobs);
 	if (wired.length > 1 || wired.some(name => obstacles[name]?.some(reason => reason.startsWith('needs ')))) {
-		for (const problem of acrossJobs(root, wired, choice, packages, release)) fail(problem);
+		for (const problem of acrossJobs(root, wired, choice, packages, release, distributionFiles)) fail(problem);
 		if (!blockers.length) {
 			notes.push(`${choice.file}: runs Beepboop in jobs ${wired.join(', ')}; setup leaves the workflow unchanged.`);
 		}
