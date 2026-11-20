@@ -323,6 +323,14 @@ for (
 			['job build: check out the begin context sourceSha, or a job output that carries it'],
 		],
 		[
+			'a checkout before its begin step',
+			base.replace(
+				'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(steps.start.outputs.context).sourceSha }}" }\n      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+			),
+			['job build: check out the begin context sourceSha after the begin step'],
+		],
+		[
 			'a checkout of the dispatch commit',
 			base.replace('"${{ fromJSON(steps.start.outputs.context).sourceSha }}"', '"${{ github.sha }}"'),
 			['job build: check out the begin context sourceSha, or a job output that carries it'],

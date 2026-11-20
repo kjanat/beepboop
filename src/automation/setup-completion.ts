@@ -87,7 +87,13 @@ export function completeTaggedStreams(
 			const command = lockCommands.find(([pattern]) => pattern.test(path))?.[1];
 			return command ? [within(path, command)] : [];
 		}),
-		...(cargo ? [tests[0] ?? 'cargo test --workspace --locked'] : []),
+		...(cargo
+			? [
+				tests[0] ?? (snapshot.paths.some(path => /(?:^|\/)Cargo\.lock$/.test(path))
+					? 'cargo test --workspace --locked'
+					: 'cargo test --workspace'),
+			]
+			: []),
 	];
 	const joined = modules.filter(pkg => !released(pkg));
 	const moduleIds = joined.map(packageId);

@@ -230,13 +230,16 @@ function acrossJobs(
 		if (permissions !== 'write-all' && object(permissions)['id-token'] !== 'write') {
 			problems.push(`job ${name} needs id-token: write`);
 		}
-		for (const step of steps) {
+		const started = steps.findIndex(step => actionRole(step.uses) === 'begin');
+		for (const [index, step] of steps.entries()) {
 			const action = beepboopAction(step.uses);
 			if (action) used.add(action);
 			if (typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')) {
 				const ref = inner(object(step.with).ref);
 				const needed = /^needs\.([\w-]+)\.outputs\.([\w-]+)$/.exec(ref ?? '');
-				if (ref !== sourceOf(job) && !(needed?.[1] && needed[2] && carriesSource(needed[1], needed[2]))) {
+				if (ref === sourceOf(job) && index < started) {
+					problems.push(`job ${name}: check out the begin context sourceSha after the begin step`);
+				} else if (ref !== sourceOf(job) && !(needed?.[1] && needed[2] && carriesSource(needed[1], needed[2]))) {
 					problems.push(`job ${name}: check out the begin context sourceSha, or a job output that carries it`);
 				}
 			}

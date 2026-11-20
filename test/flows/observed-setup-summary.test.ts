@@ -118,7 +118,7 @@ test('observed Cargo adoption distinguishes warnings, readiness, and tag filters
 		publicationSteps: {},
 		tagPrefix: 'v',
 	});
-	expect(stream.prepare?.commands).toBe('cargo test --workspace --locked');
+	expect(stream.prepare?.commands).toBe('cargo test --workspace');
 	expect(stream.observe).toEqual([{
 		name: 'publish',
 		file: 'publish.yml',
