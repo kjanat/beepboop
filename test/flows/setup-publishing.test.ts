@@ -113,7 +113,7 @@ jobs:
 			contents: 'read',
 			actions: 'read',
 			secrets: 'read',
-			variables: 'read',
+			actions_variables: 'read',
 			environments: 'read',
 		});
 		expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(200);
@@ -166,7 +166,7 @@ test('missing installation permissions are reported as App access failures befor
 	const failed = plan.publishingChecks?.filter(check => check.status === 'failed') ?? [];
 	expect(failed).toHaveLength(1);
 	expect(failed[0]?.message).toContain('GitHub App installation lacks required permissions');
-	for (const permission of ['secrets: read', 'variables: read', 'environments: read']) {
+	for (const permission of ['secrets: read', 'actions_variables: read', 'environments: read']) {
 		expect(failed[0]?.message).toContain(permission);
 	}
 	expect(failed[0]?.message).toContain('approve the installation update');
@@ -196,7 +196,7 @@ test('missing workflow-write permission preserves safe setup previews without sw
 					actions: 'write',
 					pull_requests: 'write',
 					secrets: 'read',
-					variables: 'read',
+					actions_variables: 'read',
 					environments: 'read',
 				},
 			});
