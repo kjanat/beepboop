@@ -10,3 +10,6 @@ excludes = ["test/fixtures/**"]
 "exportDeclaration.sortTypeOnlyExports" = "inline"
 "importDeclaration.sortNamedImports"    = "maintain"
 "importDeclaration.sortTypeOnlyImports" = "inline"
+
+[exec]
+playWithFire = true

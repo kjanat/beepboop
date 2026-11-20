@@ -88,7 +88,7 @@ release and returns at once. Spinners and progress bars stay off when the
 output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release). A stream
 that versions each package on its own, a tag-based stream without a
 promotion that publishes the version tag, and, when the release writes a new
-version, a stream that keeps its version outside package manifests or prepares
+version, a stream that keeps its version only in version files or prepares
 it with `prepare.strategy: "workflow"`, only prepare the version, and
 `promote.publishWhen` decides when it publishes.
 

@@ -1062,7 +1062,7 @@ test('release help explains the flow, and the command list keeps the one-line de
 	const text = help.stdout.join('').replace(/\s+/g, ' ');
 	expect(text).toContain('The release bumps the version and publishes it, and nothing asks again.');
 	expect(text).toContain(
-		'a tag-based one without a tag-publishing workflow, and, when the release writes a new version, one that keeps its version outside package manifests or prepares it with `prepare.strategy: workflow`, only prepare the version',
+		'a tag-based one without a tag-publishing workflow, and, when the release writes a new version, one that keeps its version only in version files or prepares it with `prepare.strategy: workflow`, only prepare the version',
 	);
 	expect(text).toContain('`versionLands: via-version-pr` opens the version PR');
 	const root = (await app.execute(['--help'], { isTTY: false, env: {} })).stdout.join('').replace(/\s+/g, ' ');

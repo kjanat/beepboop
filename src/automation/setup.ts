@@ -8,7 +8,7 @@ import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import { preparationRefusal } from '@/automation/release-capability';
+import { newVersionStartRefusal } from '@/automation/release-capability';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
 import { inferReleaseGraph } from '@/automation/release-graph/graph';
@@ -350,7 +350,15 @@ function draftSetup(
 		const chosen = input === undefined ? undefined : yield* decodeRequest(setupChoicesSchema, input);
 		const choices = chosen ? completeChoices(snapshot, inventory, chosen, raw) : proposal;
 		const inferred = input === undefined || JSON.stringify(choices) === JSON.stringify(proposal);
-		const drafts = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
+		const { plan: drafts, proposed } = yield* drafted(
+			snapshot,
+			inventory,
+			choices,
+			raw,
+			workflows,
+			baseline,
+			resolved,
+		);
 		const unlisted = (streams: SetupChoices['streams'], from: SetupChoices) =>
 			streams.flatMap(stream => {
 				const before = from.streams.find(entry => entry.name === stream.name)?.packages ?? stream.packages;
@@ -424,7 +432,9 @@ function draftSetup(
 			],
 			...(candidates.length ? { binaryCandidates: candidates } : {}),
 		};
-		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, inventory, plan, resolved) } : plan;
+		return inferred
+			? { ...plan, adoption: proposalMarkdown(graph, snapshot, inventory, plan, proposed, resolved) }
+			: plan;
 	});
 }
 function proposalMarkdown(
@@ -432,6 +442,7 @@ function proposalMarkdown(
 	snapshot: Snapshot,
 	inventory: Inventory,
 	plan: Omit<SetupPlan, 'planId'>,
+	adopted: Configuration | undefined,
 	resolved?: Configuration,
 ): string[] {
 	const lines = ['## Release plan', ''];
@@ -448,15 +459,9 @@ function proposalMarkdown(
 			const after = bump === 'commit' ? 'Then' : 'After you merge it,';
 			const until = stream.approval ? '' : ' until you tick another';
 			const policyName = `\`publishWhen: ${publishWhenNames[policy]}\``;
-			const delegated = plan.preparation?.workflowStreams.includes(stream.name) === true;
-			const publishesOnStart = startable(stream) && preparationRefusal(stream.name, {
-				prepare: {
-					...(delegated ? { strategy: 'workflow' } : {}),
-					...(stream.prepare ? { workflow: stream.prepare } : {}),
-				},
-				...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
-				packages: stream.packages,
-			}, inventory) === undefined;
+			const configured = adopted?.streams[stream.name];
+			const publishesOnStart = configured !== undefined
+				&& newVersionStartRefusal(stream.name, configured, inventory) === undefined;
 			lines.push(
 				...(publishesOnStart
 					? [
@@ -499,7 +504,7 @@ function drafted(
 	workflows: WorkflowEvidence[],
 	baseline: SetupBaseline,
 	resolved?: Configuration,
-): Effect.Effect<Omit<SetupPlan, 'planId'>, DomainError> {
+): Effect.Effect<{ plan: Omit<SetupPlan, 'planId'>; proposed: Configuration | undefined }, DomainError> {
 	return Effect.gen(function*() {
 		const configuration = structuredClone(raw);
 		const streams = { ...object(configuration.streams) };
@@ -879,6 +884,7 @@ function drafted(
 				catch: toDomainError,
 			});
 			return {
+				configuration: legacy,
 				drift: configurationDrift(proposal, legacy).map(entry => entry.message),
 				found: blocking(found).map(entry => entry.message),
 			};
@@ -907,7 +913,7 @@ function drafted(
 				} and approve the installation update, then preview again.`,
 			);
 		}
-		return {
+		const plan = {
 			repository: snapshot.repository.name,
 			sourceSha: snapshot.sha,
 			setupHead: baseline.head,
@@ -931,6 +937,7 @@ function drafted(
 			branchConflict: baseline.branchConflict === true,
 			...(prior ? { prior } : {}),
 		};
+		return { plan, proposed: Result.isSuccess(validated) ? validated.success.configuration : undefined };
 	});
 }
 /** The repository configuration keeps each generated workflow's setup input next to its binding. */

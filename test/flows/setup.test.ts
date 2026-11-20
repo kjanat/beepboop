@@ -1835,13 +1835,28 @@ test('the adoption text describes a direct-commit release without a version PR',
 	expect(text).not.toContain('version PR');
 });
 
-test('the adoption text promises no start publication for a stream that prepares in its own workflow', async () => {
+test('the adoption text promises start publication once setup moves a delegated stream to managed preparation', async () => {
 	const text = await releaseText({
 		stream: widgetStream({ strategy: 'workflow', workflow: { file: 'publish.yml' } }, 'version-pr-merged'),
 	});
-	expect(text).toContain('After you merge it, `publishWhen: version-pr-merged` applies');
-	expect(text).not.toContain('nothing asks again');
-	expect(text).not.toContain('without a start follows');
+	expect(text).toContain('Merging it publishes the release once the commit is verified and its checks pass');
+	expect(text).toContain('without a start follows `publishWhen: version-pr-merged`');
+});
+
+test.each([
+	{ refs: { phase: 'version', prefix: 'v' }, starts: true },
+	{ refs: undefined, starts: false },
+])('a tag-based stream promises start publication only with a version-tag promotion: %o', async ({ refs, starts }) => {
+	const stream = widgetStream({}, 'version-pr-merged');
+	const text = await releaseText({
+		stream: {
+			...stream,
+			versionSource: { kind: 'tags', prefix: 'v' },
+			promote: { ...stream.promote, workflow: { ...stream.promote.workflow, ...(refs ? { refs } : {}) } },
+		},
+	});
+	expect(text.includes('nothing asks again')).toBe(starts);
+	expect(text.includes('After you merge it, `publishWhen: version-pr-merged` applies')).toBe(!starts);
 });
 
 describe('a saved plain crate publish script', () => {

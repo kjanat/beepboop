@@ -564,8 +564,8 @@ metadata.
 publish one shared version. Some streams only prepare the version, from both
 places: a stream that versions each package on its own, a tag-based stream
 without a promotion that publishes the version tag, and, when the release
-writes a new version, a stream that keeps its version outside package
-manifests or prepares it in its own workflow with `prepare.strategy:
+writes a new version, a stream that keeps its version only in version files
+or prepares it in its own workflow with `prepare.strategy:
 "workflow"`. The Start release workflow starts a
 release only when the stream lists it in `startFrom`:
 
