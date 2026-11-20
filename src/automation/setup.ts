@@ -29,7 +29,13 @@ import type {
 	WorkflowEvidence,
 } from '@/automation/setup-types';
 import { approvals, triggerHandovers, versionings } from '@/automation/setup-types';
-import { integrateReleaseWorkflow, integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
+import {
+	integrateReleaseWorkflow,
+	integrateWorkflow,
+	workflowActions,
+	workflowCredentials,
+	workflowEvidence,
+} from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 import {
@@ -606,6 +612,11 @@ function drafted(
 						alias,
 					}))
 				),
+				...(['prepare', 'promote'] as const).flatMap(operation => {
+					const file = selection[operation]?.file;
+					return workflowCredentials(file === undefined ? undefined : snapshot.files[`.github/workflows/${file}`])
+						.map(credential => ({ operation, file, ...credential }));
+				}),
 				...(selection.operations ?? []).flatMap(entry =>
 					Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, file: entry.file, alias }))
 				),
@@ -617,9 +628,10 @@ function drafted(
 				]),
 			];
 			if (credentials.length) updated.credentials = credentials;
-			for (const { operation, file, alias } of granted) {
+			for (const entry of new Map(granted.map(entry => [JSON.stringify(entry), entry])).values()) {
+				const environment = 'environment' in entry ? ` in the ${entry.environment} environment` : '';
 				notes.push(
-					`${file}: when the repository owner merges this PR, Beepboop grants it the stored ${alias} secret for the ${operation} operation.`,
+					`${entry.file}: when the repository owner merges this PR, Beepboop grants it the stored ${entry.alias} secret for the ${entry.operation} operation${environment}.`,
 				);
 			}
 			const bindings = Object.fromEntries(
@@ -962,8 +974,9 @@ function releases(
 	if (stream.actionRelease) return !!workflow;
 	if (!workflow || workflow.binaries || stream.observe?.length || stream.versionSource) return false;
 	const release = `github-release:${snapshot.repository.name}`;
+	const source = snapshot.files[`.github/workflows/${workflow.file}`];
 	return Array.isArray(previous.publications) && previous.publications.includes(release)
-		|| !!workflow.tagPrefix && snapshot.files[`.github/workflows/${workflow.file}`] === undefined;
+		|| !!workflow.tagPrefix && source === undefined || workflowActions(source).has('publish-release');
 }
 function completeChoices(
 	snapshot: Snapshot,
@@ -1012,7 +1025,8 @@ function completeChoices(
 				const commands = refreshedCommands(operation, combined, scope, candidates, context);
 				const generated = commands !== ''
 					&& (commands === suggestedCommands(operation, scope, context) || crateScript(commands));
-				const fresh = snapshot.files[`.github/workflows/${workflow.file}`] === undefined;
+				const source = snapshot.files[`.github/workflows/${workflow.file}`];
+				const tagged = source === undefined || workflowActions(source).has('publish-refs');
 				return {
 					...workflow,
 					commands,
@@ -1021,7 +1035,7 @@ function completeChoices(
 							&& scope.packages.some(pkg => pkg.manager === 'cargo')
 						? { credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' } }
 						: {}),
-					...(operation === 'promote' && fresh && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
+					...(operation === 'promote' && tagged && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
 							&& !stream.actionRelease
 						? { tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`) }
 						: {}),

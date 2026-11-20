@@ -116,6 +116,125 @@ function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEv
 const executionInput = expression('inputs.beepboop_execution_id');
 const runName = expression('inputs.beepboop_title || github.workflow');
 
+function beepboopAction(value: unknown): string | undefined {
+	if (typeof value !== 'string') return;
+	return /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)([\w-]+)(?:@[\w./-]+)?$/.exec(value)?.[1];
+}
+function jobsOf(source: string | undefined): Record<string, unknown> {
+	return object(Result.getOrElse(yaml(source ?? ''), (): Record<string, unknown> => ({})).jobs);
+}
+function stepsOf(job: unknown): Record<string, unknown>[] {
+	const steps = object(job).steps;
+	return Array.isArray(steps) ? steps.map(object) : [];
+}
+export function workflowActions(source: string | undefined): Set<string> {
+	return new Set(
+		Object.values(jobsOf(source)).flatMap(job => stepsOf(job).flatMap(step => beepboopAction(step.uses) ?? [])),
+	);
+}
+export interface WorkflowCredential {
+	alias: string;
+	environment?: string;
+}
+export function workflowCredentials(source: string | undefined): WorkflowCredential[] {
+	const found = new Map<string, WorkflowCredential>();
+	for (const job of Object.values(jobsOf(source))) {
+		const declared = object(job).environment;
+		const environment = typeof declared === 'string' ? declared : object(declared).name;
+		for (const step of stepsOf(job)) {
+			if (beepboopAction(step.uses) !== 'credentials') continue;
+			const aliases = Result.getOrElse(
+				Result.try((): unknown => JSON.parse(String(object(step.with).aliases ?? '[]'))),
+				(): unknown => [],
+			);
+			for (const alias of Array.isArray(aliases) ? aliases : []) {
+				if (typeof alias !== 'string' || !alias) continue;
+				const credential = typeof environment === 'string' ? { alias, environment } : { alias };
+				found.set(JSON.stringify(credential), credential);
+			}
+		}
+	}
+	return [...found.values()];
+}
+function wiredJobs(jobs: Record<string, unknown>, stream: string, operation: string): string[] {
+	return Object.keys(jobs).filter(name =>
+		!ownedBinaryJob(name, object(jobs[name]))
+		&& stepsOf(jobs[name]).some(step =>
+			actionRole(step.uses) === 'begin' && object(step.with).stream === stream
+			&& object(step.with).operation === operation
+		)
+	);
+}
+function acrossJobs(
+	root: Record<string, unknown>,
+	wired: string[],
+	choice: SetupWorkflow,
+	packages: Package[],
+	release: boolean,
+): string[] {
+	const problems: string[] = [], jobs = object(root.jobs);
+	if (workflowEvents(root).some(event => event !== 'workflow_dispatch')) {
+		problems.push('a workflow that runs Beepboop in several jobs must run only on workflow_dispatch');
+	}
+	const inputs = object(object(object(root.on).workflow_dispatch).inputs);
+	const execution = object(inputs.beepboop_execution_id), title = object(inputs.beepboop_title);
+	if (execution.type !== 'string' || execution.required !== true) {
+		problems.push('workflow_dispatch needs the required string input beepboop_execution_id');
+	}
+	if (title.type !== 'string' || title.required === true) {
+		problems.push('workflow_dispatch needs the optional string input beepboop_title');
+	}
+	if (root['run-name'] !== runName) problems.push(`set run-name to ${runName}`);
+	const reported = new Set<string>(), used = new Set<string>();
+	for (const [name, job] of Object.entries(jobs)) {
+		const steps = stepsOf(job);
+		if (!wired.includes(name)) {
+			if (steps.some(step => ['report', 'publish'].includes(actionRole(step.uses) ?? ''))) {
+				problems.push(`job ${name} reports publications without a begin step`);
+			}
+			continue;
+		}
+		const begins = steps.filter(step => actionRole(step.uses) === 'begin');
+		const id = begins[0]?.id;
+		if (begins.length > 1) problems.push(`job ${name} has more than one begin step`);
+		if (typeof id !== 'string' || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(id)) {
+			problems.push(`job ${name}: begin needs a static step ID`);
+		}
+		if (object(begins[0]?.with)['execution-id'] !== executionInput) {
+			problems.push(`job ${name}: begin must take inputs.beepboop_execution_id`);
+		}
+		if (object(object(job).permissions ?? root.permissions)['id-token'] !== 'write') {
+			problems.push(`job ${name} needs id-token: write`);
+		}
+		for (const step of steps) {
+			const action = beepboopAction(step.uses);
+			if (action) used.add(action);
+			if (
+				typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
+				&& !/^\$\{\{.*\}\}$/.test(String(object(step.with).ref ?? ''))
+			) {
+				problems.push(`job ${name}: check out the release source with a ref expression`);
+			}
+			if (actionRole(step.uses) !== 'report') continue;
+			if (object(step.with)['execution-id'] !== expression(`steps.${String(id)}.outputs.execution-id`)) {
+				problems.push(`job ${name}: report must take the begin execution ID`);
+			}
+			const entries = publicationEntries(object(step.with).publications);
+			if (!entries) problems.push(`job ${name}: report publications must be a JSON array`);
+			for (const entry of entries ?? []) if (typeof entry.id === 'string') reported.add(entry.id);
+		}
+	}
+	for (const pkg of packages) {
+		const ledger = used.has('publish') && ledgerManagers.some(manager => manager === pkg.manager);
+		if (!reported.has(packageId(pkg)) && !ledger) {
+			problems.push(`report a result for ${packageId(pkg)} from a job with a begin step`);
+		}
+	}
+	if (choice.tagPrefix && !used.has('publish-refs')) problems.push('tag the release with publish-refs');
+	if (release && !used.has('publish-release')) problems.push('publish the GitHub release with publish-release');
+	return problems;
+}
+
 /** Patch only selected jobs and the dispatch contract; leave other YAML nodes and comments intact. */
 export function integrateWorkflow(
 	snapshot: Snapshot,
@@ -364,6 +483,15 @@ function integrate(
 	let emptied = false;
 	const blockers: string[] = [], notes: string[] = [];
 	const fail = (message: string) => blockers.push(`${choice.file}: ${message}`);
+	const wired = original && !choice.binaries && operation !== 'prepare' ? wiredJobs(jobs, stream, operation) : [];
+	const obstacles = jobObstacles(jobs);
+	if (wired.length > 1 || wired.some(name => obstacles[name]?.some(reason => reason.startsWith('needs ')))) {
+		for (const problem of acrossJobs(root, wired, choice, packages, release)) fail(problem);
+		if (!blockers.length) {
+			notes.push(`${choice.file}: runs Beepboop in jobs ${wired.join(', ')}; setup leaves the workflow unchanged.`);
+		}
+		return { content: original ?? '', blockers, notes };
+	}
 	const jobName = choice.job || (Object.keys(jobs).length === 1 ? Object.keys(jobs)[0] : undefined)
 		|| (original ? '' : operation);
 	if (!jobName || (original && !jobs[jobName])) {

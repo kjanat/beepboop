@@ -1,0 +1,238 @@
+name: Publish packages
+run-name: ${{ inputs.beepboop_title || github.workflow }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      beepboop_execution_id:
+        description: Beepboop release execution ID
+        type: string
+        required: true
+      beepboop_title:
+        description: Release title
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-packages
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MISE_ENABLE_TOOLS: node,npm,github:wasm-bindgen/wasm-bindgen,npm:tsrs
+    outputs:
+      source-sha: ${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}
+      version: ${{ fromJSON(steps.beepboop.outputs.context).version }}
+      npm-tag: ${{ steps.version.outputs.npm-tag }}
+    steps:
+      - uses: kjanat/beepboop/actions/begin@v1
+        id: beepboop
+        with:
+          execution-id: ${{ inputs.beepboop_execution_id }}
+          stream: git-remote-refs
+          operation: promote
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}
+          persist-credentials: false
+
+      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        with:
+          version: "2026.11.10"
+          cache: false
+
+      - name: Choose the npm dist-tag
+        id: version
+        env:
+          VERSION: ${{ fromJSON(steps.beepboop.outputs.context).version }}
+        run: |
+          case "${VERSION%%+*}" in
+            *-*) echo "npm-tag=next" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "npm-tag=latest" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Test and build
+        run: |
+          npm ci --ignore-scripts
+          cargo test --locked --workspace
+          mise run build
+          node --test index.test.ts
+
+      - name: Pack
+        run: |
+          cargo package --locked -p git-remote-refs
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/git-remote-refs-*.tgz
+          if-no-files-found: error
+          overwrite: true
+
+  crates-io:
+    name: Publish to crates.io
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: kjanat/beepboop/actions/begin@v1
+        id: beepboop
+        with:
+          execution-id: ${{ inputs.beepboop_execution_id }}
+          stream: git-remote-refs
+          operation: promote
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.package.outputs.source-sha }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup show
+
+      # Trusted publishing works once the crate exists. The first version falls back to the Beepboop token.
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+        continue-on-error: true
+
+      - uses: kjanat/beepboop/actions/credentials@v1
+        id: credentials
+        if: steps.auth.outcome == 'failure'
+        with:
+          execution-id: ${{ steps.beepboop.outputs.execution-id }}
+          aliases: '["crates-io"]'
+
+      - name: Publish Rust crate
+        id: publish
+        run: cargo publish --locked --no-verify -p git-remote-refs
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || fromJSON(steps.credentials.outputs.values || '{}')['crates-io'] }}
+
+      - name: Report publication
+        if: always()
+        uses: kjanat/beepboop/actions/report@v1
+        with:
+          execution-id: ${{ steps.beepboop.outputs.execution-id }}
+          publications: |
+            [{
+              "id": "pkg:cargo/git-remote-refs",
+              "manager": "cargo",
+              "name": "git-remote-refs",
+              "version": "${{ needs.package.outputs.version }}",
+              "required": true,
+              "outcome": "${{ case(steps.publish.outcome == 'success', 'succeeded', steps.publish.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', steps.publish.outcome == 'skipped', 'skipped', 'failed') }}"
+            }]
+
+  npm:
+    name: Publish to npm
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NPM_TAG: ${{ needs.package.outputs.npm-tag }}
+    steps:
+      - uses: kjanat/beepboop/actions/begin@v1
+        id: beepboop
+        with:
+          execution-id: ${{ inputs.beepboop_execution_id }}
+          stream: git-remote-refs
+          operation: promote
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-package
+          path: package
+
+      # Trusted publishing works once the package exists. The first version falls back to the Beepboop token.
+      - name: Publish with trusted publishing
+        id: oidc
+        continue-on-error: true
+        run: npm publish ./package/git-remote-refs-*.tgz --access public --ignore-scripts --tag "$NPM_TAG"
+
+      - uses: kjanat/beepboop/actions/credentials@v1
+        id: credentials
+        if: steps.oidc.outcome == 'failure'
+        with:
+          execution-id: ${{ steps.beepboop.outputs.execution-id }}
+          aliases: '["npm-token"]'
+
+      - name: Publish with the Beepboop token
+        id: token
+        if: steps.oidc.outcome == 'failure'
+        run: npm publish ./package/git-remote-refs-*.tgz --access public --ignore-scripts --tag "$NPM_TAG"
+        env:
+          NODE_AUTH_TOKEN: ${{ fromJSON(steps.credentials.outputs.values)['npm-token'] }}
+
+      - name: Report publication
+        if: always()
+        uses: kjanat/beepboop/actions/report@v1
+        with:
+          execution-id: ${{ steps.beepboop.outputs.execution-id }}
+          publications: |
+            [{
+              "id": "pkg:npm/git-remote-refs",
+              "manager": "npm",
+              "name": "git-remote-refs",
+              "version": "${{ needs.package.outputs.version }}",
+              "required": true,
+              "outcome": "${{ case(steps.oidc.outcome == 'success' || steps.token.outcome == 'success', 'succeeded', steps.token.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', steps.oidc.outcome == 'skipped', 'skipped', 'failed') }}"
+            }]
+
+  release:
+    name: Tag and release
+    needs: [package, crates-io, npm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: kjanat/beepboop/actions/begin@v1
+        id: beepboop
+        with:
+          execution-id: ${{ inputs.beepboop_execution_id }}
+          stream: git-remote-refs
+          operation: promote
+
+      - uses: kjanat/beepboop/actions/token@v1
+        id: token
+        with:
+          execution-id: ${{ steps.beepboop.outputs.execution-id }}
+          permission-contents: write
+
+      - name: Tag the published version
+        uses: kjanat/beepboop/actions/publish-refs@v1
+        env: ${{ fromJSON(steps.token.outputs.gitId) }}
+        with:
+          token: ${{ steps.token.outputs.token }}
+
+      - name: Publish the GitHub release
+        uses: kjanat/beepboop/actions/publish-release@v1
+        with:
+          execution-id: ${{ steps.beepboop.outputs.execution-id }}
