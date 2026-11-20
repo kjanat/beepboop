@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -190,6 +191,15 @@ function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, A
 	});
 }
 
+function scratchRepository(root: string): Effect.Effect<string | undefined, ActionFailure> {
+	return Effect.gen(function*() {
+		if (git(['rev-parse', '--git-dir'], { cwd: root }).ok) return undefined;
+		const scratch = join(process.env.RUNNER_TEMP || tmpdir(), `beepboop-refs-${randomUUID()}`);
+		if (git(['init', '--quiet', scratch]).ok) return scratch;
+		return yield* new ActionFailure({ message: 'Could not create a repository for the release refs' });
+	});
+}
+
 export function publishRefs(
 	plan: RefPlan,
 	root: string,
@@ -200,12 +210,21 @@ export function publishRefs(
 	if (plan.distribution && publicKey === undefined) {
 		return Effect.fail(new ActionFailure({ message: 'Distribution publication requires the signing key' }));
 	}
-	if (publicKey === undefined) return publish(plan, createGit(root, token), remote);
 	return Effect.acquireUseRelease(
-		Effect.fromResult(attempt(() => mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'beepboop-gnupg-')))),
-		keyring =>
-			importKey(keyring, publicKey).pipe(Effect.andThen(publish(plan, createGit(root, token, keyring), remote))),
-		keyring => Effect.sync(() => rmSync(keyring, { recursive: true, force: true })),
+		scratchRepository(root),
+		scratch => {
+			const repository = scratch ?? root;
+			if (publicKey === undefined) return publish(plan, createGit(repository, token), remote);
+			return Effect.acquireUseRelease(
+				Effect.fromResult(attempt(() => mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'beepboop-gnupg-')))),
+				keyring =>
+					importKey(keyring, publicKey).pipe(
+						Effect.andThen(publish(plan, createGit(repository, token, keyring), remote)),
+					),
+				keyring => Effect.sync(() => rmSync(keyring, { recursive: true, force: true })),
+			);
+		},
+		scratch => Effect.sync(() => scratch && rmSync(scratch, { recursive: true, force: true })),
 	);
 }
 

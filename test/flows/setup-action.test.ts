@@ -404,3 +404,27 @@ test('distribution adoption publishes the reviewed file list and builds using pa
 	expect(untouched.edits.some(edit => edit.path.endsWith('action-aliases.yml'))).toBe(false);
 	expect(untouched.edits.find(edit => edit.path === '.github/beepboop.json')?.after).not.toContain('immutable');
 });
+
+test('a new stream beside a configured one gets its own default prefix', async () => {
+	const source = snapshot({ 'action.yml': 'name: Tool\nruns:\n  using: composite\n  steps: []\n' });
+	const first = await preview(source, {
+		streams: [{ name: 'main', packages: [], required: [], versioning: 'none', actionRelease: { kind: 'source' } }],
+	});
+	const adopted = snapshot({
+		...source.files,
+		...Object.fromEntries(first.edits.map(edit => [edit.path, edit.after])),
+	});
+	const plan = await preview(adopted, {
+		streams: [{
+			name: 'tools',
+			packages: [],
+			required: [],
+			versioning: 'none',
+			actionRelease: { kind: 'source' },
+			promote: { file: 'tools.yml', job: 'promote', commands: '', triggers: 'dispatchOnly', publicationSteps: {} },
+		}],
+	});
+	const streams = JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')!.after).streams;
+	expect(streams.main.promote.workflow.refs.prefix).toBe('v');
+	expect(streams.tools.promote.workflow.refs.prefix).toBe('tools-v');
+});

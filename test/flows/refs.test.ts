@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishRefs } from '@root/actions/runtime/refs.ts';
@@ -106,6 +106,44 @@ test('a replacing ref plan moves the version tag to the new release commit under
 		expect(gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0^{commit}'])).toBe(fixed);
 		expect(gitOutput(origin, ['cat-file', '-t', 'refs/tags/v1.0.0'])).toBe('tag');
 	} finally {
+		dispose();
+	}
+});
+
+test('a ref plan publishes from a job without a checkout and removes its scratch repository', async () => {
+	const { checkout, origin, fixed, dispose } = moving();
+	const workspace = mkdtempSync(join(tmpdir(), 'beepboop-workspace-'));
+	const temp = mkdtempSync(join(tmpdir(), 'beepboop-runner-temp-'));
+	const runnerTemp = process.env.RUNNER_TEMP;
+	process.env.RUNNER_TEMP = temp;
+	try {
+		gitOutput(checkout.dir, ['push', '-q', origin, `${fixed}:refs/heads/main`]);
+		const change = { name: 'v1.0.1', expected: null, commit: fixed, annotated: false, signed: false };
+		await Effect.runPromise(
+			publishRefs(
+				{ repository: 'octo/widget', executionId: 'e', version: '1.0.1', changes: [change] },
+				workspace,
+				origin,
+			),
+		);
+		expect(gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.1'])).toBe(fixed);
+		expect([readdirSync(workspace), readdirSync(temp)]).toEqual([[], []]);
+		const blocked = join(temp, 'file');
+		writeFileSync(blocked, '');
+		process.env.RUNNER_TEMP = blocked;
+		const exit = await Effect.runPromiseExit(
+			publishRefs(
+				{ repository: 'octo/widget', executionId: 'e', version: '1.0.1', changes: [{ ...change, name: 'v1.0.2' }] },
+				workspace,
+				origin,
+			),
+		);
+		expect(JSON.stringify(exit)).toContain('Could not create a repository for the release refs');
+	} finally {
+		if (runnerTemp === undefined) delete process.env.RUNNER_TEMP;
+		else process.env.RUNNER_TEMP = runnerTemp;
+		rmSync(workspace, { recursive: true, force: true });
+		rmSync(temp, { recursive: true, force: true });
 		dispose();
 	}
 });

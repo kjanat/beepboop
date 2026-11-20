@@ -124,6 +124,44 @@ test('interactive adoption offers action refs for a repository with no publishab
 	expect(repository.pulls).toHaveLength(0);
 });
 
+test('interactive adoption gives a release group added after the proposal its own default prefix', async () => {
+	const repository = world.github.create('octo/composite', {
+		'action.yaml': 'name: Tool\nruns:\n  using: composite\n  steps: []\n',
+	});
+	const session = defaults(
+		{
+			'main: adopt action release refs?': 'source',
+			'beta: adopt action release refs?': 'source',
+			'main: publishing workflow filename': 'release.yml',
+			'beta: publishing workflow filename': 'beta.yml',
+			'Release group name': 'beta',
+		},
+		{
+			[proposalPrompt]: false,
+			'Customize filenames, versionScope, publishWhen, release groups, advanced fields or Actions revision?': true,
+			'Open or refresh the setup PR with these exact changes?': true,
+		},
+	);
+	let added = false;
+	const result = await app.execute(['adopt', repository.name], {
+		prompter: {
+			async promptOne(config) {
+				if (config.message !== 'Add another release group?') return session.prompter.promptOne(config);
+				const value = !added;
+				added = true;
+				return { answered: true, value };
+			},
+		},
+		isTTY: true,
+		color: false,
+		env: {},
+	});
+	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
+	const streams = JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding')!).streams;
+	expect(streams.main.promote.workflow.refs.prefix).toBe('v');
+	expect(streams.beta.promote.workflow.refs.prefix).toBe('beta-v');
+});
+
 test('interactive distribution adoption preserves reviewed assets and new commands in an integrated job', async () => {
 	const files = ['dist/main.mjs', 'dist/chunk.mjs', 'dist/LICENSES.txt'];
 	const repository = world.github.create('octo/action', {

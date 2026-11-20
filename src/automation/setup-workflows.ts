@@ -239,13 +239,23 @@ function acrossJobs(
 				const needed = /^needs\.([\w-]+)\.outputs\.([\w-]+)$/.exec(ref ?? '');
 				if (ref === sourceOf(job) && index < started) {
 					problems.push(`job ${name}: check out the begin context sourceSha after the begin step`);
-				} else if (ref !== sourceOf(job) && !(needed?.[1] && needed[2] && carriesSource(needed[1], needed[2]))) {
+				} else if (
+					ref !== sourceOf(job)
+					&& !(needed?.[1] && needed[2] && jobNeeds(object(job).needs).includes(needed[1])
+						&& carriesSource(needed[1], needed[2]))
+				) {
 					problems.push(`job ${name}: check out the begin context sourceSha, or a job output that carries it`);
 				}
 			}
 			if (
 				distributionFiles?.length && action === 'publish-refs'
-				&& object(step.with).files !== JSON.stringify(distributionFiles)
+				&& !isDeepStrictEqual(
+					Result.getOrElse(
+						Result.try((): unknown => JSON.parse(String(object(step.with).files))),
+						(): unknown => undefined,
+					),
+					distributionFiles,
+				)
 			) {
 				problems.push(`job ${name}: pass the distribution files ${JSON.stringify(distributionFiles)} to publish-refs`);
 			}

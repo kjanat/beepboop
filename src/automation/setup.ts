@@ -1017,6 +1017,8 @@ function completeChoices(
 		manager: pkg.manager,
 		...(pkg.versionSource ? { versionSource: pkg.versionSource } : {}),
 	}));
+	const streamCount =
+		new Set([...Object.keys(object(raw.streams)), ...choices.streams.map(stream => stream.name)]).size;
 	const completed = {
 		...choices,
 		streams: choices.streams.map(stream => {
@@ -1024,7 +1026,7 @@ function completeChoices(
 			const previousPolicy = object(object(object(object(object(raw.streams)[stream.name]).promote).workflow).refs);
 			const actionPrefix = typeof previousPolicy.prefix === 'string'
 				? previousPolicy.prefix
-				: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, choices.streams.length);
+				: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, streamCount);
 			const elsewhere = new Set([
 				...(stream.operations?.flatMap(entry => entry.publications) ?? []),
 				...(stream.observe?.flatMap(entry => entry.publications) ?? []),
@@ -1059,7 +1061,7 @@ function completeChoices(
 						: {}),
 					...(operation === 'promote' && tagged && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
 							&& !stream.actionRelease
-						? { tagPrefix: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, choices.streams.length) }
+						? { tagPrefix: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, streamCount) }
 						: {}),
 				};
 			};

@@ -4,6 +4,11 @@ Use this action after `actions/begin`, with the repository token issued by
 `actions/token`. The configured distribution paths can be passed through `files`
 or uploaded as a GitHub Actions artifact.
 
+A job that publishes source-only refs needs no checkout. Without a Git
+repository in the workspace, the action fetches the release commit into a
+temporary repository and removes it afterwards. Distribution through `files`
+reads the built files from a checkout.
+
 ## Uploading a distribution artifact
 
 An artifact must contain the configured files at their exact repository-relative

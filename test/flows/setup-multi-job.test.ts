@@ -224,6 +224,8 @@ test('a workflow wired across jobs, or one wired job that depends on another, st
 	const distributed =
 		`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n        with: { files: '["dist/index.js"]' }\n`;
 	expect(integrated(distributed, { files: ['dist/index.js'] }).blockers).toEqual([]);
+	const spaced = distributed.replace(`'["dist/index.js"]'`, `'[ "dist/index.js" ]'`);
+	expect(integrated(spaced, { files: ['dist/index.js'] }).blockers).toEqual([]);
 	const handBegun = carried.replaceAll('build-package', 'begin');
 	expect(integrated(handBegun).notes).toEqual([
 		'publish.yml: runs Beepboop in jobs begin, publish; setup leaves the workflow unchanged.',
@@ -336,6 +338,20 @@ for (
 			['job build: check out the begin context sourceSha, or a job output that carries it'],
 		],
 		[
+			'a checkout of a job output from a job it does not need',
+			base
+				.replace(
+					'  build:\n    runs-on: ubuntu-latest\n',
+					'  build-package:\n    runs-on: ubuntu-latest\n    outputs:\n      source: ${{ fromJSON(steps.start.outputs.context).sourceSha }}\n',
+				)
+				.replace('    needs: build\n', '')
+				.replace(
+					'      - id: npm\n',
+					'      - uses: actions/checkout@v7\n        with: { ref: "${{ needs.build-package.outputs.source }}" }\n      - id: npm\n',
+				),
+			['job publish: check out the begin context sourceSha, or a job output that carries it'],
+		],
+		[
 			'a checkout of a job output that carries something else',
 			base.replace('"${{ fromJSON(steps.start.outputs.context).sourceSha }}"', '"${{ needs.publish.outputs.other }}"'),
 			['job build: check out the begin context sourceSha, or a job output that carries it'],
@@ -362,6 +378,18 @@ for (
 		[
 			'a distribution publish-refs step without its files',
 			`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n`,
+			['job publish: pass the distribution files ["dist/index.js"] to publish-refs'],
+			{ files: ['dist/index.js'] },
+		],
+		[
+			'a distribution publish-refs step with other files',
+			`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n        with: { files: '["dist/other.js"]' }\n`,
+			['job publish: pass the distribution files ["dist/index.js"] to publish-refs'],
+			{ files: ['dist/index.js'] },
+		],
+		[
+			'a distribution publish-refs step with files that are not JSON',
+			`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n        with: { files: dist/index.js }\n`,
 			['job publish: pass the distribution files ["dist/index.js"] to publish-refs'],
 			{ files: ['dist/index.js'] },
 		],
