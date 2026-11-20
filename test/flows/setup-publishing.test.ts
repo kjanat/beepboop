@@ -210,8 +210,17 @@ test('missing workflow-write permission preserves safe setup previews without sw
 	}));
 	expect(await canEdit()).toBe(false);
 	const plan = await previewSetup(api, repository.name);
-	expect(plan.blockers).toEqual([]);
-	expect(plan.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json']);
+	expect(plan.blockers.some(message => message.includes('Workflows: write'))).toBe(true);
+	const observed = {
+		...plan.choices,
+		streams: plan.choices.streams.map(({ prepare: _prepare, promote: _promote, ...stream }) => ({
+			...stream,
+			...(stream.observe ? { observe: stream.observe.map(({ needs: _needs, ...binding }) => binding) } : {}),
+		})),
+	};
+	const safe = await previewSetup(api, repository.name, observed);
+	expect(safe.blockers).toEqual([]);
+	expect(safe.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json']);
 	const choices = {
 		streams: [{
 			name: 'main',

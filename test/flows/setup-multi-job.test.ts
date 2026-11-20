@@ -91,7 +91,7 @@ test('setup adopts a publish workflow that already runs Beepboop in several jobs
 	const inferred = await discoverSetup(api, repository.name);
 	expect(inferred.blockers).toEqual([]);
 	expect(inferred.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json']);
-	expect(inferred.choices.streams[0]?.promote).toMatchObject({ file: 'publish.yml', tagPrefix: 'git-remote-refs-v' });
+	expect(inferred.choices.streams[0]?.promote).toMatchObject({ file: 'publish.yml', tagPrefix: 'v' });
 	for (const job of ['package', 'crates-io', 'npm', 'release']) {
 		const plan = await previewSetup(api, repository.name, choices(job));
 		expect(plan.blockers).toEqual([]);
@@ -103,6 +103,7 @@ test('setup adopts a publish workflow that already runs Beepboop in several jobs
 		expect(stream?.credentials).toEqual(['crates-io', 'npm-token']);
 		expect(stream?.promote.workflow.publications).toEqual([...packages, 'github-release:octo/refs']);
 		expect(stream?.promote.workflow['refs']).toEqual({ phase: 'version', prefix: 'v' });
+		expect(stream?.['packageTags']).toEqual(packages);
 		expect(plan.notes).toEqual(expect.arrayContaining([
 			'publish.yml: runs Beepboop in jobs package, crates-io, npm, release; setup leaves the workflow unchanged.',
 			'publish.yml: when the repository owner merges this PR, Beepboop grants it the stored crates-io secret for the promote operation in the crates-io environment.',
@@ -375,4 +376,35 @@ test('merging a setup PR grants a credential once when the choice and the workfl
 	expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(200);
 	await world.sealCredential('npm-token');
 	expect(await mergedGrants(repository)).toEqual([['npm-token', 'promote', 'release-widget.yml', undefined]]);
+});
+
+test('package tags follow a plain v tag and keep a configured list', async () => {
+	const repository = refsRepository();
+	const api = bearer(world, await world.cliSession());
+	await discoverSetup(api, repository.name);
+	const stream = async (tagPrefix: string) => {
+		const chosen = choices();
+		const [first] = chosen.streams;
+		if (!first?.promote) throw new Error('No promote choice');
+		first.promote.tagPrefix = tagPrefix;
+		const plan = await previewSetup(api, repository.name, chosen);
+		expect(plan.blockers).toEqual([]);
+		return decodeSync(
+			configuration,
+			JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
+		).streams['git-remote-refs'];
+	};
+	expect((await stream('v'))?.['packageTags']).toEqual(packages);
+	expect((await stream('refs-v'))?.['packageTags']).toBeUndefined();
+	world.github.push(
+		repository,
+		{
+			'.github/beepboop.json': JSON.stringify({
+				streams: { 'git-remote-refs': { packages, packageTags: ['pkg:npm/git-remote-refs'] } },
+			}),
+		},
+		'Tag only the npm package',
+	);
+	await discoverSetup(api, repository.name);
+	expect((await stream('v'))?.['packageTags']).toEqual(['pkg:npm/git-remote-refs']);
 });

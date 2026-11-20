@@ -4,6 +4,7 @@ import { Effect } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import type { Selection } from '@/automation/setup-defaults';
 import {
+	defaultTagPrefix,
 	ledgerCommand,
 	preparationReasons,
 	suggestedCommands,
@@ -614,7 +615,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 							triggers: 'dispatchOnly',
 							commands: stream.actionRelease.kind === 'distribution' ? plan.actionRelease.commands : '',
 							publicationSteps: {},
-							tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`),
+							tagPrefix: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, plan.choices.streams.length),
 						};
 					}
 				}

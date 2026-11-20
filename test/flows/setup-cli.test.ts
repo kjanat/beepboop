@@ -632,7 +632,7 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 			lintSummary.slice(1).join('\n').replaceAll(' @octo/lint', ' `@octo/lint`')
 		}\n- Start a release with \`beepboop release\` in a checkout or from the dashboard.`,
 	);
-	expect(body).toContain('  - Publication: `release-lint.yml`, new in this PR\n');
+	expect(body).toContain('  - Publication: `release-lint.yml` (job `promote`), new in this PR\n');
 	expect(body).toContain(
 		'- `prepare-release.yml`, `release-lint.yml` and `publish-crates.yml`: this PR creates them, and only Beepboop dispatches them.',
 	);
@@ -955,7 +955,7 @@ test('shared preparation does not ask for a second trigger handover', async () =
 	expect(repository.pulls).toHaveLength(1);
 });
 
-test('an inferred stream is adopted by observing its existing workflow', async () => {
+test('an inferred stream gets a Beepboop release workflow that starts its existing workflow', async () => {
 	const repository = plugin(world.github);
 	const session = defaults({}, { 'Open or refresh the setup PR with these exact changes?': true });
 	const result = await app.execute(['repositories', 'adopt', repository.name], {
@@ -970,7 +970,7 @@ test('an inferred stream is adopted by observing its existing workflow', async (
 	);
 	expect(session.prompts.some(prompt => prompt.message.includes('publish packages'))).toBe(false);
 	expect(result.stdout.join('')).toContain(
-		'Release group main:\n- Tags matching v* start release.yml. It publishes the GitHub release, and Beepboop records each run. Its triggers stay as they are.\n',
+		'Release group main:\n- When a release publishes, release-main.yml (new) pushes the tag v<version>.\n- Tags matching v* start release.yml. It publishes the GitHub release, and Beepboop records each run. Its triggers stay as they are.\n',
 	);
 	expect(repository.pulls).toHaveLength(1);
 	expect(repository.pulls[0]?.body).toContain('## Release plan');
@@ -978,15 +978,23 @@ test('an inferred stream is adopted by observing its existing workflow', async (
 		mutableStruct({
 			streams: mutableStruct({
 				main: mutableStruct({
-					workflows: mutableRecord(Schema.String, mutableStruct({ mode: Schema.String, file: Schema.String })),
+					workflows: mutableRecord(
+						Schema.String,
+						mutableStruct({ mode: Schema.String, file: Schema.String, needs: mutableArray(Schema.String) }),
+					),
+					promote: mutableStruct({ workflow: looseStruct({ file: Schema.String }) }),
 				}),
 			}),
 		}),
 		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
 	);
 	expect(Object.values(config.streams.main.workflows)).toEqual([
-		expect.objectContaining({ mode: 'observe', file: 'release.yml' }),
+		expect.objectContaining({ mode: 'observe', file: 'release.yml', needs: ['promote'] }),
 	]);
+	expect(config.streams.main.promote.workflow.file).toBe('release-main.yml');
+	expect(world.github.file(repository, '.github/workflows/release-main.yml', 'automation/onboarding')).toContain(
+		'kjanat/beepboop/actions/publish-refs@v1',
+	);
 	expect(world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding')).toBe(
 		world.github.file(repository, '.github/workflows/release.yml'),
 	);

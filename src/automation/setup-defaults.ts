@@ -94,6 +94,9 @@ export function cratePublishCommands(names: string[]): string {
 	return [publishCrate, ...names.map(name => `publish_crate ${shellQuote(name)}`)].join('\n');
 }
 export const ledgerCommand = 'beepboop publish';
+export function defaultTagPrefix(stream: string, streams: number): string {
+	return streams === 1 || stream === 'main' ? 'v' : `${stream}-v`;
+}
 type Context = Pick<SetupPlan, 'inventory' | 'preparation'>;
 export function suggestedCommands(role: 'prepare' | 'promote', selection: Selection, plan: Context): string {
 	if (ungenerated(selection).length) return '';

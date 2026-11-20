@@ -11,7 +11,12 @@ from the existing release workflows. It reads the workflows, the local actions,
 scripts and task recipes they run, and the repository's tags. It groups them
 into release streams. Each tag family, manually dispatched release and scheduled
 channel gets one stream. Each stream observes its existing workflows and keeps
-their triggers. The initial proposal changes `.github/beepboop.json`. Selecting managed publication can also create or update workflows.
+their triggers. For a stream that starts from a tag family, the proposal also
+creates a `release-<stream>.yml` workflow under `promote`. Beepboop runs it to
+push the version tag, and that tag starts the observed workflows. Beepboop
+starts the release, and the observed workflows still publish. A repository with
+one stream tags `v<version>`. With several streams, `main` tags `v<version>`
+and every other stream tags `<stream>-v<version>`.
 
 The setup PR body has a **Release plan** section. For each stream it lists:
 
@@ -1414,6 +1419,10 @@ Beepboop answers the backfill in pages. A page starts checks for 10 seconds and
 answers within 20, and the CLI requests pages until every tag has an answer. A
 check still running after 20 seconds reports a failure, and the next backfill
 checks that tag again.
+
+Setup writes `packageTags` with every package of the stream that Beepboop can
+check on its registry when the stream's version tag is `v<version>` and the
+configuration has no `packageTags` yet.
 
 Discovery blocks a `packageTags` entry that matches no package, matches only
 packages that skip their public registry, or is not in the stream's

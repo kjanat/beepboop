@@ -3,7 +3,7 @@ import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
-import { discover, versionsInFiles } from '@/automation/managers';
+import { canVerifyPublication, discover, versionsInFiles } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
@@ -15,7 +15,7 @@ import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { actionReleaseOffer } from '@/automation/setup-action';
 import { behaviourChanges, changeDetails, onboardingBranch } from '@/automation/setup-changes';
 import { completeTaggedStreams } from '@/automation/setup-completion';
-import { crateScript, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
+import { crateScript, defaultTagPrefix, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import { checkPublishing } from '@/automation/setup-publishing';
 import { startWorkflow } from '@/automation/setup-start';
@@ -751,6 +751,11 @@ function drafted(
 							: {}),
 					};
 				}
+				const packageTags = selected.filter(pkg => canVerifyPublication(pkg.manager)).map(packageId);
+				if (
+					operation === 'promote' && object(binding.refs).prefix === 'v' && current.packageTags === undefined
+					&& packageTags.length
+				) updated.packageTags = packageTags;
 				if (shared) inputs.beepboop_operation = operation === 'promote' ? 'publish' : 'prepare';
 				else delete inputs.beepboop_operation;
 				if (Object.keys(inputs).length) binding.inputs = inputs;
@@ -1012,7 +1017,7 @@ function completeChoices(
 			const previousPolicy = object(object(object(object(object(raw.streams)[stream.name]).promote).workflow).refs);
 			const actionPrefix = typeof previousPolicy.prefix === 'string'
 				? previousPolicy.prefix
-				: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`);
+				: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, choices.streams.length);
 			const elsewhere = new Set([
 				...(stream.operations?.flatMap(entry => entry.publications) ?? []),
 				...(stream.observe?.flatMap(entry => entry.publications) ?? []),
@@ -1047,7 +1052,7 @@ function completeChoices(
 						: {}),
 					...(operation === 'promote' && tagged && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
 							&& !stream.actionRelease
-						? { tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`) }
+						? { tagPrefix: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, choices.streams.length) }
 						: {}),
 				};
 			};

@@ -204,12 +204,14 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 	expect(stream.versionFiles).toBeUndefined();
 	expect(stream.prepare).toEqual({
 		file: 'prepare-release.yml',
+		job: 'prepare',
 		triggers: 'review',
 		commands: 'cargo update --workspace\ncargo test --workspace --locked',
 		publicationSteps: {},
 	});
 	expect(stream.promote).toEqual({
 		file: 'release-lint.yml',
+		job: 'promote',
 		triggers: 'review',
 		commands: '',
 		publicationSteps: {},

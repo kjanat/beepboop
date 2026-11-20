@@ -538,6 +538,16 @@ test('an observed stream rejects a package its workflows do not publish', async 
 		'packages/b/package.json': JSON.stringify({ name: 'b', version: '1.0.0' }),
 		'.github/workflows/release.yml':
 			"name: Release\non:\n  push: { tags: ['v*'] }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm --prefix packages/a publish\n",
+		'.github/beepboop.json': JSON.stringify({
+			streams: {
+				main: {
+					packages: ['pkg:npm/a'],
+					workflows: {
+						release: { file: 'release.yml', mode: 'observe', ref: 'refs/tags/v*', publications: ['pkg:npm/a'] },
+					},
+				},
+			},
+		}),
 	});
 	passChecks(repository, world.github.head(repository));
 	const form = await open('octo/pair');
@@ -685,6 +695,24 @@ test('an observed branch publisher without publication checks keeps its proposed
 	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
 });
 
+test('a tag publisher gets a Beepboop release workflow that only pushes the tag', async () => {
+	const repository = world.github.create('octo/tagged', {
+		'package.json': JSON.stringify({ name: 'tagged', version: '1.0.0' }),
+		'.github/workflows/release.yml':
+			"name: Release\non:\n  push: { tags: ['v*'] }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n",
+	});
+	passChecks(repository, world.github.head(repository));
+	const form = await open('octo/tagged');
+	expect(role(form, 'promote').hidden).toBe(false);
+	await act(form, 'preview');
+	const result = form.querySelector('.setup-result')?.textContent ?? '';
+	expect(result).toContain('release-main.yml');
+	expect(result).toContain('"needs": ["promote"]');
+	expect(result).toContain('kjanat/beepboop/actions/publish-refs@v1');
+	expect(result).not.toContain('kjanat/beepboop/actions/publish@v1');
+	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
+});
+
 test('an inferred stream keeps its workflow until observation is cleared', async () => {
 	plugin(world.github);
 	const form = await open('octo/plugin');
@@ -694,9 +722,9 @@ test('an inferred stream keeps its workflow until observation is cleared', async
 		window.HTMLInputElement,
 	);
 	expect(keep.checked).toBe(true);
-	expect(role(form, 'promote').hidden).toBe(true);
+	expect(role(form, 'promote').hidden).toBe(false);
 	expect(role(form, 'prepare').hidden).toBe(true);
-	expect(role(form, 'promote').hasAttribute('disabled')).toBe(true);
+	expect(role(form, 'promote').hasAttribute('disabled')).toBe(false);
 	await act(form, 'preview');
 	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
