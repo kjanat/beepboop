@@ -184,6 +184,12 @@ function acrossJobs(
 	if (title.type !== 'string' || title.required === true) {
 		problems.push('workflow_dispatch needs the optional string input beepboop_title');
 	}
+	for (const [name, value] of Object.entries(inputs)) {
+		const own = name === 'beepboop_execution_id' || name === 'beepboop_title';
+		if (!own && object(value).required === true && object(value).default === undefined) {
+			problems.push(`required dispatch input ${name} needs a configured default`);
+		}
+	}
 	if (root['run-name'] !== runName) problems.push(`set run-name to ${runName}`);
 	const reported = new Set<string>(), used = new Set<string>();
 	for (const [name, job] of Object.entries(jobs)) {

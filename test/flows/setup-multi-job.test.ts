@@ -132,6 +132,21 @@ test('setup names each gap in a workflow that runs Beepboop in several jobs', as
 	]);
 });
 
+test('a credential job with an expression environment blocks the grant it cannot match', async () => {
+	const repository = refsRepository(
+		workflow.replace('    environment: crates-io\n', '    environment: ${{ inputs.registry }}\n'),
+	);
+	const api = bearer(world, await world.cliSession());
+	await discoverSetup(api, repository.name);
+	const plan = await previewSetup(api, repository.name, choices());
+	expect(plan.blockers).toEqual([
+		'publish.yml: give the job that requests crates-io a fixed environment name. Beepboop grants a credential to one named environment.',
+	]);
+	expect(plan.notes.filter(note => note.includes('grants it the stored'))).toEqual([
+		'publish.yml: when the repository owner merges this PR, Beepboop grants it the stored npm-token secret for the promote operation in the npm environment.',
+	]);
+});
+
 test('merging the adoption PR grants each workflow credential in its job environment', async () => {
 	const repository = refsRepository();
 	const api = bearer(world, await world.cliSession());
@@ -221,6 +236,14 @@ for (
 				'beepboop_title: { type: string, required: true }',
 			),
 			['workflow_dispatch needs the optional string input beepboop_title'],
+		],
+		[
+			'a required input without a default',
+			base.replace(
+				'      beepboop_title: { type: string, required: false }\n',
+				'      beepboop_title: { type: string, required: false }\n      target: { type: string, required: true }\n',
+			),
+			['required dispatch input target needs a configured default'],
 		],
 		[
 			'another run name',

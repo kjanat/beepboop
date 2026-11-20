@@ -629,9 +629,19 @@ function drafted(
 			];
 			if (credentials.length) updated.credentials = credentials;
 			for (const entry of new Map(granted.map(entry => [JSON.stringify(entry), entry])).values()) {
-				const environment = 'environment' in entry ? ` in the ${entry.environment} environment` : '';
+				const environment = 'environment' in entry && typeof entry.environment === 'string'
+					? entry.environment
+					: undefined;
+				if (environment?.includes('${{')) {
+					blockers.push(
+						`${entry.file}: give the job that requests ${entry.alias} a fixed environment name. Beepboop grants a credential to one named environment.`,
+					);
+					continue;
+				}
 				notes.push(
-					`${entry.file}: when the repository owner merges this PR, Beepboop grants it the stored ${entry.alias} secret for the ${entry.operation} operation${environment}.`,
+					`${entry.file}: when the repository owner merges this PR, Beepboop grants it the stored ${entry.alias} secret for the ${entry.operation} operation${
+						environment === undefined ? '' : ` in the ${environment} environment`
+					}.`,
 				);
 			}
 			const bindings = Object.fromEntries(
