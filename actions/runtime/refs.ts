@@ -100,12 +100,32 @@ function createTag(git: Git, ref: string, change: RefChange, version: string): E
 	});
 }
 
-function prepareTag(git: Git, ref: string, change: RefChange, version: string): Effect.Effect<string, ActionFailure> {
+function publishedTag(git: Git, remote: string, ref: string, change: RefChange): Effect.Effect<boolean, ActionFailure> {
+	return Effect.gen(function*() {
+		if (!(yield* git.read('ls-remote', remote, ref)).split(/\s+/)[0]) return false;
+		yield* git.read('fetch', '--no-tags', remote, ref);
+		return yield* verifyTag(git, 'FETCH_HEAD', change, 'Published tag differs from the ref plan').pipe(
+			Effect.as(true),
+			Effect.orElseSucceed(() => false),
+		);
+	});
+}
+
+function prepareTag(
+	git: Git,
+	remote: string,
+	ref: string,
+	change: RefChange,
+	version: string,
+): Effect.Effect<string, ActionFailure> {
 	return Effect.gen(function*() {
 		if (
 			change.replaces && (yield* git.exists(ref)) && (yield* git.read('rev-parse', `${ref}^{commit}`)) !== change.commit
 		) {
 			yield* git.read('update-ref', '-d', ref);
+		}
+		if (!(yield* git.exists(ref)) && (yield* publishedTag(git, remote, ref, change))) {
+			yield* git.read('update-ref', ref, 'FETCH_HEAD', '');
 		}
 		if (yield* git.exists(ref)) {
 			yield* verifyTag(git, ref, change, 'Local tag differs from the ref plan');
@@ -182,7 +202,7 @@ function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, A
 				yield* verifyPublishedTag(git, remote, ref, change);
 				continue;
 			}
-			const object = change.annotated ? yield* prepareTag(git, ref, change, plan.version) : change.commit;
+			const object = change.annotated ? yield* prepareTag(git, remote, ref, change, plan.version) : change.commit;
 			if (plan.distribution && (yield* git.read('ls-remote', remote, ref)).split(/\s+/)[0] === object) continue;
 			leases.push(`--force-with-lease=${ref}:${change.expected ?? ''}`);
 			refspecs.push(`${object}:${ref}`);

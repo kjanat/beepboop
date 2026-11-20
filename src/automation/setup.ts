@@ -604,6 +604,18 @@ function drafted(
 			if (!selection.companionModules?.length) delete updated.companionModules;
 			if (!selection.versionSource) delete updated.versionSource;
 			if (!selection.needs) delete updated.needs;
+			const requested = (operation: string, file: string | undefined) => {
+				const found = workflowCredentials(
+					file === undefined ? undefined : snapshot.files[`.github/workflows/${file}`],
+					operation,
+				);
+				for (const job of found.unresolved) {
+					blockers.push(
+						`${file}: list the credential aliases of job ${job} as literal JSON. Beepboop grants the aliases that setup reads from the workflow.`,
+					);
+				}
+				return found.credentials.map(credential => ({ operation, file, ...credential }));
+			};
 			const granted = [
 				...(['prepare', 'promote'] as const).flatMap(operation =>
 					Object.values(selection[operation]?.credentials ?? {}).map(alias => ({
@@ -612,23 +624,11 @@ function drafted(
 						alias,
 					}))
 				),
-				...(['prepare', 'promote'] as const).flatMap(operation => {
-					const file = selection[operation]?.file;
-					return workflowCredentials(
-						file === undefined ? undefined : snapshot.files[`.github/workflows/${file}`],
-						operation,
-					).map(credential => ({ operation, file, ...credential }));
-				}),
+				...(['prepare', 'promote'] as const).flatMap(operation => requested(operation, selection[operation]?.file)),
 				...(selection.operations ?? []).flatMap(entry =>
 					Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, file: entry.file, alias }))
 				),
-				...(selection.operations ?? []).flatMap(entry =>
-					workflowCredentials(snapshot.files[`.github/workflows/${entry.file}`], entry.name).map(credential => ({
-						operation: entry.name,
-						file: entry.file,
-						...credential,
-					}))
-				),
+				...(selection.operations ?? []).flatMap(entry => requested(entry.name, entry.file)),
 			];
 			const credentials = [
 				...new Set([

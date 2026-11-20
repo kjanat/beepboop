@@ -148,6 +148,50 @@ test('a ref plan publishes from a job without a checkout and removes its scratch
 	}
 });
 
+test('a job without a checkout tags with the step identity and replays its published tag object', async () => {
+	const { checkout, origin, old, fixed, plan, dispose } = moving();
+	const workspace = mkdtempSync(join(tmpdir(), 'beepboop-workspace-'));
+	const names = [
+		'GIT_CONFIG_GLOBAL',
+		'GIT_CONFIG_NOSYSTEM',
+		'GIT_CONFIG_COUNT',
+		'GIT_CONFIG_KEY_0',
+		'GIT_CONFIG_VALUE_0',
+		'GIT_COMMITTER_NAME',
+		'GIT_COMMITTER_EMAIL',
+		'GIT_COMMITTER_DATE',
+	];
+	const saved = names.map(name => [name, process.env[name]] as const);
+	Object.assign(process.env, {
+		GIT_CONFIG_GLOBAL: '/dev/null',
+		GIT_CONFIG_NOSYSTEM: '1',
+		GIT_CONFIG_COUNT: '1',
+		GIT_CONFIG_KEY_0: 'user.useConfigOnly',
+		GIT_CONFIG_VALUE_0: 'true',
+		GIT_COMMITTER_NAME: 'beepboop[bot]',
+		GIT_COMMITTER_EMAIL: 'bot@example.com',
+		GIT_COMMITTER_DATE: '1767225600 +0000',
+	});
+	try {
+		gitOutput(checkout.dir, ['push', '-q', origin, `${fixed}:refs/heads/main`]);
+		await Effect.runPromise(publishRefs(plan(old), workspace, origin));
+		const published = gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0']);
+		expect(gitOutput(origin, ['cat-file', '-p', published])).toContain(
+			'tagger beepboop[bot] <bot@example.com> 1767225600 +0000',
+		);
+		process.env.GIT_COMMITTER_DATE = '1767229200 +0000';
+		await Effect.runPromise(publishRefs(plan(old), workspace, origin));
+		expect([gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0']), readdirSync(workspace)]).toEqual([published, []]);
+	} finally {
+		for (const [name, value] of saved) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+		rmSync(workspace, { recursive: true, force: true });
+		dispose();
+	}
+});
+
 test('a replacing ref plan leaves a tag alone that moved since the plan', async () => {
 	const { checkout, origin, old, plan, dispose } = moving();
 	try {

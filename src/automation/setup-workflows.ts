@@ -137,16 +137,27 @@ export interface WorkflowCredential {
 	alias: string;
 	environment?: string;
 }
+export interface WorkflowCredentials {
+	credentials: WorkflowCredential[];
+	unresolved: string[];
+}
 function operationGate(operation: string): string {
 	return expression(`inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}'`);
 }
+function guards(job: unknown, operation: string): boolean {
+	const condition = (value: unknown) => {
+		const source = String(value ?? '').trim();
+		return (/^\$\{\{([\s\S]*)\}\}$/.exec(source)?.[1] ?? source).replace(/\s+/g, '');
+	};
+	return condition(object(job).if) === condition(operationGate(operation));
+}
 function runsOperation(job: unknown, operation: string): boolean {
 	const begin = stepsOf(job).find(step => actionRole(step.uses) === 'begin');
-	return begin ? object(begin.with).operation === operation : object(job).if === operationGate(operation);
+	return begin ? object(begin.with).operation === operation : guards(job, operation);
 }
-export function workflowCredentials(source: string | undefined, operation: string): WorkflowCredential[] {
-	const found = new Map<string, WorkflowCredential>();
-	for (const job of Object.values(jobsOf(source)).filter(job => runsOperation(job, operation))) {
+export function workflowCredentials(source: string | undefined, operation: string): WorkflowCredentials {
+	const found = new Map<string, WorkflowCredential>(), unresolved = new Set<string>();
+	for (const [name, job] of Object.entries(jobsOf(source)).filter(([, job]) => runsOperation(job, operation))) {
 		const declared = object(job).environment;
 		const environment = typeof declared === 'string' ? declared : object(declared).name;
 		for (const step of stepsOf(job)) {
@@ -157,11 +168,14 @@ export function workflowCredentials(source: string | undefined, operation: strin
 				? object(step.with).credentials
 				: undefined;
 			if (input === undefined) continue;
-			const parsed = Result.getOrElse(
-				Result.try((): unknown => JSON.parse(String(input))),
-				(): unknown => [],
-			);
-			const aliases: unknown[] = Array.isArray(parsed) ? parsed : Object.values(object(parsed));
+			const parsed = Result.try((): unknown => JSON.parse(String(input)));
+			if (Result.isFailure(parsed) || String(input).includes('${{')) {
+				unresolved.add(name);
+				continue;
+			}
+			const aliases: unknown[] = Array.isArray(parsed.success)
+				? parsed.success
+				: Object.values(object(parsed.success));
 			for (const alias of aliases) {
 				if (typeof alias !== 'string' || !alias) continue;
 				const credential = typeof environment === 'string' ? { alias, environment } : { alias };
@@ -169,13 +183,16 @@ export function workflowCredentials(source: string | undefined, operation: strin
 			}
 		}
 	}
-	return [...found.values()];
+	return { credentials: [...found.values()], unresolved: [...unresolved] };
 }
 function isCheckout(step: Record<string, unknown>): boolean {
 	return typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@');
 }
 function plannedCheckout(steps: Record<string, unknown>[], begin: number, planned: (ref: unknown) => boolean): number {
-	return steps.findIndex((step, index) => index > begin && isCheckout(step) && planned(object(step.with).ref));
+	return steps.findIndex((step, index) =>
+		index > begin && isCheckout(step) && step.if === undefined && !step['continue-on-error']
+		&& planned(object(step.with).ref)
+	);
 }
 function wiredJobs(jobs: Record<string, unknown>, stream: string, operation: string): string[] {
 	const generated = Object.entries(jobs).some(([name, job]) =>
@@ -370,8 +387,7 @@ export function integrateReleaseWorkflow(
 		const built = Object.keys(jobs).filter(name => ownedBinaryJob(name, object(jobs[name])));
 		if (
 			existing && (Object.keys(jobs).length - built.length !== 2
-				|| object(jobs[prepareJob]).if !== operationGate('prepare')
-				|| object(jobs[publishJob]).if !== operationGate('promote')
+				|| !guards(jobs[prepareJob], 'prepare') || !guards(jobs[publishJob], 'promote')
 				|| Object.keys(object(raw.on)).some(event => event !== 'workflow_dispatch'))
 		) {
 			return fail('shared workflows need separate preparation and publication jobs guarded by beepboop_operation');

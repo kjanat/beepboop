@@ -401,8 +401,9 @@ Setup adopts a dispatch workflow that already calls `begin` in several jobs
 and leaves the file as it is. Every job with `begin` needs `id-token: write`.
 Every checkout in such a job checks out the begin context `sourceSha`, or a job
 output that carries it. A checkout before `begin` may load a local `begin`
-action from the dispatch ref when a later checkout selects that source. Every
-other required dispatch input needs a default.
+action from the dispatch ref when a later checkout selects that source and
+runs without `if` or `continue-on-error`. Every other required dispatch input
+needs a default.
 The `report` steps must cover every selected package, and `publish-refs` must
 tag the release when the stream pushes tags. A distribution release passes its
 files to each `publish-refs` step.
@@ -412,9 +413,10 @@ the `credentials` input of `actions/publish`, to the stream's `credentials`.
 It reads the prepare, promote and operation workflows. Merging the setup PR
 grants each alias to the operation and environment of its job. The `begin`
 step of a job names its operation. A job without `begin` takes the operation of
-its `beepboop_operation` condition. A job environment written as
-an expression blocks setup. Merging grants only aliases in the merged
-`credentials` list.
+its `beepboop_operation` condition, written with or without `${{ }}`. A job
+environment written as an expression blocks setup. A credential input that
+holds an expression or invalid JSON blocks setup. Merging grants only aliases
+in the merged `credentials` list.
 
 ## Publish through Beepboop
 

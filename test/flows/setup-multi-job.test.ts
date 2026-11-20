@@ -148,6 +148,18 @@ test('a credential job with an expression environment blocks the grant it cannot
 	]);
 });
 
+test('a credential step with an expression for its aliases blocks setup', async () => {
+	const repository = refsRepository(
+		workflow.replace(`aliases: '["crates-io"]'`, 'aliases: ${{ vars.RELEASE_ALIASES }}'),
+	);
+	const api = bearer(world, await world.cliSession());
+	await discoverSetup(api, repository.name);
+	const plan = await previewSetup(api, repository.name, choices());
+	expect(plan.blockers).toEqual([
+		'publish.yml: list the credential aliases of job crates-io as literal JSON. Beepboop grants the aliases that setup reads from the workflow.',
+	]);
+});
+
 test('merging the adoption PR grants each workflow credential in its job environment', async () => {
 	const repository = refsRepository();
 	const api = bearer(world, await world.cliSession());
@@ -165,7 +177,7 @@ test('merging the adoption PR grants each workflow credential in its job environ
 
 const base = readFileSync(join(import.meta.dir, '../fixtures/workflows/multi-job-minimal.yml'), 'utf8');
 
-function integrated(
+function integration(
 	source: string,
 	options: { tagPrefix?: string; release?: boolean; job?: string; files?: readonly string[] } = {},
 ) {
@@ -194,9 +206,49 @@ function integrated(
 		options.files ? [...options.files] : undefined,
 	);
 	if (Result.isFailure(result)) throw result.failure;
-	expect(result.success.content).toBe(source);
 	return result.success;
 }
+
+function integrated(
+	source: string,
+	options: { tagPrefix?: string; release?: boolean; job?: string; files?: readonly string[] } = {},
+) {
+	const result = integration(source, options);
+	expect(result.content).toBe(source);
+	return result;
+}
+
+test('a single job counts only an unconditional planned checkout after its existing begin step', () => {
+	const single = [
+		'name: Publish',
+		'run-name: ${{ inputs.beepboop_title || github.workflow }}',
+		'on:',
+		'  workflow_dispatch:',
+		'    inputs:',
+		'      beepboop_execution_id: { type: string, required: true }',
+		'      beepboop_title: { type: string, required: false }',
+		'permissions: { contents: read, id-token: write }',
+		'jobs:',
+		'  publish:',
+		'    runs-on: ubuntu-latest',
+		'    steps:',
+		'      - uses: actions/checkout@v7',
+		'      - uses: ./actions/begin',
+		'        id: beepboop',
+		'        with: { execution-id: "${{ inputs.beepboop_execution_id }}", stream: main, operation: promote }',
+		'      - uses: actions/checkout@v7',
+		'        with: { ref: "${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}" }',
+		'      - run: npm publish',
+		'',
+	].join('\n');
+	const blocker = 'publish.yml: checkout the execution sourceSha after begin';
+	expect(integration(single).blockers).not.toContain(blocker);
+	const conditional = single.replace(
+		'      - uses: actions/checkout@v7\n        with: { ref:',
+		'      - uses: actions/checkout@v7\n        if: false\n        with: { ref:',
+	);
+	expect(integration(conditional).blockers).toContain(blocker);
+});
 
 test('a workflow wired across jobs, or one wired job that depends on another, stays unchanged', () => {
 	expect(integrated(base)).toEqual({
@@ -348,6 +400,19 @@ for (
 			),
 			['job build: check out the begin context sourceSha, or a job output that carries it'],
 		],
+		...['if: ${{ false }}', 'if: false', 'continue-on-error: true'].map(guard =>
+			[
+				`a bootstrap checkout whose planned checkout has ${guard}`,
+				base.replace(
+					'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+					'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+				).replace(
+					'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
+					`      - uses: actions/checkout@v7\n        ${guard}\n        with: { ref: "\${{ fromJSON(`,
+				),
+				['job build: check out the begin context sourceSha, or a job output that carries it'],
+			] as const
+		),
 		[
 			'a checkout of the dispatch commit',
 			base.replace('"${{ fromJSON(steps.start.outputs.context).sourceSha }}"', '"${{ github.sha }}"'),
@@ -419,7 +484,7 @@ for (
 	});
 }
 
-test('workflow credentials carry the environment of their job and belong to its operation', () => {
+test('workflow credentials carry the environment of their job, belong to its operation and name unreadable requests', () => {
 	const source = [
 		'jobs:',
 		'  first:',
@@ -446,6 +511,22 @@ test('workflow credentials carry the environment of their job and belong to its 
 		'      - uses: kjanat/beepboop/actions/publish@v1',
 		'        with: { credentials: \'{"NODE_AUTH_TOKEN": "npm-token"}\' }',
 		'      - uses: actions/checkout@v7',
+		'  unwrapped:',
+		"    if: inputs.beepboop_operation  ==  'publish'",
+		'    steps:',
+		'      - uses: kjanat/beepboop/actions/credentials@v1',
+		'        with: { aliases: \'["unwrapped-token"]\' }',
+		'  expressed:',
+		'    steps:',
+		'      - uses: kjanat/beepboop/actions/begin@v1',
+		'        with: { operation: promote }',
+		'      - uses: kjanat/beepboop/actions/credentials@v1',
+		'        with: { aliases: "${{ vars.RELEASE_ALIASES }}" }',
+		'  embedded:',
+		"    if: ${{ inputs.beepboop_operation == 'publish' }}",
+		'    steps:',
+		'      - uses: kjanat/beepboop/actions/publish@v1',
+		'        with: { credentials: \'{"TOKEN": "${{ vars.TOKEN }}"}\' }',
 		'  preparation:',
 		"    if: ${{ inputs.beepboop_operation == 'publish' }}",
 		'    steps:',
@@ -458,13 +539,17 @@ test('workflow credentials carry the environment of their job and belong to its 
 		'      - uses: kjanat/beepboop/actions/credentials@v1',
 		'        with: { aliases: \'["stray-token"]\' }',
 	].join('\n');
-	expect(workflowCredentials(source, 'promote')).toEqual([
-		{ alias: 'crates-io', environment: 'crates-io' },
-		{ alias: 'npm-token' },
-		{ alias: 'npm-token', environment: 'npm' },
-	]);
-	expect(workflowCredentials(source, 'prepare')).toEqual([{ alias: 'prepare-token' }]);
-	expect(workflowCredentials(undefined, 'promote')).toEqual([]);
+	expect(workflowCredentials(source, 'promote')).toEqual({
+		credentials: [
+			{ alias: 'crates-io', environment: 'crates-io' },
+			{ alias: 'npm-token' },
+			{ alias: 'npm-token', environment: 'npm' },
+			{ alias: 'unwrapped-token' },
+		],
+		unresolved: ['second', 'expressed', 'embedded'],
+	});
+	expect(workflowCredentials(source, 'prepare')).toEqual({ credentials: [{ alias: 'prepare-token' }], unresolved: [] });
+	expect(workflowCredentials(undefined, 'promote')).toEqual({ credentials: [], unresolved: [] });
 	expect([...workflowActions(source)].sort()).toEqual(['begin', 'credentials', 'publish']);
 });
 
