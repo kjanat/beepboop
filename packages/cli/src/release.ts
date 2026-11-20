@@ -399,7 +399,7 @@ export function releaseRepository(
 				sourceSha: summary.sourceSha,
 				planId: summary.planId,
 				...(merging ? { versionPrMerge: merging } : {}),
-				...(started ? { start: true } : {}),
+				start: started,
 				...(options.force ? { force: true } : {}),
 			}),
 			created =>

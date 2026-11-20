@@ -54,10 +54,11 @@ response alongside `repositoryId`, `stream`, and `plan`. A revision or plan
 mismatch is rejected. The fingerprint covers the resolved versions, edits,
 operation graph, configuration, and preset revisions. Single-release preparation
 also requires its preview's `sourceSha` and `planId`; the dashboard supplies them.
-`POST /api/releases/prepare` starts the release only when the request carries
-`"start": true` or `"force": true`, and refuses either when the preview answered
-`"starts": false`. Without them it prepares the release, and
-`promote.publishWhen` decides when it publishes.
+`POST /api/releases/prepare` takes `"start"`. With `"start": false` it
+prepares the release, and `promote.publishWhen` decides when it publishes.
+`"start": true` or `"force": true` starts the release, and is refused when the
+preview answered `"starts": false`. Without `start` or `force` the release
+starts when the preview answered `"starts": true`.
 The response is a preparation execution. Its immutable plan includes all groups
 and the operation graph. With `prepare.workflow`, the repository workflow applies
 the plan and regenerates lockfiles. Otherwise, Beepboop prepares the PR directly.

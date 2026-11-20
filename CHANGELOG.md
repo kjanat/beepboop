@@ -28,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `beepboop release` and the dashboard start a release on every stream that can start one: they bump the version and publish it, and nothing asks again. A stream that versions each package on its own, a tag-based stream without a promotion that publishes the version tag, and a stream that writes a new version only to version files still only prepare it. `startFrom` only lets the Start release workflow start releases. Setup ignores its `dashboard` and `cli` entries and removes them. Starting a version whose release stopped before its workflow ran restarts that release.
-- `POST /api/releases/prepare` starts a release only when the request carries `"start": true` or `"force": true`. `beepboop release` and the dashboard send `start` when the preview answers `"starts": true`. A request without either, such as one from an older CLI or `beepboop releases prepare`, prepares the release and follows `promote.publishWhen`.
+- `POST /api/releases/prepare` takes `"start"`. `"start": false` prepares the release, which then follows `promote.publishWhen`, and `beepboop releases prepare` sends it. `beepboop release` and the dashboard send the preview's `"starts"` answer. `"start": true` on a stream that cannot start is refused.
 
 ### Fixed
 

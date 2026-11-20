@@ -297,13 +297,12 @@ export const releaseEndpoints = {
 			if (input.sourceSha !== plan.sourceSha || input.planId !== planId) {
 				return yield* conflict('stale-plan', 'Release plan changed; preview it again');
 			}
-			const starting = input.start === true || input.force === true;
-			const refusal = starting
-				&& startRefusal(input.stream, selection.stream, plan, selection.repository.inventory, selected);
-			if (refusal) return yield* precondition(refusal);
-			const started: ReleaseStarted | undefined = starting
-				? { via: channel(request), actor, ...(input.force ? { force: true } : {}) }
-				: undefined;
+			const refusal = startRefusal(input.stream, selection.stream, plan, selection.repository.inventory, selected);
+			const asked = input.force === true || input.start === true;
+			if (refusal && asked) return yield* precondition(refusal);
+			const started: ReleaseStarted | undefined = refusal || (input.start === false && !input.force)
+				? undefined
+				: { via: channel(request), actor, ...(input.force ? { force: true } : {}) };
 			return yield* beginRelease(service, planned, input.stream, actor, started, input.versionPrMerge);
 		})),
 	releasesPlanSet: admin(

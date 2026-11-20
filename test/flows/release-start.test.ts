@@ -277,13 +277,13 @@ test.each(
 	else expect(run).not.toHaveProperty('started');
 });
 
-test('a request without start prepares a startable stream, and its merged version PR waits for approval', async () => {
+test('a request with start false prepares a startable stream, and its merged version PR waits for approval', async () => {
 	const { repository, api } = await configured([{ via: 'cli' }], 'pr');
 	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
 	const planned = await api('/api/releases/plan', request);
 	const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
 	expect(starts).toBe(true);
-	const prepared = await api('/api/releases/prepare', { ...request, sourceSha, planId });
+	const prepared = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: false });
 	expect(prepared.status).toBe(200);
 	expect(prepared.body).not.toHaveProperty('started');
 	await world.wait(16_000);
@@ -300,11 +300,29 @@ test('a request without start prepares a startable stream, and its merged versio
 	expect(promotion).not.toHaveProperty('started');
 });
 
-test('force without start still starts the release', async () => {
+test.each(
+	[
+		['workspace', { via: 'cli' }],
+		['independent', undefined],
+	] as const,
+)(
+	'a request without start, as an older CLI sends it, starts a %s stream only when it can',
+	async (versioning, started) => {
+		const { repository, api } = await configured([], 'pr', 'required', versioning);
+		const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
+		const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
+		const prepared = await api('/api/releases/prepare', { ...request, sourceSha, planId });
+		expect(prepared.status).toBe(200);
+		if (started) expect(prepared.body).toMatchObject({ started });
+		else expect(prepared.body).not.toHaveProperty('started');
+	},
+);
+
+test('force with start false still starts the release', async () => {
 	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
 	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
 	const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
-	const forced = await api('/api/releases/prepare', { ...request, sourceSha, planId, force: true });
+	const forced = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: false, force: true });
 	expect(forced.status).toBe(200);
 	expect(forced.body).toMatchObject({ started: { via: 'cli', force: true } });
 });

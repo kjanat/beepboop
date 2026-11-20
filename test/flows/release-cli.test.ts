@@ -367,6 +367,7 @@ for (const [bump, version] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major',
 			version: { bump },
 			sourceSha: plan.sourceSha,
 			planId: plan.planId,
+			start: false,
 		});
 		const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
 		expect(executions.map(execution => ({ operation: execution.operation, version: execution.version }))).toEqual([{
