@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { runFailedNote, settleRun } from '@/automation/execution';
+import { publishedAfterFailure, runFailedNote, settleRun } from '@/automation/execution';
 import { classifyJob, classifyRun, githubFailureReason } from '@/automation/github-state';
 import type { RunJob } from '@/automation/job-gate';
 import type { Execution } from '@/automation/types';
@@ -170,6 +170,32 @@ test('cancellation remains distinct from skipping without guessing who cancelled
 	expect(classifyJob(job('skipped')).kind).toBe('skipped');
 	expect(githubFailureReason(result)).toBe('GitHub workflow cancelled: Publish (cancelled)');
 	expect(githubFailureReason(result)).not.toContain('user');
+});
+
+test('a cancelled run settles as cancelled unless a required publication failed', () => {
+	const cancelled = classifyRun({ status: 'completed', conclusion: 'cancelled' }, [job('cancelled')]);
+	const unreported = settleRun(execution(), cancelled);
+	expect([unreported.state, unreported.reason]).toEqual([
+		'cancelled',
+		'GitHub workflow cancelled: Publish (cancelled)',
+	]);
+	const reported = settleRun({ ...execution(), publications: [{ ...published, outcome: 'cancelled' }] }, cancelled);
+	expect(reported.state).toBe('cancelled');
+	expect(decodeExecutionV1(JSON.parse(JSON.stringify(reported))).state).toBe('cancelled');
+	const broken = settleRun({ ...execution(), publications: [{ ...published, outcome: 'failed' }] }, cancelled);
+	expect(broken.state).toBe('failed');
+	const pending = settleRun({ ...execution(), publications: [{ ...published, outcome: 'pending' }] }, cancelled);
+	expect(pending.state).toBe('cancelled');
+	expect(publishedAfterFailure({ ...pending, publications: [published] })?.state).toBe('succeeded');
+	expect(publishedAfterFailure(pending)).toBeUndefined();
+});
+
+test('a cancelled required publication cancels a successful run', () => {
+	const settled = settleRun(
+		{ ...execution(), publications: [{ ...published, outcome: 'cancelled' }] },
+		classifyRun(succeeded),
+	);
+	expect(settled.state).toBe('cancelled');
 });
 
 test('action-required and startup failures do not invent an approval mechanism or workflow syntax error', () => {

@@ -14,6 +14,7 @@ import {
 	mergePublications,
 	publishedAfterFailure,
 	recheckable,
+	rechecked,
 	runTitle,
 	settle,
 	settleRun,
@@ -3924,7 +3925,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						if (publication && recheckable(publication)) {
 							const context = (yield* this.gateway).verification(execution.repository, execution.repositoryId);
 							const transport = (yield* Automation).dependencies.transport;
-							execution.publications[i] = yield* verifyPublication(publication, transport, context);
+							execution.publications[i] = rechecked(
+								publication,
+								yield* verifyPublication(publication, transport, context),
+							);
 						}
 					}
 					const limited = execution.publications.flatMap(publication =>
@@ -4135,7 +4139,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.publications,
 					publication =>
 						recheckable(publication)
-							? verifyPublication(publication, transport, context)
+							? verifyPublication(publication, transport, context).pipe(
+								Effect.map(checked => rechecked(publication, checked)),
+							)
 							: Effect.succeed(publication),
 					{ concurrency: 'unbounded' },
 				);
@@ -4225,7 +4231,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					.map((e) => e.stream),
 			);
 			const unresolved = (execution: Execution) =>
-				['succeeded', 'failed'].includes(execution.state) && execution.publications.some(recheckable);
+				['succeeded', 'failed', 'cancelled'].includes(execution.state) && execution.publications.some(recheckable);
 			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
 				yield* this.requestReconcile(started + reconcileInterval);
 			}

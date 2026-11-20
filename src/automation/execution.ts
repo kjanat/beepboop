@@ -200,6 +200,7 @@ export function completion(execution: Execution, runSucceeded: boolean): Executi
 	const publications = requiredPublications(execution);
 	if (publications.some((p) => p.outcome === 'failed')) return 'failed';
 	if (publications.some((p) => p.outcome === 'uncertain')) return 'uncertain';
+	if (publications.some((p) => p.outcome === 'cancelled')) return 'cancelled';
 	const open = publications.filter((p) => p.outcome !== 'succeeded');
 	if (!open.length) return 'succeeded';
 	return open.every(recheckable) ? 'verifying' : 'blocked';
@@ -231,19 +232,27 @@ export function settleRun(execution: Execution, result: GitHubRunResult): Execut
 	} else if (!succeeded) {
 		if (result.observation.kind === 'action-required') settled.state = 'blocked';
 		else if (result.observation.kind === 'unknown') settled.state = 'uncertain';
+		else if (
+			result.observation.kind === 'cancelled'
+			&& !requiredPublications(next).some((p) => p.outcome === 'failed')
+		) settled.state = 'cancelled';
 		settled.reason = githubFailureReason(result);
 	}
 	return settled;
 }
 export function publishedAfterFailure(execution: Execution): Execution | undefined {
-	if (execution.state !== 'failed' || execution.runId === undefined) return undefined;
+	if (!['failed', 'cancelled'].includes(execution.state) || execution.runId === undefined) return undefined;
 	const settled = execution.github?.completed
 		? settleRun(execution, { observation: execution.github, jobs: [], retry: undefined })
 		: settle(execution, false);
 	return settled.state === 'succeeded' ? settled : undefined;
 }
 export function recheckable(publication: Publication): boolean {
-	return canVerifyPublication(publication.manager) && ['pending', 'uncertain'].includes(publication.outcome);
+	return canVerifyPublication(publication.manager)
+		&& ['pending', 'uncertain', 'cancelled'].includes(publication.outcome);
+}
+export function rechecked(prior: Publication, checked: Publication): Publication {
+	return prior.outcome === 'cancelled' && checked.outcome !== 'succeeded' ? prior : checked;
 }
 export function mergePublications(
 	prior: Publication[],

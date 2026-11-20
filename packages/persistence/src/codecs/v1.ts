@@ -193,7 +193,7 @@ const releaseSetPlan: Schema.Codec<ReleaseSetPlan, unknown> = mutableStruct({
 	requiresPreparation: Schema.Boolean,
 });
 const plan = Schema.Union([releasePlan, releaseSetPlan]);
-const outcome = Schema.Literals(['pending', 'succeeded', 'failed', 'uncertain', 'skipped']);
+const outcome = Schema.Literals(['pending', 'succeeded', 'failed', 'cancelled', 'uncertain', 'skipped']);
 const publicationFields = mutableStruct({
 	identity: Schema.optional(identity),
 	id: Schema.String,

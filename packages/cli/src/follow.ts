@@ -62,6 +62,7 @@ export interface Followed {
 const outcomeState: Record<string, State> = {
 	succeeded: 'published',
 	failed: 'failed',
+	cancelled: 'skipped',
 	skipped: 'skipped',
 	pending: 'waiting',
 	uncertain: 'waiting',

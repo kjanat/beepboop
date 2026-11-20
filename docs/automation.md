@@ -506,8 +506,9 @@ job, leaves the execution `failed` for you to retry.
 
 GitHub runs and jobs retain their raw status and conclusion. Requested, pending,
 queued and waiting jobs appear as waiting; cancellation is distinct from skipping.
-A completed `action_required` run blocks for action on GitHub, a startup failure
-stops the execution, and an unrecognized outcome stays uncertain. These outcomes
+A completed `action_required` run blocks for action on GitHub, a cancelled run
+cancels the execution, a startup failure stops the execution, and an
+unrecognized outcome stays uncertain. These outcomes
 never trigger an automatic retry; the conclusion alone does not identify who
 cancelled a run, what action is required, or why startup failed.
 
@@ -876,8 +877,10 @@ Artifact fields are `id`, `runId`, `name`, `digest` and `expiresAt`. Beepboop
 checks them against GitHub's API.
 
 Every required publication must succeed. Missing or skipped required results
-block completion. A registry outage produces an uncertain result. Beepboop
-shows optional failures next to the required results.
+block completion. A cancelled required result cancels the execution. Beepboop
+keeps checking the registry for a cancelled result and marks the execution
+succeeded when the version appears. A registry outage produces an uncertain
+result. Beepboop shows optional failures next to the required results.
 
 ## Paced publishing
 

@@ -728,14 +728,14 @@ function integrate(
 				version: `\u0024{{ fromJSON(steps.${id}.outputs.context).version }}`,
 				required: required.includes(packageId(pkg)),
 				outcome: step === 'beepboop_publish' && crateOutcome(choice.commands, pkg.name)
-					? `\u0024{{ steps.${step}.outputs['${pkg.name}'] == 'succeeded' && 'succeeded' || 'failed' }}`
-					: `\u0024{{ steps.${step}.outcome == 'success' && 'succeeded' || 'failed' }}`,
+					? `\u0024{{ steps.${step}.outputs['${pkg.name}'] == 'succeeded' && 'succeeded' || job.status == 'cancelled' && 'cancelled' || 'failed' }}`
+					: `\u0024{{ steps.${step}.outcome == 'success' && 'succeeded' || job.status == 'cancelled' && 'cancelled' || 'failed' }}`,
 			};
 		});
 		if (!ledger || publications.length) {
 			steps.push({
 				uses: action('report'),
-				if: `\u0024{{ !cancelled() && steps.${id}.outcome == 'success' }}`,
+				if: `\u0024{{ always() && steps.${id}.outcome == 'success' }}`,
 				with: {
 					'execution-id': `\u0024{{ steps.${id}.outputs.execution-id }}`,
 					publications: `${JSON.stringify(publications, null, 2)}\n`,

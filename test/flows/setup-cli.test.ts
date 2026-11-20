@@ -324,7 +324,10 @@ jobs:
 		JSON.parse(steps.find(step => step.with?.publications)?.with?.publications ?? '[]'),
 	);
 	expect(publications.map(pkg => [pkg.name, pkg.outcome])).toEqual([
-		['package-a', "${{ steps.publish_a.outcome == 'success' && 'succeeded' || 'failed' }}"],
+		[
+			'package-a',
+			"${{ steps.publish_a.outcome == 'success' && 'succeeded' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
+		],
 	]);
 });
 

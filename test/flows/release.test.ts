@@ -159,7 +159,8 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(world.network.unrouted).toEqual([]);
 });
 
-async function finishedPromotion(outcome: 'pending' | 'skipped') {
+async function finishedPromotion(outcome: 'pending' | 'skipped' | 'cancelled') {
+	const conclusion = outcome === 'cancelled' ? 'cancelled' : 'success';
 	const session = await world.cliSession();
 	const repository = await discoveredWidget(world, session);
 	const api = bearer(world, session);
@@ -187,8 +188,8 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 		]),
 	});
 	run.status = 'completed';
-	run.conclusion = 'success';
-	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+	run.conclusion = conclusion;
+	await world.workflowRun(repository, run, conclusion, 'workflow_dispatch');
 	await world.wait(2_000);
 	const entry = (await world.coordinator(repository).exportJournal()).find(entry =>
 		entry.key === `execution:${promotion.id}`
@@ -870,7 +871,7 @@ test('a release stays publishing until the observed workflow that owns its packa
 	});
 	const configuration = configured(owned);
 	const promoted: Execution = { ...finished, configuration, state: 'succeeded', publications: [], createdAt: 1 };
-	const observed = (state: Execution['state'], outcome: 'succeeded' | 'failed'): Execution => ({
+	const observed = (state: Execution['state'], outcome: 'succeeded' | 'failed' | 'cancelled'): Execution => ({
 		...promoted,
 		id: 'observed',
 		operation: 'publish',
@@ -891,6 +892,7 @@ test('a release stays publishing until the observed workflow that owns its packa
 		false,
 	]);
 	expect(shown([promoted, observed('failed', 'failed')])[0]).toEqual({ tone: 'warn', label: 'Needs attention' });
+	expect(shown([promoted, observed('cancelled', 'cancelled')])[0]).toEqual({ tone: 'warn', label: 'Needs attention' });
 	const alone = { ...promoted, configuration: configured({}) };
 	expect(shown([alone])[0]).toEqual({ tone: 'ok', label: 'succeeded' });
 });
@@ -1037,6 +1039,32 @@ test('a finished run whose publication cannot be rechecked is blocked and needs 
 	};
 	expect(releaseSetSummaries([{ ...finished, state: 'blocked', releaseSet }]).map(summary => summary.state)).toEqual([
 		'needs attention',
+	]);
+});
+
+test('a cancelled run with a cancelled publication settles as cancelled', async () => {
+	const { finished, stored } = await finishedPromotion('cancelled');
+	expect(finished.state).toBe('cancelled');
+	expect(finished.publications.map(publication => publication.outcome)).toEqual(['cancelled']);
+	expect(decodeExecutionV1(stored).state).toBe('cancelled');
+});
+
+test('a cancelled publication that reached the registry settles as succeeded', async () => {
+	const { api } = await finishedPromotion('cancelled');
+	world.network.serve('registry.npmjs.org', () => new Response('missing', { status: 404 }));
+	await world.wait(61_000);
+	const missing = await only(api, 'promote');
+	expect([missing.state, missing.publications.map(publication => publication.outcome)]).toEqual([
+		'cancelled',
+		['cancelled'],
+	]);
+	world.network.serve('registry.npmjs.org', request => world.npm.handle(request));
+	world.npm.publish('widget', '1.1.0');
+	await world.wait(61_000);
+	const settled = await only(api, 'promote');
+	expect([settled.state, settled.publications.map(publication => publication.outcome)]).toEqual([
+		'succeeded',
+		['succeeded'],
 	]);
 });
 

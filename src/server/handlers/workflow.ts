@@ -18,7 +18,7 @@ import type { EnrolledContext } from '@/server/handlers/kit';
 import { workflow, workflowToken } from '@/server/handlers/kit';
 import { beginRelease, releasePlan } from '@/server/handlers/releases';
 
-const outcomes = ['pending', 'succeeded', 'failed', 'uncertain', 'skipped', 'rate-limited'] as const;
+const outcomes = ['pending', 'succeeded', 'failed', 'cancelled', 'uncertain', 'skipped', 'rate-limited'] as const;
 const reportedFields = mutableStruct({
 	id: Schema.String.check(Schema.isMinLength(1)),
 	manager: Schema.Literals(reportableManagerNames).annotate({ message: 'Invalid publication' }),

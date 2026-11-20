@@ -176,7 +176,11 @@ await main(Effect.gen(function*() {
 				name: npm.name,
 				version: npm.version,
 				required: true,
-				outcome: process.env[`${manager.toUpperCase()}_OUTCOME`] === 'success' ? 'succeeded' : 'failed',
+				outcome: process.env[`${manager.toUpperCase()}_OUTCOME`] === 'success'
+					? 'succeeded'
+					: process.env.JOB_STATUS === 'cancelled'
+					? 'cancelled'
+					: 'failed',
 				...(manager === 'npm'
 					? { channel, ...(process.env.NPM_INTEGRITY ? { digest: process.env.NPM_INTEGRITY } : {}) }
 					: {}),
