@@ -728,8 +728,8 @@ function integrate(
 				version: `\u0024{{ fromJSON(steps.${id}.outputs.context).version }}`,
 				required: required.includes(packageId(pkg)),
 				outcome: step === 'beepboop_publish' && crateOutcome(choice.commands, pkg.name)
-					? `\u0024{{ steps.${step}.outputs['${pkg.name}'] == 'succeeded' && 'succeeded' || steps.${step}.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}`
-					: `\u0024{{ steps.${step}.outcome == 'success' && 'succeeded' || steps.${step}.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}`,
+					? `\u0024{{ case(steps.${step}.outputs['${pkg.name}'] == 'succeeded', 'succeeded', steps.${step}.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}`
+					: `\u0024{{ case(steps.${step}.outcome == 'success', 'succeeded', steps.${step}.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}`,
 			};
 		});
 		if (!ledger || publications.length) {
