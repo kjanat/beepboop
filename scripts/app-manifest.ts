@@ -25,7 +25,7 @@ await main(Effect.gen(function*() {
 					checks: 'read',
 					statuses: 'read',
 					secrets: 'read',
-					variables: 'read',
+					actions_variables: 'read',
 					environments: 'read',
 				},
 				default_events: [

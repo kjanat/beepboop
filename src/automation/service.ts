@@ -212,7 +212,7 @@ export class AutomationService {
 				contents: 'read',
 				actions: 'read',
 				secrets: 'read',
-				variables: 'read',
+				actions_variables: 'read',
 				environments: 'read',
 			}).github,
 			cargoToken: (file, secrets) => Effect.gen({ self: this }, function*() {
