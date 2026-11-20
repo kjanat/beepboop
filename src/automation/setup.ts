@@ -614,14 +614,16 @@ function drafted(
 				),
 				...(['prepare', 'promote'] as const).flatMap(operation => {
 					const file = selection[operation]?.file;
-					return workflowCredentials(file === undefined ? undefined : snapshot.files[`.github/workflows/${file}`])
-						.map(credential => ({ operation, file, ...credential }));
+					return workflowCredentials(
+						file === undefined ? undefined : snapshot.files[`.github/workflows/${file}`],
+						operation,
+					).map(credential => ({ operation, file, ...credential }));
 				}),
 				...(selection.operations ?? []).flatMap(entry =>
 					Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, file: entry.file, alias }))
 				),
 				...(selection.operations ?? []).flatMap(entry =>
-					workflowCredentials(snapshot.files[`.github/workflows/${entry.file}`]).map(credential => ({
+					workflowCredentials(snapshot.files[`.github/workflows/${entry.file}`], entry.name).map(credential => ({
 						operation: entry.name,
 						file: entry.file,
 						...credential,

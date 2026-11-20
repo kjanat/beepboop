@@ -137,9 +137,16 @@ export interface WorkflowCredential {
 	alias: string;
 	environment?: string;
 }
-export function workflowCredentials(source: string | undefined): WorkflowCredential[] {
+function operationGate(operation: string): string {
+	return expression(`inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}'`);
+}
+function runsOperation(job: unknown, operation: string): boolean {
+	const begin = stepsOf(job).find(step => actionRole(step.uses) === 'begin');
+	return begin ? object(begin.with).operation === operation : object(job).if === operationGate(operation);
+}
+export function workflowCredentials(source: string | undefined, operation: string): WorkflowCredential[] {
 	const found = new Map<string, WorkflowCredential>();
-	for (const job of Object.values(jobsOf(source))) {
+	for (const job of Object.values(jobsOf(source)).filter(job => runsOperation(job, operation))) {
 		const declared = object(job).environment;
 		const environment = typeof declared === 'string' ? declared : object(declared).name;
 		for (const step of stepsOf(job)) {
@@ -163,6 +170,12 @@ export function workflowCredentials(source: string | undefined): WorkflowCredent
 		}
 	}
 	return [...found.values()];
+}
+function isCheckout(step: Record<string, unknown>): boolean {
+	return typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@');
+}
+function plannedCheckout(steps: Record<string, unknown>[], begin: number, planned: (ref: unknown) => boolean): number {
+	return steps.findIndex((step, index) => index > begin && isCheckout(step) && planned(object(step.with).ref));
 }
 function wiredJobs(jobs: Record<string, unknown>, stream: string, operation: string): string[] {
 	const generated = Object.entries(jobs).some(([name, job]) =>
@@ -231,19 +244,20 @@ function acrossJobs(
 			problems.push(`job ${name} needs id-token: write`);
 		}
 		const started = steps.findIndex(step => actionRole(step.uses) === 'begin');
+		const planned = (value: unknown) => {
+			const ref = inner(value), needed = /^needs\.([\w-]+)\.outputs\.([\w-]+)$/.exec(ref ?? '');
+			return ref === sourceOf(job)
+				|| !!(needed?.[1] && needed[2] && jobNeeds(object(job).needs).includes(needed[1])
+					&& carriesSource(needed[1], needed[2]));
+		};
+		const bootstrapped = plannedCheckout(steps, started, planned) >= 0;
 		for (const [index, step] of steps.entries()) {
 			const action = beepboopAction(step.uses);
 			if (action) used.add(action);
-			if (typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')) {
-				const ref = inner(object(step.with).ref);
-				const needed = /^needs\.([\w-]+)\.outputs\.([\w-]+)$/.exec(ref ?? '');
-				if (ref === sourceOf(job) && index < started) {
+			if (isCheckout(step)) {
+				if (inner(object(step.with).ref) === sourceOf(job) && index < started) {
 					problems.push(`job ${name}: check out the begin context sourceSha after the begin step`);
-				} else if (
-					ref !== sourceOf(job)
-					&& !(needed?.[1] && needed[2] && jobNeeds(object(job).needs).includes(needed[1])
-						&& carriesSource(needed[1], needed[2]))
-				) {
+				} else if (!planned(object(step.with).ref) && !(bootstrapped && index < started)) {
 					problems.push(`job ${name}: check out the begin context sourceSha, or a job output that carries it`);
 				}
 			}
@@ -348,8 +362,6 @@ export function integrateReleaseWorkflow(
 		if (prepare.file !== promote.file || prepareJob === publishJob) {
 			return fail('preparation and publication need different jobs');
 		}
-		const gate = (operation: 'prepare' | 'promote') =>
-			expression(`inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}'`);
 		const document = parseDocument(snapshot.files[path] ?? 'name: Release\non: {}\njobs: {}\n');
 		if (document.errors.length) return fail('invalid YAML');
 		const existing = snapshot.files[path] !== undefined;
@@ -358,7 +370,8 @@ export function integrateReleaseWorkflow(
 		const built = Object.keys(jobs).filter(name => ownedBinaryJob(name, object(jobs[name])));
 		if (
 			existing && (Object.keys(jobs).length - built.length !== 2
-				|| object(jobs[prepareJob]).if !== gate('prepare') || object(jobs[publishJob]).if !== gate('promote')
+				|| object(jobs[prepareJob]).if !== operationGate('prepare')
+				|| object(jobs[publishJob]).if !== operationGate('promote')
 				|| Object.keys(object(raw.on)).some(event => event !== 'workflow_dispatch'))
 		) {
 			return fail('shared workflows need separate preparation and publication jobs guarded by beepboop_operation');
@@ -395,10 +408,10 @@ export function integrateReleaseWorkflow(
 			default: 'publish',
 			required: true,
 		});
-		combined.setIn(['jobs', prepareJob, 'if'], gate('prepare'));
-		combined.setIn(['jobs', publishJob, 'if'], gate('promote'));
+		combined.setIn(['jobs', prepareJob, 'if'], operationGate('prepare'));
+		combined.setIn(['jobs', publishJob, 'if'], operationGate('promote'));
 		for (const name of promote.binaries ? [beginJobId, ...promote.binaries.builds.map(buildJobId)] : []) {
-			combined.setIn(['jobs', name, 'if'], gate('promote'));
+			combined.setIn(['jobs', name, 'if'], operationGate('promote'));
 		}
 		return { content: matchEnding(renderWorkflow(combined), snapshot.files[path]), blockers, notes };
 	});
@@ -669,7 +682,7 @@ function integrate(
 			fail('existing begin action must take inputs.beepboop_execution_id');
 		}
 	} else {
-		const checkouts = steps.filter(step => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
+		const checkouts = steps.filter(isCheckout);
 		if (checkouts.length > 1 || checkouts.some(step => object(step.with).path || object(step.with).repository)) {
 			fail('multiple or non-root checkouts need manual integration');
 		}
@@ -690,14 +703,8 @@ function integrate(
 	}
 	const beginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
 	const sourceRef = expression(`fromJSON(steps.${id}.outputs.context).sourceSha`);
-	if (
-		existingBegin
-		&& !steps.some((step, index) =>
-			index > beginIndex && typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
-			&& object(step.with).ref === sourceRef
-		)
-	) {
-		const checkouts = steps.filter(step => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
+	if (existingBegin && plannedCheckout(steps, beginIndex, ref => ref === sourceRef) < 0) {
+		const checkouts = steps.filter(isCheckout);
 		if (steps.slice(0, beginIndex).some(step => !checkouts.includes(step))) {
 			fail(
 				'steps before begin need explicit integration; prepare dependencies and build output after the planned checkout',
@@ -730,10 +737,7 @@ function integrate(
 		}
 	}
 	const integratedBeginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
-	const approvedIndex = steps.findIndex((step, index) =>
-		index > integratedBeginIndex && typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
-		&& object(step.with).ref === sourceRef
-	);
+	const approvedIndex = plannedCheckout(steps, integratedBeginIndex, ref => ref === sourceRef);
 	if (approvedIndex < 0) fail('checkout the execution sourceSha after begin');
 	const credentials = choice.credentials ?? {}, aliases = [...new Set(Object.values(credentials))];
 	const mise =

@@ -917,7 +917,7 @@ export class AutomationService {
 					),
 					...(['prepare', 'promote'] as const).flatMap(operation =>
 						workflowPath(stream[operation]?.file).flatMap(path =>
-							workflowCredentials(merged.files[path]).map(credential => ({ operation, ...credential }))
+							workflowCredentials(merged.files[path], operation).map(credential => ({ operation, ...credential }))
 						)
 					),
 					...(stream.operations ?? []).flatMap(entry =>
@@ -925,7 +925,10 @@ export class AutomationService {
 					),
 					...(stream.operations ?? []).flatMap(entry =>
 						workflowPath(entry.file).flatMap(path =>
-							workflowCredentials(merged.files[path]).map(credential => ({ operation: entry.name, ...credential }))
+							workflowCredentials(merged.files[path], entry.name).map(credential => ({
+								operation: entry.name,
+								...credential,
+							}))
 						)
 					),
 				];

@@ -230,6 +230,11 @@ test('a workflow wired across jobs, or one wired job that depends on another, st
 	expect(integrated(handBegun).notes).toEqual([
 		'publish.yml: runs Beepboop in jobs begin, publish; setup leaves the workflow unchanged.',
 	]);
+	const bootstrapped = base.replace(
+		'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+		'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+	);
+	expect(integrated(bootstrapped).blockers).toEqual([]);
 	const writeAll = base.replace('permissions: { contents: read, id-token: write }', 'permissions: write-all');
 	expect(integrated(writeAll).blockers).toEqual([]);
 	const conditional = single.replace('    needs: build\n', "    if: ${{ github.ref == 'refs/heads/main' }}\n");
@@ -333,6 +338,17 @@ for (
 			['job build: check out the begin context sourceSha after the begin step'],
 		],
 		[
+			'a bootstrap checkout without a planned checkout after begin',
+			base.replace(
+				'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+				'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+			).replace(
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(steps.start.outputs.context).sourceSha }}" }\n',
+				'',
+			),
+			['job build: check out the begin context sourceSha, or a job output that carries it'],
+		],
+		[
 			'a checkout of the dispatch commit',
 			base.replace('"${{ fromJSON(steps.start.outputs.context).sourceSha }}"', '"${{ github.sha }}"'),
 			['job build: check out the begin context sourceSha, or a job output that carries it'],
@@ -403,15 +419,18 @@ for (
 	});
 }
 
-test('workflow credentials carry the environment of their job', () => {
+test('workflow credentials carry the environment of their job and belong to its operation', () => {
 	const source = [
 		'jobs:',
 		'  first:',
 		'    environment: { name: crates-io, url: https://crates.io }',
 		'    steps:',
+		'      - uses: kjanat/beepboop/actions/begin@v1',
+		'        with: { operation: promote }',
 		'      - uses: kjanat/beepboop/actions/credentials@v1',
 		'        with: { aliases: \'["crates-io", 7, ""]\' }',
 		'  second:',
+		"    if: ${{ inputs.beepboop_operation == 'publish' }}",
 		'    steps:',
 		'      - uses: $/actions/credentials',
 		'        with: { aliases: \'["npm-token"]\' }',
@@ -422,17 +441,31 @@ test('workflow credentials carry the environment of their job', () => {
 		'  third:',
 		'    environment: npm',
 		'    steps:',
+		'      - uses: kjanat/beepboop/actions/begin@v1',
+		'        with: { operation: promote }',
 		'      - uses: kjanat/beepboop/actions/publish@v1',
 		'        with: { credentials: \'{"NODE_AUTH_TOKEN": "npm-token"}\' }',
 		'      - uses: actions/checkout@v7',
+		'  preparation:',
+		"    if: ${{ inputs.beepboop_operation == 'publish' }}",
+		'    steps:',
+		'      - uses: kjanat/beepboop/actions/begin@v1',
+		'        with: { operation: prepare }',
+		'      - uses: kjanat/beepboop/actions/credentials@v1',
+		'        with: { aliases: \'["prepare-token"]\' }',
+		'  unguarded:',
+		'    steps:',
+		'      - uses: kjanat/beepboop/actions/credentials@v1',
+		'        with: { aliases: \'["stray-token"]\' }',
 	].join('\n');
-	expect(workflowCredentials(source)).toEqual([
+	expect(workflowCredentials(source, 'promote')).toEqual([
 		{ alias: 'crates-io', environment: 'crates-io' },
 		{ alias: 'npm-token' },
 		{ alias: 'npm-token', environment: 'npm' },
 	]);
-	expect(workflowCredentials(undefined)).toEqual([]);
-	expect([...workflowActions(source)].sort()).toEqual(['credentials', 'publish']);
+	expect(workflowCredentials(source, 'prepare')).toEqual([{ alias: 'prepare-token' }]);
+	expect(workflowCredentials(undefined, 'promote')).toEqual([]);
+	expect([...workflowActions(source)].sort()).toEqual(['begin', 'credentials', 'publish']);
 });
 
 test('merging a setup PR grants a credential once when the choice and the workflow both request it', async () => {
@@ -463,6 +496,48 @@ test('merging a setup PR grants a credential once when the choice and the workfl
 	expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(200);
 	await world.sealCredential('npm-token');
 	expect(await mergedGrants(repository)).toEqual([['npm-token', 'promote', 'release-widget.yml', undefined]]);
+});
+
+test('merging a shared workflow grants a publication credential to the publication operation only', async () => {
+	const repository = widget(world.github, { configured: false });
+	const api = bearer(world, await world.cliSession());
+	await discoverSetup(api, repository.name);
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			prepare: {
+				file: 'release-widget.yml',
+				job: 'prepare',
+				triggers: 'review',
+				commands: 'npm install',
+				publicationSteps: {},
+			},
+			promote: {
+				file: 'release-widget.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: 'npm publish',
+				publicationSteps: {},
+				credentials: { NODE_AUTH_TOKEN: 'npm-token' },
+			},
+		}],
+	};
+	const plan = await previewSetup(api, repository.name, choices);
+	expect(plan.blockers).toEqual([]);
+	expect(plan.notes.filter(note => note.includes('grants it the stored'))).toEqual([
+		'release-widget.yml: when the repository owner merges this PR, Beepboop grants it the stored npm-token secret for the promote operation.',
+	]);
+	expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(200);
+	await world.sealCredential('npm-token');
+	expect(await mergedGrants(repository)).toEqual([['npm-token', 'promote', 'release-widget.yml', undefined]]);
+	await discoverSetup(api, repository.name);
+	const merged = await previewSetup(api, repository.name, plan.choices);
+	expect(merged.notes.filter(note => note.includes('grants it the stored'))).toEqual([
+		'release-widget.yml: when the repository owner merges this PR, Beepboop grants it the stored npm-token secret for the promote operation.',
+	]);
 });
 
 test('package tags follow a plain v tag and keep a configured list', async () => {
