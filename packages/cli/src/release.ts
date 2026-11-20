@@ -5,7 +5,7 @@ import type { Client } from '@/cli/client';
 import { followRelease } from '@/cli/follow';
 import { lookOf, registryOf, step, table } from '@/cli/look';
 import { emit, failure, prompted, unprompted } from '@/cli/output';
-import { releaseStart, startsFrom, versionBump } from '@/contract/release-start';
+import { versionBump } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { semverPattern } from '@/contract/semver';
 import type { AutoMergeMethod, VersionPrMerge } from '@/contract/setup-terms';
@@ -115,7 +115,6 @@ const streamSchema = looseStruct({
 		approval: Schema.Literals(['required', 'merge', 'push']),
 		workflow: Schema.optional(mutableStruct({ file: Schema.String })),
 	}),
-	start: Schema.optional(mutableArray(releaseStart)),
 });
 const summarySchema = looseStruct({
 	version: Schema.String.check(Schema.isMinLength(1)),
@@ -297,7 +296,7 @@ export function releaseRepository(
 		);
 		const summary = yield* decode(summarySchema, plan);
 		if (summary.blockers?.length) return yield* Effect.fail(failure(summary.blockers.join('\n'), 'BLOCKED_PLAN'));
-		const started = startsFrom(stream.start, 'cli') !== undefined;
+		const started = plan.starts === true;
 		const committing = stream.prepare.bump === 'commit';
 		const pending = plan.edits.length > 0 || plan.requiresPreparation === true;
 		const publishes = direct || !pending;

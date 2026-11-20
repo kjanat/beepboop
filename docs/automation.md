@@ -293,7 +293,7 @@ and promotes through branch workflows and observes publication from a tag:
 | `credentials`            | Credential aliases that the stream requests. Access also needs an administrator grant.                                                                                                                                                                                                                                                                                                                                                                                   |
 | `concurrency`            | `queue`, or `supersede-pending` to cancel older undispatched operations.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `promote.publishWhen`    | When a version on the default branch publishes. `approved-in-beepboop`: you publish it with the Publish button in Beepboop or `beepboop runs publish`; approving or merging the version PR on GitHub does not publish. `version-pr-merged`: merging the version PR publishes it once the checks pass. `version-commit-pushed`: a signed commit that raises the version publishes it once the checks pass, with no review. Without a value, it is `approved-in-beepboop`. |
-| `startFrom`              | Where a release starts: `{ "via": "action", "workflow": "start-release.yml" }`, `{ "via": "dashboard" }` and `{ "via": "cli" }`, in any combination. Starting a release also publishes it, and nothing asks again. See [Start a release](#start-a-release).                                                                                                                                                                                                              |
+| `startFrom`              | `[{ "via": "action", "workflow": "start-release.yml" }]` lets the Start release workflow start releases. `beepboop release` and the dashboard start releases without it. Entries for `dashboard` and `cli` are ignored. See [Start a release](#start-a-release).                                                                                                                                                                                                         |
 | `prepare.versionLands`   | How a new version reaches the default branch. `via-version-pr`: Beepboop opens a version PR, and merging it puts the new version on the default branch. `via-direct-commit`: Beepboop pushes a signed commit with the new version straight to the default branch. Without a value, it is `via-version-pr`.                                                                                                                                                               |
 | `prepare.versionPrMerge` | Who merges the version PR. `manual`: you merge it yourself. `squash`, `merge` or `rebase`: Beepboop turns on GitHub auto-merge with that method, and GitHub merges the version PR once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it. Without a value, it is `manual`.                                                                                                                                      |
 
@@ -558,17 +558,22 @@ restarts a release of that version that stopped, and runs its workflow again
 when the workflow already failed. The `context` output of `actions/begin`
 carries `"force": true` for a forced release, so a publication workflow can
 skip its own tests, and `actions/publish` publishes a package that lacks
-metadata. Each stream lists where a release starts in `startFrom`:
+metadata.
+
+`beepboop release` and the dashboard start a release on every stream that can
+publish one shared version. Some streams only prepare the version, from both
+places: a stream that versions each package on its own, a tag-based stream
+without a promotion that publishes the version tag, and, when the release
+writes a new version, a stream that keeps its version only in version files
+or prepares it in its own workflow with `prepare.strategy:
+"workflow"`. The Start release workflow starts a
+release only when the stream lists it in `startFrom`:
 
 ```json
 {
   "streams": {
     "main": {
-      "startFrom": [
-        { "via": "action", "workflow": "start-release.yml" },
-        { "via": "dashboard" },
-        { "via": "cli" }
-      ],
+      "startFrom": [{ "via": "action", "workflow": "start-release.yml" }],
       "prepare": { "strategy": "managed", "versionLands": "via-direct-commit" },
       "promote": { "publishWhen": "approved-in-beepboop", "workflow": { "file": "release.yml" } }
     }
@@ -611,9 +616,8 @@ stays open, and Beepboop comments GitHub's reason on it and shows that note on
 the runs page. `beepboop release --auto`, `--no-auto` or `--merge` sets the
 method for one release; see [CLI usage](cli.md).
 
-A start through a channel the stream does not list prepares the release as
-before, and the version follows `promote.publishWhen`. A version raised on the
-default branch without a start also follows `promote.publishWhen`.
+A version raised on the default branch without a start follows
+`promote.publishWhen`.
 
 ## Prepare and promote
 
@@ -1681,7 +1685,7 @@ workflow from it. Every change goes through a setup PR.
 **Edit release setup** on the Repositories page and the interactive
 `beepboop adopt` edit every field of the setup choices. `startFrom`,
 `versionLands`, `versionPrMerge`, `publishWhen`, the tag prefix and the binary
-builds and targets have their own controls. The CLI asks for `startFrom`, `versionLands` and
+builds and targets have their own controls. The CLI asks whether the Start release workflow may start releases, and for `versionLands` and
 `publishWhen` when `.github/beepboop.json` holds none, and for the rest after
 **Customize**, which also asks for `versionPrMerge`. Fields without a dedicated control,
 `versionSource`, `versionFiles`, `needs`, `operations` and `credentials`, take
@@ -1721,8 +1725,8 @@ the end.
 
 The setup PR description lists each release stream with a checkbox for every
 publishable package, and for every proposed binary build and target. A release succeeds only when every ticked package
-publishes. Each stream also lists `startFrom` (`action`, `dashboard`, `cli`, tick
-any), `versionLands` (`via-version-pr` or `via-direct-commit`, tick one),
+publishes. Each stream also lists `startFrom` (`action`, ticked when the Start
+release workflow may start releases), `versionLands` (`via-version-pr` or `via-direct-commit`, tick one),
 `versionPrMerge` (`manual`, `squash`, `merge` or `rebase`, tick one, `manual`
 ticked until you change it) and
 `publishWhen` (`approved-in-beepboop`, `version-pr-merged` or

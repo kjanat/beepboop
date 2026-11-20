@@ -1790,9 +1790,9 @@ test("the adoption text states each stream's own publishWhen", async () => {
 	const adoption = (plan.adoption ?? []).join('\n');
 	const section = (name: string) =>
 		adoption.slice(adoption.indexOf(`### Stream \`${name}\``)).split('### Stream')[1] ?? '';
-	expect(section('alpha')).toContain('`publishWhen: version-pr-merged` applies:');
+	expect(section('alpha')).toContain('without a start follows `publishWhen: version-pr-merged`:');
 	expect(section('alpha')).not.toContain('`approved-in-beepboop`');
-	expect(section('beta')).toContain('`publishWhen: approved-in-beepboop` applies');
+	expect(section('beta')).toContain('without a start follows `publishWhen: approved-in-beepboop`');
 });
 
 const releaseText = async (setup: { stream: Record<string, unknown>; preset?: boolean }) => {
@@ -1819,7 +1819,7 @@ const widgetStream = (prepare: Record<string, unknown>, approval: string) => ({
 
 test('the adoption text uses the publishWhen a preset supplies', async () => {
 	const text = await releaseText({ stream: widgetStream({}, 'version-pr-merged'), preset: true });
-	expect(text).toContain('`publishWhen: version-pr-merged` applies');
+	expect(text).toContain('without a start follows `publishWhen: version-pr-merged`');
 	expect(text).not.toContain('approved-in-beepboop');
 });
 
@@ -1827,10 +1827,36 @@ test('the adoption text describes a direct-commit release without a version PR',
 	const text = await releaseText({
 		stream: widgetStream({ versionLands: 'via-direct-commit' }, 'version-commit-pushed'),
 	});
-	expect(text).toContain('Beepboop pushes a signed commit with the new version to the default branch. Then');
-	expect(text).toContain('`publishWhen: version-commit-pushed` applies');
+	expect(text).toContain(
+		'Beepboop pushes a signed commit with the new version to the default branch. The release then publishes',
+	);
+	expect(text).toContain('without a start follows `publishWhen: version-commit-pushed`');
 	expect(text).toContain('Beepboop pushes the version commit itself.');
 	expect(text).not.toContain('version PR');
+});
+
+test('the adoption text promises start publication once setup moves a delegated stream to managed preparation', async () => {
+	const text = await releaseText({
+		stream: widgetStream({ strategy: 'workflow', workflow: { file: 'publish.yml' } }, 'version-pr-merged'),
+	});
+	expect(text).toContain('Merging it publishes the release once the commit is verified and its checks pass');
+	expect(text).toContain('without a start follows `publishWhen: version-pr-merged`');
+});
+
+test.each([
+	{ refs: { phase: 'version', prefix: 'v' }, starts: true },
+	{ refs: undefined, starts: false },
+])('a tag-based stream promises start publication only with a version-tag promotion: %o', async ({ refs, starts }) => {
+	const stream = widgetStream({}, 'version-pr-merged');
+	const text = await releaseText({
+		stream: {
+			...stream,
+			versionSource: { kind: 'tags', prefix: 'v' },
+			promote: { ...stream.promote, workflow: { ...stream.promote.workflow, ...(refs ? { refs } : {}) } },
+		},
+	});
+	expect(text.includes('nothing asks again')).toBe(starts);
+	expect(text.includes('After you merge it, `publishWhen: version-pr-merged` applies')).toBe(!starts);
 });
 
 describe('a saved plain crate publish script', () => {
@@ -2362,7 +2388,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 			},
 		},
 		prepare: { versionLands: 'via-version-pr' },
-		startFrom: [{ via: 'action', workflow: 'start-release.yml' }, { via: 'cli' }],
+		startFrom: [{ via: 'action', workflow: 'start-release.yml' }],
 	}, ['github-release', 'npm']);
 	const promoteOnly = 'jobs:\n  promote:\n    steps: []\n';
 	const binaries = {
@@ -2383,7 +2409,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 		'  - `promote.publishWhen`: `approved-in-beepboop` → `version-pr-merged`. Merging the version PR publishes it once the checks pass. Nobody publishes it in Beepboop.',
 		'  - `promote.workflow.publications`: adds `github-release:octo/shellcheck`. This workflow now publishes the GitHub release.',
 		'  - `prepare.versionLands`: none → `via-version-pr`. Beepboop opens a version PR, and merging it puts the new version on the default branch.',
-		'  - `startFrom`: none → `action` (`start-release.yml`), `cli`. Starting a release also publishes it, and nothing asks again.',
+		'  - `startFrom`: none → `action` (`start-release.yml`). Starting a release also publishes it, and nothing asks again.',
 		'- Repository',
 		'  - `managers`: adds `github-release`.',
 		'  - Renames the settings to their current names: `publishWhen`, `versionLands`, `startFrom`, `mustPublish`, `versionScope` and `existingTriggers`.',
@@ -2433,7 +2459,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 					versioning: 'workspace',
 					approval: 'merge',
 					bump: 'pr',
-					start: ['action', 'cli'],
+					start: ['action'],
 					promote: { file: 'release-rshellcheck.yml', job: 'promote' },
 				},
 				{
@@ -2519,7 +2545,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 	expect(bodyChoices(body, setupOptions(plan), plan.choices).streams[0]).toMatchObject({
 		approval: 'merge',
 		bump: 'pr',
-		start: ['action', 'cli'],
+		start: ['action'],
 	});
 	expect(releaseAfterMerge(body)).toBe(false);
 	expect(releaseAfterMerge(setupBody(plan, { branch: updateBranch, defaultBranch: 'master', release: true }))).toBe(

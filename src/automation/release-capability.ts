@@ -1,5 +1,7 @@
 import { versionsInFiles } from '@/automation/managers';
-import type { Inventory, RepositoryRecord, Stream, WorkflowBinding } from '@/automation/types';
+import { publishablePackages } from '@/automation/package-identity';
+import { hasTagPromotion } from '@/automation/release-version';
+import type { Inventory, ReleasePlan, RepositoryRecord, Stream, WorkflowBinding } from '@/automation/types';
 import type { StreamRelease } from '@/contract/views';
 import { operations } from '@/domain/configuration';
 
@@ -45,7 +47,45 @@ export function releaseCapability(stream: Stream, inventory: Inventory): Release
 		return { kind: 'prepares', through: { kind: 'files', paths: stream.versionFiles.map(rule => rule.path) }, lands };
 	}
 	if (workflow) return { kind: 'prepares', through: { kind: 'workflow', file: workflow.file }, lands };
-	return { kind: 'promotes', workflow: publisher.file, automatic: stream.promote.approval === 'push' };
+	return {
+		kind: 'promotes',
+		workflow: publisher.file,
+		automatic: stream.promote.approval === 'push' || streamStartRefusal('', stream) === undefined,
+	};
+}
+
+function streamStartRefusal(name: string, stream: Stream): string | undefined {
+	if (stream.versioning === 'independent') return `${name} cannot start releases: it needs one shared version`;
+	if (stream.versionSource?.kind === 'tags' && !hasTagPromotion(stream, stream.versionSource.prefix)) {
+		return `${name} needs a dispatchable promotion that publishes a version tag with prefix "${stream.versionSource.prefix}"`;
+	}
+	return undefined;
+}
+
+function preparationRefusal(name: string, stream: Stream, inventory: Inventory): string | undefined {
+	const delegated = stream.prepare.strategy === 'workflow' ? stream.prepare.workflow : undefined;
+	if (delegated) {
+		return `${name} prepares its version in ${delegated.file}, and Beepboop cannot follow that preparation to its merge`;
+	}
+	if (stream.versionSource?.kind === 'tags') return undefined;
+	return versionsInFiles({ ...inventory, packages: publishablePackages(inventory.packages, stream.packages) })
+		? undefined
+		: `${name} keeps its version outside package manifests, and merging a version bump there does not start publication`;
+}
+
+export function newVersionStartRefusal(name: string, stream: Stream, inventory: Inventory): string | undefined {
+	return streamStartRefusal(name, stream) ?? preparationRefusal(name, stream, inventory);
+}
+
+export function startRefusal(
+	name: string,
+	stream: Stream,
+	plan: ReleasePlan,
+	inventory: Inventory,
+): string | undefined {
+	return plan.edits.length || plan.requiresPreparation
+		? newVersionStartRefusal(name, stream, inventory)
+		: streamStartRefusal(name, stream);
 }
 
 export function releasable(

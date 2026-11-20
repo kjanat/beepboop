@@ -10,7 +10,7 @@ import { optionId } from '@/automation/setup';
 import type { SetupChoices } from '@/automation/setup-types';
 import { binaries, defaultBinaryTargets, workflowSetup } from '@/contract/setup';
 import type { VersionPrMerge } from '@/contract/setup-terms';
-import { versionPrMergeSentences } from '@/contract/setup-terms';
+import { alwaysStarted, startFromEffect, startFromQuestion, versionPrMergeSentences } from '@/contract/setup-terms';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -423,9 +423,8 @@ test('a fresh setup ticks no approval, start or bump and writes none of them', a
 	});
 	expect(world.github.file(repository, '.github/workflows/start-release.yml', 'automation/onboarding')).toBeUndefined();
 	const body = repository.pulls[0]?.body ?? '';
-	for (
-		const id of ['start:main:action', 'start:main:dashboard', 'start:main:cli', 'bump:main:commit', 'bump:main:pr']
-	) {
+	expect(body).toContain(`  - \`startFrom\`: ${startFromQuestion}. ${startFromEffect} ${alwaysStarted}\n`);
+	for (const id of ['start:main:action', 'bump:main:commit', 'bump:main:pr']) {
 		expect(body).toContain(`- [ ] <!-- beepboop:choice:${id} -->`);
 	}
 	for (const value of ['required', 'merge', 'push']) {
@@ -453,17 +452,16 @@ test('each choice ticked in the setup PR body is written as ticked, and push sta
 		world,
 		repository,
 		pull,
-		['approval:main:push', 'start:main:action', 'start:main:cli', 'bump:main:commit'].reduce(tick, pull.body),
+		['approval:main:push', 'start:main:action', 'bump:main:commit'].reduce(tick, pull.body),
 	);
 	await world.wait(16_000);
 	expect(modeOf(repository, 'automation/onboarding')).toEqual({
 		publishWhen: 'version-commit-pushed',
 		versionLands: 'via-direct-commit',
-		startFrom: [{ via: 'action', workflow: 'start-release.yml' }, { via: 'cli' }],
+		startFrom: [{ via: 'action', workflow: 'start-release.yml' }],
 	});
 	expect(pull.body).toContain('- [x] <!-- beepboop:choice:approval:main:push -->');
 	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:approval:main:required -->');
-	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:start:main:dashboard -->');
 	expect(pull.body).not.toContain('Until you do');
 	const dispatch = decodeSync(
 		mutableStruct({
@@ -496,7 +494,7 @@ test('each choice ticked in the setup PR body is written as ticked, and push sta
 	world.github.merge(repository, pull.number);
 	const plan = await previewSetup(api, repository.name);
 	expect(plan.edits).toEqual([]);
-	expect(plan.choices.streams[0]).toMatchObject({ approval: 'push', bump: 'commit', start: ['action', 'cli'] });
+	expect(plan.choices.streams[0]).toMatchObject({ approval: 'push', bump: 'commit', start: ['action'] });
 });
 
 test('the setup PR ticks versionPrMerge manual by default and writes the method ticked in its body', async () => {
@@ -530,7 +528,7 @@ test('the setup PR ticks versionPrMerge manual by default and writes the method 
 	expect(plan.choices.streams[0]).toMatchObject({ versionPrMerge: 'squash' });
 });
 
-test('unticking every start writes an empty start list, and setup reads it back without asking again', async () => {
+test('unticking the start workflow writes an empty startFrom, and setup reads it back without asking again', async () => {
 	const repository = toolRepository();
 	const api = bearer(world, await world.cliSession());
 	await applyChoices(api, repository.name, crateChoices({ approval: 'required', bump: 'pr', start: [] }));
@@ -549,7 +547,7 @@ test('unticking every start writes an empty start list, and setup reads it back 
 test('a maintenance rebuild keeps the approval, starts and bump the default branch configures', async () => {
 	const repository = toolRepository();
 	const api = bearer(world, await world.cliSession());
-	await applyChoices(api, repository.name, crateChoices({ approval: 'push', bump: 'pr', start: ['dashboard'] }));
+	await applyChoices(api, repository.name, crateChoices({ approval: 'push', bump: 'pr', start: ['action'] }));
 	world.github.merge(repository, 1);
 	const source = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
 	const legacy = JSON.stringify(source, (key, value) => key === 'setup' ? undefined : value, '\t')
@@ -560,7 +558,7 @@ test('a maintenance rebuild keeps the approval, starts and bump the default bran
 	const kept = {
 		publishWhen: 'approved-in-beepboop',
 		versionLands: 'via-version-pr',
-		startFrom: [{ via: 'dashboard' }],
+		startFrom: [{ via: 'action', workflow: 'start-release.yml' }],
 	};
 	expect(modeOf(repository, 'automation/setup-update')).toEqual(kept);
 	world.github.push(repository, { 'README.md': '# tool\n' }, 'Document the tool');

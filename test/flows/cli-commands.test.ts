@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { call, cliTransport, discoveredWidget } from '@root/test/support/client.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
+import { editableConfiguration, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
@@ -86,10 +87,22 @@ test('repositories list, show and discover render tables and keep JSON for scrip
 	expect(listed.parsed).toEqual([expect.objectContaining({ name: 'octo/widget', sha: head })]);
 	const shown = await modes(['repositories', 'show', repository.name], 'Reading octo/widget');
 	expect(shown.tty).toContain(`octo/widget on main at ${head.slice(0, 12)}\n`);
-	expect(shown.tty).toContain('stream  starts  bump             approval\n');
+	expect(shown.tty).toContain('stream  start workflow  bump             approval\n');
 	expect(shown.tty).toContain('widget   npm       1.0.0    1.0.0      ✔ published\n');
 	const discovered = await modes(['repositories', 'discover', repository.name], 'Inspecting octo/widget on GitHub');
 	expect(discovered.parsed).toHaveProperty('sha', head);
+});
+
+test('repositories show names the workflow that starts releases', async () => {
+	const repository = widget(world.github);
+	world.npm.publish('widget', '1.0.0');
+	const configuration = editableConfiguration();
+	configuration.streams.main.start = [{ via: 'action', workflow: 'ship.yml' }];
+	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Start from ship.yml');
+	await call(routes.repositoriesDiscover, { repository: repository.name }, cliTransport(world, token));
+	const shown = await runCli(['repositories', 'show', repository.name]);
+	expect(shown.exitCode).toBe(0);
+	expect(shown.stdout.join('')).toMatch(/\nmain {4}ship\.yml {7}/);
 });
 
 test('runs list, cancel and recover show each operation with its state', async () => {

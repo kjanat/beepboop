@@ -3,6 +3,7 @@ import { Effect, Result, Schema, Struct } from 'effect';
 import { parseRepositoryConfiguration, resolveConfiguration } from '@/automation/configuration';
 import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
 import {
+	alwaysStarted,
 	existingTriggersQuestion,
 	existingTriggersSentences,
 	mustPublishSentence,
@@ -53,6 +54,7 @@ const sentences = [
 	...Object.values(versionPrMergeSentences),
 	mustPublishSentence,
 	startFromEffect,
+	alwaysStarted,
 	publishWhenQuestion,
 	versionLandsQuestion,
 	startFromQuestion,

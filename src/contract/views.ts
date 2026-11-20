@@ -98,6 +98,7 @@ export const planReview = looseStruct({
 	),
 	diagnostics: Schema.optional(mutableArray(Schema.String)),
 	requiresPreparation: Schema.Boolean,
+	starts: Schema.optional(Schema.Boolean),
 });
 export type PlanReview = Decoded<typeof planReview>;
 

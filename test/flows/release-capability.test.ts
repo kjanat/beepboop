@@ -21,6 +21,7 @@ import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
 import { app } from '@/cli/cli';
+import { startFromEffect } from '@/contract/setup-terms';
 import { streamRelease } from '@/contract/views';
 import { errorEnvelope } from '@/kernel/errors/domain-error.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
@@ -189,7 +190,8 @@ test('a tag-versioned stream with a publishing workflow goes straight to a publi
 	const repository = await statute({
 		workflow: { file: 'tag.yml', refs: { phase: 'version', prefix: 'v' }, publications: [module] },
 	});
-	const summary = 'main has no version to write. The release goes straight to tag.yml and waits for you to publish it.';
+	const summary =
+		'main has no version to write. The release goes straight to tag.yml and publishes once the commit is verified and its checks pass.';
 	expect(await release(repository)).toEqual({ kind: 'promotes', summary });
 
 	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
@@ -207,24 +209,40 @@ test('a tag-versioned stream with a publishing workflow goes straight to a publi
 		planId: text(planned.body, 'planId'),
 	});
 	expect(prepared.status).toBe(200);
-	expect([text(prepared.body, 'operation'), text(prepared.body, 'state'), text(prepared.body, 'version')]).toEqual([
-		'promote',
-		'awaiting-approval',
-		'0.13.2',
-	]);
+	expect([text(prepared.body, 'operation'), text(prepared.body, 'approvedBy'), text(prepared.body, 'version')])
+		.toEqual(['promote', 'start', '0.13.2']);
 
 	const form = await rendered('Releases', `?repository=${repository.id}`);
 	expect(form.text).toContain(summary);
 	expect(form.buttons).toEqual(['Choose', 'Release']);
 	expect((await rendered('Repositories', '')).buttons).toContain('Prepare a release');
 
-	const cli = await runCli(['release', 'minor', '--repository', repository.name, '--yes']);
+	const cli = await runCli(['release', 'minor', '--repository', repository.name], [false]);
 	expect(cli.exitCode).toBe(0);
 	const output = cli.stdout.join('');
 	expect(output).toContain(summary);
-	const minor = (await executions(api)).find(execution => execution.version === '0.14.0');
-	expect([minor?.operation, minor?.state]).toEqual(['promote', 'awaiting-approval']);
-	expect(output).toContain(`beepboop runs publish ${minor?.id} --sourceSha ${world.github.head(repository)}`);
+	expect(output).toContain('Release start cancelled.');
+	expect((await executions(api)).map(execution => execution.version)).not.toContain('0.14.0');
+});
+
+test('a tag-versioned stream whose workflow publishes no version tag waits for you and refuses force', async () => {
+	const repository = await statute({ workflow: { file: 'tag.yml', publications: [module] } });
+	expect(await release(repository)).toEqual({
+		kind: 'promotes',
+		summary: 'main has no version to write. The release goes straight to tag.yml and waits for you to publish it.',
+	});
+	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
+	const planned = await api('/api/releases/plan', request);
+	expect(planned.status).toBe(200);
+	expect(decodeSync(looseStruct({ starts: Schema.Boolean }), planned.body)).toMatchObject({ starts: false });
+	const forced = await api('/api/releases/prepare', {
+		...request,
+		sourceSha: text(planned.body, 'sourceSha'),
+		planId: text(planned.body, 'planId'),
+		force: true,
+	});
+	expect(forced.status).toBe(422);
+	expect(refusal(forced.body)).toContain('main needs a dispatchable promotion that publishes a version tag');
 });
 
 async function configuredWidget(change: (main: Record<string, unknown>) => void) {
@@ -371,7 +389,7 @@ test('a direct release under version-commit-pushed says that it publishes withou
 		prompter: {
 			async promptOne(config) {
 				prompts.push(config.message);
-				return { answered: true, value: true };
+				return { answered: true, value: false };
 			},
 		},
 		isTTY: true,
@@ -381,7 +399,6 @@ test('a direct release under version-commit-pushed says that it publishes withou
 	expect(cli.exitCode).toBe(0);
 	const output = cli.stdout.join('');
 	expect(output).toContain(summary);
-	expect(output).toContain('Beepboop publishes once the commit is verified and its checks pass.');
 	expect(output).not.toContain('runs publish');
-	expect(prompts).toEqual(['Publish 0.13.2 once its commit is verified and its checks pass?']);
+	expect(prompts).toEqual([`Start this release? ${startFromEffect}`]);
 });

@@ -75,8 +75,7 @@ version publishes: for example, "This prepares 0.2.0. After the version PR
 merges, `publishWhen: approved-in-beepboop`: You publish it". The output then
 names the preparation and lists the steps that follow.
 
-When the stream lists `{ "via": "cli" }` in `startFrom`, the confirmation starts
-the release, and starting it also publishes it. Beepboop then bumps the version,
+The confirmation starts the release, and starting it also publishes it. Beepboop then bumps the version,
 publishes and tags, and nothing asks again. The command follows the release: a spinner
 shows the version bump, the wait for checks and the dispatch. Progress bars
 count the finished binary build legs, the publications and the uploaded release
@@ -86,8 +85,11 @@ IDs to 12 characters; `--json` and link targets keep the full values. With a ver
 stops, and merging it publishes the release. A failing check or a refused bump
 ends the command with exit code 1 and the reason. `--json` prints the started
 release and returns at once. Spinners and progress bars stay off when the
-output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release). Without
-that entry, `beepboop release` only prepares the version, and
+output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release). A stream
+that versions each package on its own, a tag-based stream without a
+promotion that publishes the version tag, and, when the release writes a new
+version, a stream that keeps its version only in version files or prepares
+it with `prepare.strategy: "workflow"`, only prepare the version, and
 `promote.publishWhen` decides when it publishes.
 
 The confirmation defaults to no. `--yes` skips only the confirmation; the
@@ -116,11 +118,9 @@ different one.
 beepboop release minor --merge rebase
 ```
 
-When the default branch already carries the version, a stream with `cli` in
-`startFrom` publishes it after the same single confirmation, including a
-promotion that waits for you to publish it. Without `cli` in `startFrom`,
-`beepboop release` refuses a version that is prepared already. It handles only
-shared-version streams. Independent package versions use `plan-set` and
+When the default branch already carries the version, `beepboop release`
+publishes it after the same single confirmation, including a promotion that
+waits for you to publish it. It handles only shared-version streams. Independent package versions use `plan-set` and
 `prepare-set` below.
 
 For a stream whose `versionSource` reads tags, an explicit start uses the
@@ -318,7 +318,7 @@ nobody chose stays unanswered in the setup PR:
 
 ```sh
 beepboop adopt owner/repository --promote-file release.yml \
-  --start-from cli --start-from dashboard --version-lands via-direct-commit \
+  --start-from action --version-lands via-direct-commit \
   --publish-when version-pr-merged \
   --binary tool --target linux-amd64 --target darwin-arm64
 ```
@@ -329,7 +329,7 @@ beepboop adopt owner/repository --promote-file release.yml \
   `--must-publish` defaults to the `--package` list.
 - `--companion-module` takes a Go module name or PURL and repeats. The release
   also pushes that module's version tag on the release commit.
-- `--version-scope`, `--start-from` (repeats), `--version-lands`,
+- `--version-scope`, `--start-from` (`action` only), `--version-lands`,
   `--version-pr-merge` and `--publish-when` take the values of `versionScope`,
   `startFrom`, `versionLands`, `prepare.versionPrMerge` and `publishWhen` in
   `.github/beepboop.json`, shown in completion and help.

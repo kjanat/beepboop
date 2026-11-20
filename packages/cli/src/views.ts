@@ -56,7 +56,9 @@ const shownRepository = looseStruct({
 				packages: Schema.optional(mutableArray(Schema.String)),
 				promote: Schema.optional(looseStruct({ approval: Schema.optional(Schema.String) })),
 				prepare: Schema.optional(looseStruct({ bump: Schema.optional(Schema.String) })),
-				start: Schema.optional(mutableArray(looseStruct({ via: Schema.String }))),
+				start: Schema.optional(
+					mutableArray(looseStruct({ via: Schema.String, workflow: Schema.optional(Schema.String) })),
+				),
 			}),
 		),
 	})),
@@ -74,7 +76,7 @@ export function repositoryView(out: Out, repository: RepositoryView) {
 				out,
 				streams.map(([name, stream]) => ({
 					stream: name,
-					starts: stream.start?.map(start => start.via).join(', ') || look.note('none'),
+					'start workflow': stream.start?.find(start => start.via === 'action')?.workflow ?? look.note('none'),
 					bump: stream.prepare?.bump ?? look.note('pr until chosen'),
 					approval: stream.promote?.approval ?? 'required',
 				})),

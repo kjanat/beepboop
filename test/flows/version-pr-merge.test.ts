@@ -38,7 +38,7 @@ async function requested(
 	prepare: Record<string, unknown>,
 	override?: VersionPrMerge,
 	manifest = '1.0.0',
-	start = false,
+	versioning: 'workspace' | 'independent' = 'workspace',
 ) {
 	const repository = widget(world.github, { version: manifest });
 	repository.allowAutoMerge = allowAutoMerge;
@@ -47,7 +47,7 @@ async function requested(
 	configuration.streams.main = {
 		...configuration.streams.main,
 		credentials: [],
-		...(start ? { start: [{ via: 'cli' }] } : {}),
+		versioning,
 		prepare: { ...prepare, versionPrMerge: merge },
 	};
 	const head = world.github.push(repository, {
@@ -308,7 +308,7 @@ for (const start of [false, true]) {
 				{ strategy: 'managed', bump: 'pr' },
 				initial,
 				'1.0.0',
-				start,
+				start ? 'workspace' : 'independent',
 			);
 			expect(prepared.status).toBe(200);
 			const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };

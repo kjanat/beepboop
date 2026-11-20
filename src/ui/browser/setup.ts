@@ -2,12 +2,13 @@ import { Effect, Result } from 'effect';
 import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, Versioning } from '@/automation/setup-types';
-import { approvalPolicies, startChannels, versionBumps } from '@/contract/release-start';
+import { approvalPolicies, configurableStarts, versionBumps } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { setupStream } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
 import {
+	alwaysStarted,
 	companionModulesSentence,
 	publishWhenNames,
 	publishWhenQuestion,
@@ -184,7 +185,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		hint(groupAdvanced, 'Choose the actual version when preparing a release. Setup does not change package versions.');
 		const releasing = element('fieldset');
 		releasing.append(element('legend', 'How a release starts and publishes'));
-		const starts = startChannels.map(channel => {
+		const starts = configurableStarts.map(channel => {
 			const input = element('input');
 			input.type = 'checkbox';
 			input.value = channel;
@@ -193,7 +194,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			label(releasing, `startFrom ${channel}: ${startFromSentences[channel].replaceAll('`', '')}`, input);
 			return { channel, input };
 		});
-		hint(releasing, startFromEffect);
+		hint(releasing, `${startFromEffect} ${alwaysStarted.replaceAll('`', '')}`);
 		const bump = select(releasing, `versionLands: ${versionLandsQuestion}`, [
 			['', 'Choose'],
 			...versionBumps.map((entry): [string, string] => [

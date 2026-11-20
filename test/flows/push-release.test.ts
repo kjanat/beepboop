@@ -246,7 +246,7 @@ test('beepboop release takes over the tag of a failed release that the push left
 	const fixed = await pushFix(repository);
 	expect((await promotions(api)).map(promotion => promotion.sourceSha)).toEqual([merged.sha]);
 	world.network.serve('registry.npmjs.org', request => world.npm.handle(request));
-	const released = await runCli(['release', '1.0.0', '--repository', repository.name, '--yes']);
+	const released = await runCli(['release', '1.0.0', '--repository', repository.name, '--yes', '--json']);
 	expect([released.exitCode, released.stderr.join('')]).toEqual([0, '']);
 	const second = (await promotions(api)).find(promotion => promotion.sourceSha === fixed.sha);
 	expect([second?.version, second?.reclaims]).toEqual(['1.0.0', [{ name: 'v1.0.0', oid, commit: merged.sha }]]);

@@ -19,10 +19,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `actions/publish` takes `npm-tarballs`, a directory of prebuilt npm tarballs. A generated npm package, such as a platform package from `npm/targets.json`, publishes from the tarball whose `package.json` name and version match, with the tarball's sha512 integrity as its digest.
 - When a run fails, the publishing job is its only failed job, and that attempt left every required package that has not published `failed-retryable`, Beepboop re-runs the failed jobs, up to the fourth run attempt.
 - Shell completion offers the repository's packages for `beepboop adopt --package` and `--must-publish`, its binaries for `--binary`, and the values of `--start-from` and `--target`. The packages and binaries come from the server's setup plan. Install the completion script again to get them.
-- `beepboop release --help` explains what a release does with and without `cli` in `startFrom`.
+- `beepboop release --help` explains what a release does, and which streams only prepare the version.
+- `beepboop release VERSION --force` publishes without waiting on commit checks, the commit signature or package metadata, and asks nothing. It restarts a stopped release of that version, and runs its workflow again when the workflow already failed. The `context` output of `actions/begin` carries `force`, so a publication workflow can skip its own tests, and `actions/publish` publishes a package that lacks metadata.
 - `beepboop release` shows the binary builds, the publications and the asset uploads of a running release as progress bars side by side. A failed release prints its reason on stderr, piped output included.
 - `beepboop` commands that print JSON in a terminal indent and color it themselves. The CLI needs `@kjanat/dreamcli` 5.1.0.
 - Adoption notes a Go module whose tags carry the same versions as another stream's tags, or whose tag name a file builds beside that stream's tag name. The note names both options, `companionModules` and moving the module into the stream's `packages`, and changes nothing until you choose.
+
+### Changed
+
+- `beepboop release` and the dashboard start a release on every stream that can start one: they bump the version and publish it, and nothing asks again. A stream that versions each package on its own, a tag-based stream without a promotion that publishes the version tag, and a stream that writes a new version only to version files still only prepare it. `startFrom` only lets the Start release workflow start releases. Setup ignores its `dashboard` and `cli` entries and removes them. Starting a version whose release stopped before its workflow ran restarts that release.
 
 ### Fixed
 

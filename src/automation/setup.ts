@@ -8,6 +8,7 @@ import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
+import { newVersionStartRefusal } from '@/automation/release-capability';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
 import { inferReleaseGraph } from '@/automation/release-graph/graph';
@@ -31,7 +32,13 @@ import { approvals, triggerHandovers, versionings } from '@/automation/setup-typ
 import { integrateReleaseWorkflow, integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
-import { releaseStarts, startChannels, startWorkflowFile, versionBump, versionBumps } from '@/contract/release-start';
+import {
+	configurableStarts,
+	releaseStarts,
+	startWorkflowFile,
+	versionBump,
+	versionBumps,
+} from '@/contract/release-start';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget, WorkflowSetupInput } from '@/contract/setup';
 import {
 	binaryTargets,
@@ -44,12 +51,14 @@ import {
 	workflowSetup,
 } from '@/contract/setup';
 import {
+	alwaysStarted,
 	existingTriggersNames,
 	existingTriggersQuestion,
 	existingTriggersSentences,
 	publishWhenNames,
 	publishWhenQuestion,
 	publishWhenSentences,
+	startFromEffect,
 	startFromQuestion,
 	startFromSentences,
 	versionLandsNames,
@@ -341,7 +350,15 @@ function draftSetup(
 		const chosen = input === undefined ? undefined : yield* decodeRequest(setupChoicesSchema, input);
 		const choices = chosen ? completeChoices(snapshot, inventory, chosen, raw) : proposal;
 		const inferred = input === undefined || JSON.stringify(choices) === JSON.stringify(proposal);
-		const drafts = yield* drafted(snapshot, inventory, choices, raw, workflows, baseline, resolved);
+		const { plan: drafts, proposed } = yield* drafted(
+			snapshot,
+			inventory,
+			choices,
+			raw,
+			workflows,
+			baseline,
+			resolved,
+		);
 		const unlisted = (streams: SetupChoices['streams'], from: SetupChoices) =>
 			streams.flatMap(stream => {
 				const before = from.streams.find(entry => entry.name === stream.name)?.packages ?? stream.packages;
@@ -415,13 +432,17 @@ function draftSetup(
 			],
 			...(candidates.length ? { binaryCandidates: candidates } : {}),
 		};
-		return inferred ? { ...plan, adoption: proposalMarkdown(graph, snapshot, plan, resolved) } : plan;
+		return inferred
+			? { ...plan, adoption: proposalMarkdown(graph, snapshot, inventory, plan, proposed, resolved) }
+			: plan;
 	});
 }
 function proposalMarkdown(
 	graph: ReleaseGraph,
 	snapshot: Snapshot,
+	inventory: Inventory,
 	plan: Omit<SetupPlan, 'planId'>,
+	adopted: Configuration | undefined,
 	resolved?: Configuration,
 ): string[] {
 	const lines = ['## Release plan', ''];
@@ -436,10 +457,26 @@ function proposalMarkdown(
 				? 'Beepboop pushes a signed commit with the new version to the default branch.'
 				: 'Beepboop opens the version PR.';
 			const after = bump === 'commit' ? 'Then' : 'After you merge it,';
+			const until = stream.approval ? '' : ' until you tick another';
+			const policyName = `\`publishWhen: ${publishWhenNames[policy]}\``;
+			const configured = adopted?.streams[stream.name];
+			const publishesOnStart = configured !== undefined
+				&& newVersionStartRefusal(stream.name, configured, inventory) === undefined;
 			lines.push(
-				`- Start a release with \`beepboop release\` in a checkout or from the dashboard. ${landing} ${after} \`publishWhen: ${
-					publishWhenNames[policy]
-				}\` applies${stream.approval ? '' : ' until you tick another'}: ${publishWhenSentences[policy]}`,
+				...(publishesOnStart
+					? [
+						`- Start a release with \`beepboop release\` in a checkout or from the dashboard. ${landing} ${
+							bump === 'commit' ? 'The release then publishes' : 'Merging it publishes the release'
+						} once the commit is verified and its checks pass, and nothing asks again.`,
+						`- A version raised on the default branch without a start follows ${policyName}${until}: ${
+							publishWhenSentences[policy]
+						}`,
+					]
+					: [
+						`- Start a release with \`beepboop release\` in a checkout or from the dashboard. ${landing} ${after} ${policyName} applies${until}: ${
+							publishWhenSentences[policy]
+						}`,
+					]),
 			);
 		} else if (proposal) lines.push(`- ${startCommand(proposal, snapshot)}`);
 		lines.push('');
@@ -467,7 +504,7 @@ function drafted(
 	workflows: WorkflowEvidence[],
 	baseline: SetupBaseline,
 	resolved?: Configuration,
-): Effect.Effect<Omit<SetupPlan, 'planId'>, DomainError> {
+): Effect.Effect<{ plan: Omit<SetupPlan, 'planId'>; proposed: Configuration | undefined }, DomainError> {
 	return Effect.gen(function*() {
 		const configuration = structuredClone(raw);
 		const streams = { ...object(configuration.streams) };
@@ -776,7 +813,7 @@ function drafted(
 				updated.prepare = { ...object(updated.prepare), versionPrMerge: selection.versionPrMerge };
 			}
 			if (selection.start) {
-				updated.start = selection.start.map(via => via === 'action' ? { via, workflow: startWorkflowFile } : { via });
+				updated.start = selection.start.flatMap(via => via === 'action' ? [{ via, workflow: startWorkflowFile }] : []);
 			}
 			for (const entry of selection.operations ?? []) {
 				const { name: operation, needs: _needs, needsJobs: _jobs, publications, ...workflow } = entry;
@@ -847,6 +884,7 @@ function drafted(
 				catch: toDomainError,
 			});
 			return {
+				configuration: legacy,
 				drift: configurationDrift(proposal, legacy).map(entry => entry.message),
 				found: blocking(found).map(entry => entry.message),
 			};
@@ -875,7 +913,7 @@ function drafted(
 				} and approve the installation update, then preview again.`,
 			);
 		}
-		return {
+		const plan = {
 			repository: snapshot.repository.name,
 			sourceSha: snapshot.sha,
 			setupHead: baseline.head,
@@ -899,6 +937,7 @@ function drafted(
 			branchConflict: baseline.branchConflict === true,
 			...(prior ? { prior } : {}),
 		};
+		return { plan, proposed: Result.isSuccess(validated) ? validated.success.configuration : undefined };
 	});
 }
 /** The repository configuration keeps each generated workflow's setup input next to its binding. */
@@ -1006,7 +1045,8 @@ function completeChoices(
 			const approval = stream.approval
 				?? (configured === 'required' || configured === 'merge' || configured === 'push' ? configured : undefined);
 			const starts = safeDecode(releaseStarts, stored.start);
-			const start = stream.start ?? (starts.success ? starts.data.map(entry => entry.via) : undefined);
+			const start = stream.start
+				?? (starts.success ? starts.data.flatMap(entry => entry.via === 'action' ? [entry.via] : []) : undefined);
 			const bumped = safeDecode(versionBump, object(stored.prepare).bump);
 			const bump = stream.bump ?? (bumped.success ? bumped.data : undefined);
 			const merged = safeDecode(versionPrMerge, object(stored.prepare).versionPrMerge);
@@ -1107,7 +1147,7 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 			? approvals.map((value): SetupOption => ({ kind: 'approval', stream: stream.name, value }))
 			: []),
 		...(startable(stream)
-			? startChannels.map((value): SetupOption => ({ kind: 'start', stream: stream.name, value }))
+			? configurableStarts.map((value): SetupOption => ({ kind: 'start', stream: stream.name, value }))
 			: []),
 		...(bumpable(stream)
 			? versionBumps.map((value): SetupOption => ({ kind: 'bump', stream: stream.name, value }))
@@ -1365,7 +1405,9 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 				: []
 		);
 		return [
-			...(starts.length ? [`  - \`startFrom\`: ${startFromQuestion}. Tick any of these.`, ...starts] : []),
+			...(starts.length
+				? [`  - \`startFrom\`: ${startFromQuestion}. ${startFromEffect} ${alwaysStarted}`, ...starts]
+				: []),
 			...(bumps.length
 				? [`  - \`versionLands\`: ${versionLandsQuestion}, here \`${defaultBranch}\`. Tick one.`, ...bumps]
 				: []),

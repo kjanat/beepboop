@@ -11,7 +11,13 @@ import { Window } from 'happy-dom';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { routes } from '@/contract/routes';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
-import { existingTriggersQuestion, versionPrMergeSentences, versionPrMerges } from '@/contract/setup-terms';
+import {
+	alwaysStarted,
+	existingTriggersQuestion,
+	startFromEffect,
+	versionPrMergeSentences,
+	versionPrMerges,
+} from '@/contract/setup-terms';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -760,7 +766,7 @@ test('the dashboard proposes the crate binary for Unix targets and writes edited
 	expect(result).toContain('build-tool:');
 });
 
-test('the dashboard asks for starts, bump and approval without picking any, and writes the ticked ones', async () => {
+test('the dashboard asks for the start workflow, bump and approval without picking any, and writes the ticked ones', async () => {
 	const form = await open(toolRepository().name);
 	const bump = dom.find(form, '[data-field="bump"]', window.HTMLSelectElement);
 	const approval = dom.find(form, '[data-field="approval"]', window.HTMLSelectElement);
@@ -771,23 +777,20 @@ test('the dashboard asks for starts, bump and approval without picking any, and 
 	expect([bump.value, approval.value]).toEqual(['', '']);
 	expect(starts.map(input => [input.getAttribute('value'), input.checked])).toEqual([
 		['action', false],
-		['dashboard', false],
-		['cli', false],
 	]);
+	expect(form.textContent).toContain(`${startFromEffect} ${alwaysStarted.replaceAll('`', '')}`);
 	await act(form, 'preview');
 	const asked = form.querySelector('.setup-result')?.textContent ?? '';
 	expect(asked).not.toContain('"approval"');
 	expect(asked).not.toContain('"bump"');
-	for (const input of starts) {
-		if (input.getAttribute('value') !== 'dashboard') input.checked = true;
-	}
+	for (const input of starts) input.checked = true;
 	bump.value = 'commit';
 	approval.value = 'push';
 	await act(form, 'preview');
 	const result = (form.querySelector('.setup-result')?.textContent ?? '').replace(/\s+/g, '');
 	expect(result).toContain('"publishWhen":"version-commit-pushed"');
 	expect(result).toContain('"versionLands":"via-direct-commit"');
-	expect(result).toContain('"startFrom":[{"via":"action","workflow":"start-release.yml"},{"via":"cli"}]');
+	expect(result).toContain('"startFrom":[{"via":"action","workflow":"start-release.yml"}]');
 	expect(result).toContain('kjanat/beepboop/actions/release@');
 });
 

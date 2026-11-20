@@ -6,6 +6,8 @@ import { matchesPattern, mutableArray, refined, strictStruct } from '@/kernel/sc
 export const startChannels = ['action', 'dashboard', 'cli'] as const;
 export type StartChannel = typeof startChannels[number];
 export const startChannel = Schema.Literals(startChannels);
+export const configurableStarts = ['action'] as const;
+export type ConfigurableStart = typeof configurableStarts[number];
 export const releaseStart = Schema.Union([
 	strictStruct({ via: Schema.Literal('action'), workflow: Schema.String.check(matchesPattern(workflowFilePattern)) }),
 	strictStruct({ via: Schema.Literal('dashboard') }),

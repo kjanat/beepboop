@@ -3,7 +3,7 @@ import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { botId } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
-import { bearer } from '@root/test/support/http.ts';
+import { bearer, text } from '@root/test/support/http.ts';
 import { executions, promotions } from '@root/test/support/releases.ts';
 import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -32,10 +32,15 @@ eachWorld(created => {
 	world = created;
 });
 
-const plan = looseStruct({ sourceSha: Schema.String, planId: Schema.String });
+const plan = looseStruct({ sourceSha: Schema.String, planId: Schema.String, starts: Schema.Boolean });
 const execution = looseStruct({ id: Schema.String, operation: Schema.String, state: Schema.String });
 
-async function configured(start: ReleaseStart[], bump?: VersionBump, approval = 'required') {
+async function configured(
+	start: ReleaseStart[],
+	bump?: VersionBump,
+	approval = 'required',
+	versioning: 'workspace' | 'independent' = 'workspace',
+) {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
 	const configuration = editableConfiguration();
@@ -43,6 +48,7 @@ async function configured(start: ReleaseStart[], bump?: VersionBump, approval = 
 		...configuration.streams.main,
 		credentials: [],
 		start,
+		versioning,
 		prepare: { strategy: 'managed', ...(bump ? { bump } : {}) },
 		promote: { ...configuration.streams.main.promote, approval },
 	};
@@ -222,7 +228,12 @@ test('merging a version PR promotes a mixed manifest and already-tagged Go strea
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(16_000);
 	expect(await promotions(api)).toEqual([
-		expect.objectContaining({ sourceSha: merged.sha, version: '1.1.0', approvedBy: 'merge' }),
+		expect.objectContaining({
+			sourceSha: merged.sha,
+			version: '1.1.0',
+			approvedBy: 'start',
+			started: { via: 'cli', actor: expect.any(String) },
+		}),
 	]);
 	expect(repository.runs).toHaveLength(1);
 	expect(repository.runs[0]?.path).toBe('.github/workflows/publish.yml');
@@ -258,15 +269,14 @@ test('the release action starts a release from its workflow_dispatch run and ref
 	await publishedOnce(api, repository, 'action');
 });
 
-test('a start through a channel the stream does not enable waits for approval like any other release', async () => {
-	const { repository, api } = await configured([{ via: 'dashboard' }], 'commit');
-	await release(api, repository.id);
-	await landed(repository);
-	const [promotion] = await promotions(api);
-	expect(promotion).toMatchObject({ state: 'awaiting-approval' });
-	expect(promotion).not.toHaveProperty('approvedBy');
-	expect(promotion).not.toHaveProperty('started');
-});
+for (const via of ['cli', 'dashboard'] as const) {
+	test(`a release from the ${via} starts and publishes once although startFrom lists only the action`, async () => {
+		const { repository, api } = await configured([{ via: 'action', workflow: 'start-release.yml' }], 'commit');
+		await release(via === 'cli' ? api : fromDashboard, repository.id);
+		await landed(repository);
+		await publishedOnce(api, repository, via);
+	});
+}
 
 test('a protected default branch stops a commit bump with a reason and opens no PR', async () => {
 	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
@@ -414,11 +424,12 @@ test('forcing a release whose version PR is open carries the force to its promot
 	expect(repository.runs.map(run => run.inputs.beepboop_execution_id)).toEqual([promotion?.id]);
 });
 
-test('force is refused for a stream that does not start releases from the CLI', async () => {
-	const { repository, api } = await configured([{ via: 'dashboard' }], 'commit');
+test('force is refused for a stream that cannot start releases', async () => {
+	const { repository, api } = await configured([], 'commit', 'required', 'independent');
 	const refused = await prepared(api, repository.id, { force: true });
 	expect(refused.status).toBe(422);
-	expect(JSON.stringify(refused.body)).toContain('main does not start releases from the CLI, so it cannot force one');
+	expect(JSON.stringify(refused.body)).toContain('main cannot start releases: it needs one shared version');
+	expect(await executions(api)).toEqual([]);
 });
 
 test('missing package metadata stops a started release with a reason', async () => {
@@ -438,13 +449,13 @@ test('missing package metadata stops a started release with a reason', async () 
 });
 
 for (const approval of ['required', 'merge', 'push'] as const) {
-	test(`with a start channel enabled, a version raised without a start follows ${approval}`, async () => {
-		const { repository, api } = await configured([{ via: 'dashboard' }], 'pr', approval);
-		await release(api, repository.id);
+	test(`a version PR of a stream that cannot start follows ${approval} when merged`, async () => {
+		const { repository, api } = await configured([], 'pr', approval, 'independent');
+		expect(await release(api, repository.id)).not.toHaveProperty('started');
 		await world.wait(16_000);
 		const [pull] = repository.pulls;
 		if (!pull) throw new Error('No version PR');
-		expect(pull.body).not.toContain('A start from');
+		expect(pull.body).not.toContain('Started from');
 		const merged = world.github.merge(repository, pull.number);
 		passChecks(repository, merged.sha);
 		expect((await world.push(repository)).status).toBe(202);
@@ -515,7 +526,7 @@ test('a default branch that moved past the bump source stops the commit bump wit
 	});
 });
 
-test('a tag-based start requires a promotion that publishes the version tag', async () => {
+test('a tag-based stream without a promotion that publishes the version tag only prepares and refuses force', async () => {
 	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
 	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
 	configuration.streams.main.versionSource = { kind: 'tags', prefix: 'v' };
@@ -529,12 +540,18 @@ test('a tag-based start requires a promotion that publishes the version tag', as
 	const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
 	const planned = await api('/api/releases/plan', request);
 	expect(planned.status).toBe(200);
-	const { sourceSha, planId } = decodeSync(plan, planned.body);
-	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId });
+	const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
+	expect(starts).toBe(false);
+	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId, force: true });
 	expect(refused.status).toBe(422);
-	expect(JSON.stringify(refused.body)).toContain(
-		'main needs a dispatchable promotion that publishes a version tag',
+	expect(text(refused.body, 'error')).toBe(
+		'main needs a dispatchable promotion that publishes a version tag with prefix "v"',
 	);
+	expect(await executions(api)).toEqual([]);
+	const preparation = await api('/api/releases/prepare', { ...request, sourceSha, planId });
+	expect(preparation.status).toBe(200);
+	expect(decodeSync(execution, preparation.body)).toMatchObject({ operation: 'prepare' });
+	expect(preparation.body).not.toHaveProperty('started');
 });
 
 test('a tag-based dashboard start promotes the reviewed version after its version PR merges', async () => {
@@ -577,28 +594,74 @@ test('a tag-based dashboard start promotes the reviewed version after its versio
 	]);
 });
 
-test('a tag-based start refuses delegated preparation before dispatching it', async () => {
-	const { repository, api } = await configured([{ via: 'cli' }]);
-	const configuration = editableConfiguration();
-	const stream = configuration.streams.main;
-	stream.start = [{ via: 'cli' }];
-	stream.versionSource = { kind: 'tags', prefix: 'v' };
-	stream.prepare = { strategy: 'workflow', workflow: { file: 'publish.yml' } };
-	stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
-	const head = world.github.push(
-		repository,
-		{ '.github/beepboop.json': JSON.stringify(configuration) },
-		'Delegate preparation',
-	);
-	passChecks(repository, head.sha);
+test.each(['tag-based', 'manifest'])(
+	'a %s stream with delegated preparation cannot start and refuses force before dispatching',
+	async kind => {
+		const { repository, api } = await configured([{ via: 'cli' }]);
+		const configuration = editableConfiguration();
+		const stream = configuration.streams.main;
+		stream.start = [{ via: 'cli' }];
+		if (kind === 'tag-based') {
+			stream.versionSource = { kind: 'tags', prefix: 'v' };
+			stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
+		}
+		stream.prepare = { strategy: 'workflow', workflow: { file: 'publish.yml' } };
+		const head = world.github.push(
+			repository,
+			{ '.github/beepboop.json': JSON.stringify(configuration) },
+			'Delegate preparation',
+		);
+		passChecks(repository, head.sha);
+		expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+		const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
+		const planned = await api('/api/releases/plan', request);
+		expect(planned.status).toBe(200);
+		const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
+		expect(starts).toBe(false);
+		const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId, force: true });
+		expect(refused.status).toBe(422);
+		expect(JSON.stringify(refused.body)).toContain(
+			'main prepares its version in publish.yml, and Beepboop cannot follow that preparation to its merge',
+		);
+		expect(await executions(api)).toEqual([]);
+	},
+);
+
+test('a stream whose own packages keep no manifest version only prepares and refuses force', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.npm.publish('widget', '1.0.0');
+	world.network.serve('proxy.golang.org', () => Response.json({ Version: 'v1.0.0' }));
+	world.github.recordTag(repository, 'go/v1.0.0', 'd'.repeat(40), world.github.head(repository), true);
+	const module = 'pkg:golang/github.com/octo/widget/go';
+	world.github.push(repository, {
+		'go/go.mod': 'module github.com/octo/widget/go\n\ngo 1.26\n',
+		'version.json': '{"version":"1.0.0"}\n',
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['npm', 'go', 'workflow'],
+			streams: {
+				main: {
+					packages: [module],
+					mustPublish: [module],
+					versionFiles: [{ path: 'version.json', format: 'json', key: ['version'] }],
+					prepare: { strategy: 'managed' },
+					promote: { workflow: { file: 'publish.yml', publications: [module] } },
+				},
+			},
+		}),
+	}, 'Release the Go module alone');
+	passChecks(repository, world.github.head(repository));
+	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0' };
 	const planned = await api('/api/releases/plan', request);
 	expect(planned.status).toBe(200);
-	const { sourceSha, planId } = decodeSync(plan, planned.body);
-	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId });
+	const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
+	expect(starts).toBe(false);
+	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId, force: true });
 	expect(refused.status).toBe(422);
-	expect(JSON.stringify(refused.body)).toContain('main needs managed preparation to start a tag-based release');
+	expect(JSON.stringify(refused.body)).toContain(
+		'main keeps its version outside package manifests, and merging a version bump there does not start publication',
+	);
 	expect(await executions(api)).toEqual([]);
 });
 
