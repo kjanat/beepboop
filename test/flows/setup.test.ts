@@ -796,9 +796,9 @@ test('generated workflows keep every expression on one line', async () => {
 		'pkg:golang/github.com/octo/lint/go',
 	]);
 	expect(publications.map(entry => entry.outcome)).toEqual([
-		"${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
-		"${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
-		"${{ steps.beepboop_refs.outcome == 'success' && 'succeeded' || steps.beepboop_refs.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
+		"${{ case(steps.beepboop_publish.outcome == 'success', 'succeeded', steps.beepboop_publish.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}",
+		"${{ case(steps.beepboop_publish.outcome == 'success', 'succeeded', steps.beepboop_publish.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}",
+		"${{ case(steps.beepboop_refs.outcome == 'success', 'succeeded', steps.beepboop_refs.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}",
 	]);
 });
 
@@ -827,7 +827,7 @@ test('a crate script report keeps a failed publish step failed when the job is c
 	expect(publications).toEqual([{
 		id: 'pkg:cargo/lint',
 		outcome:
-			"${{ steps.beepboop_publish.outputs['lint'] == 'succeeded' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
+			"${{ case(steps.beepboop_publish.outputs['lint'] == 'succeeded', 'succeeded', steps.beepboop_publish.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}",
 	}]);
 });
 
@@ -971,7 +971,7 @@ test('the promote report leaves out observed publications and reports Go modules
 		version: '${{ fromJSON(steps.beepboop.outputs.context).version }}',
 		required: true,
 		outcome:
-			"${{ steps.beepboop_refs.outcome == 'success' && 'succeeded' || steps.beepboop_refs.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
+			"${{ case(steps.beepboop_refs.outcome == 'success', 'succeeded', steps.beepboop_refs.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}",
 	}]);
 	expect(steps.map(step => step.id).filter(Boolean)).toEqual(['beepboop', 'beepboop_token', 'beepboop_refs']);
 });
@@ -1528,7 +1528,7 @@ ${variant.reportWith ?? ''}          publications: ${
                 "name": "lint-core",
                 "version": "\${{ fromJSON(steps.beepboop.outputs.context).version }}",
                 "required": true,
-                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}"
+                "outcome": "\${{ case(steps.beepboop_publish.outcome == 'success', 'succeeded', steps.beepboop_publish.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}"
               },
               {
                 "id": "pkg:cargo/lint",
@@ -1536,7 +1536,7 @@ ${variant.reportWith ?? ''}          publications: ${
                 "name": "lint",
                 "version": "\${{ fromJSON(steps.beepboop.outputs.context).version }}",
                 "required": true,
-                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}"
+                "outcome": "\${{ case(steps.beepboop_publish.outcome == 'success', 'succeeded', steps.beepboop_publish.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}"
               }
             ]
 `
