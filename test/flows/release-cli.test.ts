@@ -1719,7 +1719,8 @@ test('a failed build leg shows in the binary progress and the binaries table', a
 	expect(output).toContain('widget  darwin-arm64  ✖ failed');
 });
 
-async function publishedAfterFailedRun(refs: boolean) {
+async function publishedAfterFailedRun(refs: boolean, conclusion: 'failure' | 'cancelled' = 'failure') {
+	const stopped = conclusion === 'failure' ? 'failed' : 'cancelled';
 	const repository = await binaryStarts();
 	if (refs) {
 		const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
@@ -1760,8 +1761,8 @@ async function publishedAfterFailedRun(refs: boolean) {
 		async () => {
 			const run = dispatched();
 			run.status = 'completed';
-			run.conclusion = 'failure';
-			await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+			run.conclusion = conclusion;
+			await world.workflowRun(repository, run, conclusion, 'workflow_dispatch');
 			await world.wait(16_000);
 		},
 	];
@@ -1777,25 +1778,25 @@ async function publishedAfterFailedRun(refs: boolean) {
 		if (!found) throw new Error('The release has no promotion');
 		return found;
 	};
-	expect((await promotion()).state).toBe('failed');
+	expect((await promotion()).state).toBe(stopped);
 	const draft = repository.releases.find(release => release.draft);
 	if (!draft) throw new Error('The release has no draft');
 	draft.assets = ['widget-x86_64-unknown-linux-gnu', 'widget-aarch64-apple-darwin'];
 	expect((await world.releasePublished(repository, 'v1.0.1')).status).toBe(202);
 	await world.wait(16_000);
-	expect((await promotion()).state).toBe('failed');
+	expect((await promotion()).state).toBe(stopped);
 	world.github.recordTag(repository, 'v1.0.1', 'a'.repeat(40), world.github.head(repository), true);
 	expect((await world.releasePublished(repository, 'v1.0.1')).status).toBe(202);
 	await world.wait(16_000);
-	expect((await promotion()).state).toBe('failed');
+	expect((await promotion()).state).toBe(stopped);
 	draft.draft = false;
 	expect((await world.releasePublished(repository, 'v9.9.9')).status).toBe(202);
 	await world.wait(16_000);
-	expect((await promotion()).state).toBe('failed');
+	expect((await promotion()).state).toBe(stopped);
 	expect((await world.releasePublished(repository, 'v1.0.1')).status).toBe(202);
 	await world.wait(16_000);
 	const settled = await promotion();
-	expect([settled.state, settled.reason]).toEqual(['succeeded', runFailedNote]);
+	expect([settled.state, settled.reason]).toEqual(['succeeded', conclusion === 'failure' ? runFailedNote : undefined]);
 	return decodeSync(
 		mutableArray(looseStruct({ id: Schema.String, outcome: Schema.String })),
 		settled.publications,
@@ -1804,6 +1805,13 @@ async function publishedAfterFailedRun(refs: boolean) {
 
 test('a release published after its run failed settles the failed operation', async () => {
 	expect(await publishedAfterFailedRun(false)).toEqual([
+		['pkg:github/octo/widget', 'succeeded'],
+		['pkg:npm/widget', 'succeeded'],
+	]);
+});
+
+test('a release published after its run was cancelled settles the cancelled operation', async () => {
+	expect(await publishedAfterFailedRun(false, 'cancelled')).toEqual([
 		['pkg:github/octo/widget', 'succeeded'],
 		['pkg:npm/widget', 'succeeded'],
 	]);

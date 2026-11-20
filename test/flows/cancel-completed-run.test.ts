@@ -14,7 +14,7 @@ eachWorld(created => {
 	world = created;
 });
 
-async function fixture(state: 'running' | 'blocked' | 'verifying' | 'failed' = 'running') {
+async function fixture(state: 'running' | 'blocked' | 'verifying' | 'failed' | 'cancelled' = 'running') {
 	const repository = widget(world.github);
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
@@ -88,6 +88,16 @@ test('a completed failed workflow can still be cancelled to stop release recover
 	expect(cancelled.state).toBe('cancelled');
 	expect(cancellations).toEqual([]);
 	expect(run.conclusion).toBe('failure');
+});
+
+test('a GitHub-cancelled run can be cancelled to stop recovery, and an operator cancellation only once', async () => {
+	const { coordinator, execution, run, cancellations } = await fixture('cancelled');
+	run.status = 'completed';
+	run.conclusion = 'cancelled';
+	const cancelled = await coordinator.cancel(execution.id, String(ownerId));
+	expect([cancelled.state, cancelled.cancelledBy]).toEqual(['cancelled', String(ownerId)]);
+	expect(cancellations).toEqual([]);
+	await expect(coordinator.cancel(execution.id, String(ownerId))).rejects.toThrow('Execution has already finished');
 });
 
 test('an accepted cancellation survives failure to reread the workflow run', async () => {

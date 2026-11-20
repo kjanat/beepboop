@@ -14,6 +14,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { parse, parseDocument } from 'yaml';
 import { mergeConfiguration } from '@/automation/configuration';
+import { discover } from '@/automation/managers';
 import { bodyChoices, releaseAfterMerge, setupBody, setupOptions } from '@/automation/setup';
 import { pinned } from '@/automation/setup-actions';
 import {
@@ -29,7 +30,7 @@ import { rebuildingStatus } from '@/automation/setup-maintenance';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
-import { publishMinutes } from '@/automation/setup-workflows';
+import { integrateWorkflow, publishMinutes } from '@/automation/setup-workflows';
 import { setupChoicesSchema } from '@/contract/setup';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -795,10 +796,39 @@ test('generated workflows keep every expression on one line', async () => {
 		'pkg:golang/github.com/octo/lint/go',
 	]);
 	expect(publications.map(entry => entry.outcome)).toEqual([
-		"${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}",
-		"${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}",
-		"${{ steps.beepboop_refs.outcome == 'success' && 'succeeded' || 'failed' }}",
+		"${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
+		"${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
+		"${{ steps.beepboop_refs.outcome == 'success' && 'succeeded' || steps.beepboop_refs.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
 	]);
+});
+
+test('a crate script report keeps a failed publish step failed when the job is cancelled', () => {
+	const snapshot = {
+		repository: { id: 1, name: 'octo/lint', defaultBranch: 'main' },
+		sha: 'a'.repeat(40),
+		files: { 'Cargo.toml': '[package]\nname = "lint"\nversion = "1.0.0"\nedition = "2024"\n' },
+		paths: ['Cargo.toml'],
+	};
+	const integrated = integrateWorkflow(snapshot, 'main', 'promote', {
+		file: 'publish.yml',
+		triggers: 'review',
+		commands: cratePublishCommands(['lint']),
+		publicationSteps: {},
+	}, discover(snapshot).packages);
+	if (Result.isFailure(integrated)) throw integrated.failure;
+	expect(integrated.success.blockers).toEqual([]);
+	const report = decodeSync(binaryWorkflowSchema, parse(integrated.success.content)).jobs.promote?.steps.find(step =>
+		step.with?.publications
+	);
+	const publications = decodeSync(
+		mutableArray(mutableStruct({ id: Schema.String, outcome: Schema.String })),
+		JSON.parse(String(report?.with?.publications)),
+	);
+	expect(publications).toEqual([{
+		id: 'pkg:cargo/lint',
+		outcome:
+			"${{ steps.beepboop_publish.outputs['lint'] == 'succeeded' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
+	}]);
 });
 
 for (const [file, content] of [['mise.toml', '[tools]\nnode = "24"\n'], ['.tool-versions', 'nodejs 24\n']] as const) {
@@ -940,7 +970,8 @@ test('the promote report leaves out observed publications and reports Go modules
 		name: 'github.com/octo/widget/go',
 		version: '${{ fromJSON(steps.beepboop.outputs.context).version }}',
 		required: true,
-		outcome: "${{ steps.beepboop_refs.outcome == 'success' && 'succeeded' || 'failed' }}",
+		outcome:
+			"${{ steps.beepboop_refs.outcome == 'success' && 'succeeded' || steps.beepboop_refs.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
 	}]);
 	expect(steps.map(step => step.id).filter(Boolean)).toEqual(['beepboop', 'beepboop_token', 'beepboop_refs']);
 });
@@ -1485,7 +1516,7 @@ ${
 		?? ''
 }          CARGO_REGISTRY_TOKEN: \${{ fromJSON(steps.beepboop_credentials.outputs.values)['crates-io'] }}
       - uses: kjanat/beepboop/actions/report@v1
-${variant.reportKeys ?? ''}        if: \${{ !cancelled() && steps.beepboop.outcome == 'success' }}
+${variant.reportKeys ?? ''}        if: \${{ always() && steps.beepboop.outcome == 'success' }}
         with:
           execution-id: \${{ steps.beepboop.outputs.execution-id }}
 ${variant.reportWith ?? ''}          publications: ${
@@ -1497,7 +1528,7 @@ ${variant.reportWith ?? ''}          publications: ${
                 "name": "lint-core",
                 "version": "\${{ fromJSON(steps.beepboop.outputs.context).version }}",
                 "required": true,
-                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}"
+                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}"
               },
               {
                 "id": "pkg:cargo/lint",
@@ -1505,7 +1536,7 @@ ${variant.reportWith ?? ''}          publications: ${
                 "name": "lint",
                 "version": "\${{ fromJSON(steps.beepboop.outputs.context).version }}",
                 "required": true,
-                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || 'failed' }}"
+                "outcome": "\${{ steps.beepboop_publish.outcome == 'success' && 'succeeded' || steps.beepboop_publish.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}"
               }
             ]
 `

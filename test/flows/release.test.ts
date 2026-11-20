@@ -2,6 +2,7 @@ import { expect, spyOn, test } from 'bun:test';
 import { join } from 'node:path';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
+import { ownerId } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { loggedErrors } from '@root/test/support/process.ts';
@@ -14,6 +15,7 @@ import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
 import { createExecution, runFailedNote } from '@/automation/execution';
+import { Automation } from '@/automation/service';
 import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { requireReady } from '@/domain/repository';
@@ -159,7 +161,8 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(world.network.unrouted).toEqual([]);
 });
 
-async function finishedPromotion(outcome: 'pending' | 'skipped') {
+async function finishedPromotion(outcome: 'pending' | 'skipped' | 'cancelled', published = false) {
+	const conclusion = outcome === 'cancelled' ? 'cancelled' : 'success';
 	const session = await world.cliSession();
 	const repository = await discoveredWidget(world, session);
 	const api = bearer(world, session);
@@ -186,9 +189,10 @@ async function finishedPromotion(outcome: 'pending' | 'skipped') {
 			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome },
 		]),
 	});
+	if (published) world.npm.publish('widget', '1.1.0');
 	run.status = 'completed';
-	run.conclusion = 'success';
-	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+	run.conclusion = conclusion;
+	await world.workflowRun(repository, run, conclusion, 'workflow_dispatch');
 	await world.wait(2_000);
 	const entry = (await world.coordinator(repository).exportJournal()).find(entry =>
 		entry.key === `execution:${promotion.id}`
@@ -870,7 +874,7 @@ test('a release stays publishing until the observed workflow that owns its packa
 	});
 	const configuration = configured(owned);
 	const promoted: Execution = { ...finished, configuration, state: 'succeeded', publications: [], createdAt: 1 };
-	const observed = (state: Execution['state'], outcome: 'succeeded' | 'failed'): Execution => ({
+	const observed = (state: Execution['state'], outcome: 'succeeded' | 'failed' | 'cancelled'): Execution => ({
 		...promoted,
 		id: 'observed',
 		operation: 'publish',
@@ -891,6 +895,7 @@ test('a release stays publishing until the observed workflow that owns its packa
 		false,
 	]);
 	expect(shown([promoted, observed('failed', 'failed')])[0]).toEqual({ tone: 'warn', label: 'Needs attention' });
+	expect(shown([promoted, observed('cancelled', 'cancelled')])[0]).toEqual({ tone: 'warn', label: 'Needs attention' });
 	const alone = { ...promoted, configuration: configured({}) };
 	expect(shown([alone])[0]).toEqual({ tone: 'ok', label: 'succeeded' });
 });
@@ -1037,6 +1042,65 @@ test('a finished run whose publication cannot be rechecked is blocked and needs 
 	};
 	expect(releaseSetSummaries([{ ...finished, state: 'blocked', releaseSet }]).map(summary => summary.state)).toEqual([
 		'needs attention',
+	]);
+});
+
+test('a cancelled run with a cancelled publication settles as cancelled', async () => {
+	const { finished, stored } = await finishedPromotion('cancelled');
+	expect(finished.state).toBe('cancelled');
+	expect(finished.publications.map(publication => publication.outcome)).toEqual(['cancelled']);
+	expect(decodeExecutionV1(stored).state).toBe('cancelled');
+});
+
+test('a cancelled publication already on the registry when the run ends settles as succeeded', async () => {
+	const { finished } = await finishedPromotion('cancelled', true);
+	expect([finished.state, finished.publications.map(publication => publication.outcome)]).toEqual([
+		'succeeded',
+		['succeeded'],
+	]);
+});
+
+test('the package watcher settles a cancelled publication once its version appears', async () => {
+	const { api } = await finishedPromotion('cancelled');
+	const watch = () => world.run(Automation.use(service => service.scheduled));
+	world.npm.publish('widget', '1.0.0');
+	await watch();
+	await world.wait(61_000);
+	const waiting = await only(api, 'promote');
+	expect([waiting.state, waiting.publications.map(publication => publication.outcome)]).toEqual([
+		'cancelled',
+		['cancelled'],
+	]);
+	world.npm.publish('widget', '1.1.0');
+	await watch();
+	const settled = await only(api, 'promote');
+	expect([settled.state, settled.publications.map(publication => publication.outcome)]).toEqual([
+		'succeeded',
+		['succeeded'],
+	]);
+});
+
+test('a definite registry failure replaces a cancelled publication', async () => {
+	const { api, repository } = await finishedPromotion('cancelled');
+	world.network.serve('registry.npmjs.org', () => Response.json({ name: 'widget', version: '1.1.0' }));
+	await world.coordinator(repository).packagePublished('npm', 'widget', '1.1.0');
+	const settled = await only(api, 'promote');
+	expect([settled.state, settled.publications.map(publication => publication.outcome)]).toEqual([
+		'failed',
+		['failed'],
+	]);
+});
+
+test('an operator cancellation stays cancelled when the registry later shows the version', async () => {
+	const { api, repository, promotion } = await finishedPromotion('cancelled');
+	const cancelled = await world.coordinator(repository).cancel(promotion.id, String(ownerId));
+	expect(cancelled.cancelledBy).toBe(String(ownerId));
+	world.npm.publish('widget', '1.1.0');
+	await world.coordinator(repository).packagePublished('npm', 'widget', '1.1.0');
+	const stopped = await only(api, 'promote');
+	expect([stopped.state, stopped.publications.map(publication => publication.outcome)]).toEqual([
+		'cancelled',
+		['cancelled'],
 	]);
 });
 

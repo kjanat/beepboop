@@ -77,7 +77,7 @@ export interface ReleasePlan {
 	diagnostics: string[];
 	requiresPreparation: boolean;
 }
-export type Outcome = 'pending' | 'succeeded' | 'failed' | 'uncertain' | 'skipped';
+export type Outcome = 'pending' | 'succeeded' | 'failed' | 'cancelled' | 'uncertain' | 'skipped';
 interface PublicationFields {
 	identity?: PackageIdentity;
 	id: string;
@@ -198,6 +198,7 @@ export interface Execution {
 	github?: GitHubRunState;
 	attempts: number;
 	initiatedBy?: string;
+	cancelledBy?: string;
 	package?: PackageTarget;
 	reservation?: PublishKind;
 	notBefore?: number;

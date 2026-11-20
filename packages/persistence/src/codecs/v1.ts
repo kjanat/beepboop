@@ -193,7 +193,7 @@ const releaseSetPlan: Schema.Codec<ReleaseSetPlan, unknown> = mutableStruct({
 	requiresPreparation: Schema.Boolean,
 });
 const plan = Schema.Union([releasePlan, releaseSetPlan]);
-const outcome = Schema.Literals(['pending', 'succeeded', 'failed', 'uncertain', 'skipped']);
+const outcome = Schema.Literals(['pending', 'succeeded', 'failed', 'cancelled', 'uncertain', 'skipped']);
 const publicationFields = mutableStruct({
 	identity: Schema.optional(identity),
 	id: Schema.String,
@@ -338,6 +338,7 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	github: Schema.optional(githubRunState),
 	attempts: Schema.Finite,
 	initiatedBy: Schema.optional(Schema.String),
+	cancelledBy: Schema.optional(Schema.String),
 	package: Schema.optional(mutableStruct({ id: Schema.String, manager: managerName })),
 	reservation: Schema.optional(Schema.Literals(['new', 'update'])),
 	notBefore: Schema.optional(Schema.Finite),
@@ -389,6 +390,10 @@ export function decodeRepositoryV1(value: unknown): RepositoryRecord {
 	return identifyRepository(decodeSync(repositorySchema, value));
 }
 function currentState(execution: Execution): Execution {
+	const actor = execution.reason?.match(/^Cancelled by (.+)$/)?.[1];
+	if (execution.state === 'cancelled' && execution.cancelledBy === undefined && actor !== undefined) {
+		return { ...execution, cancelledBy: actor };
+	}
 	if (execution.state !== 'blocked' || execution.github?.kind === 'action-required') return execution;
 	if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
 		return { ...execution, state: 'awaiting-approval' };

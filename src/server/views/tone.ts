@@ -27,6 +27,7 @@ export const publicationTone = {
 	'rate-limited': 'waiting',
 	succeeded: 'ok',
 	failed: 'error',
+	cancelled: 'error',
 	uncertain: 'warn',
 	skipped: 'neutral',
 } as const satisfies Record<Publication['outcome'] | 'waiting', Tone>;

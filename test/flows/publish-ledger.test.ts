@@ -602,7 +602,7 @@ test('a cancelled run is never retried automatically even when its jobs never go
 	run.jobs = strandedJobs;
 	await world.workflowRun(repository, run, 'cancelled', 'workflow_dispatch');
 	await world.wait(2_000);
-	expect([run.attempt, (await executionOf(repository, execution.id)).state]).toEqual([1, 'failed']);
+	expect([run.attempt, (await executionOf(repository, execution.id)).state]).toEqual([1, 'cancelled']);
 }, 60_000);
 
 // Retryable publication records must never turn provider intervention into a retry.
@@ -682,7 +682,7 @@ for (const conclusion of ['cancelled', 'action_required', 'failure']) {
 		expect([repository.runs.length, run.attempt, after.state]).toEqual([
 			1,
 			1,
-			conclusion === 'action_required' ? 'blocked' : 'failed',
+			conclusion === 'action_required' ? 'blocked' : conclusion === 'cancelled' ? 'cancelled' : 'failed',
 		]);
 	}, 60_000);
 }

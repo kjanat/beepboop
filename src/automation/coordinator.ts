@@ -14,10 +14,14 @@ import {
 	mergePublications,
 	publishedAfterFailure,
 	recheckable,
+	rechecked,
+	recheckedPublication,
+	recoverable,
 	runTitle,
 	settle,
 	settleRun,
 	validatePublicationIdentity,
+	verifiableCancellation,
 } from '@/automation/execution';
 import { GitHubRejection } from '@/automation/github';
 import type { GitHubRelease, WorkflowRun } from '@/automation/github-resources';
@@ -1756,7 +1760,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				for (const execution of yield* this.executions()) {
-					if (execution.state !== 'failed' || !execution.version) continue;
+					if (!recoverable(execution) || !execution.version) continue;
 					if ((yield* fromSync(() => githubRelease(execution)))?.tag !== tag) continue;
 					const next = yield* this.publishedRelease(execution);
 					if (next !== execution) yield* this.put(next);
@@ -1764,6 +1768,35 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}),
 			'coordinator.releasePublished',
 			{},
+		);
+	}
+	packagePublished(manager: string, name: string, version: string): Promise<void> {
+		return this.serial(
+			Effect.gen({ self: this }, function*() {
+				const gateway = yield* this.gateway;
+				const transport = (yield* Automation).dependencies.transport;
+				for (const execution of yield* this.executions()) {
+					const matches = (publication: Publication) =>
+						verifiableCancellation(publication) && publication.manager === manager && publication.name === name
+						&& publication.version === version;
+					if (!recoverable(execution) || !execution.publications.some(matches)) continue;
+					const publications = yield* Effect.forEach(
+						execution.publications,
+						publication =>
+							matches(publication)
+								? verifyPublication(
+									publication,
+									transport,
+									gateway.verification(execution.repository, execution.repositoryId),
+								).pipe(Effect.map(checked => recheckedPublication(publication, checked)))
+								: Effect.succeed(publication),
+					);
+					const next = rechecked({ ...execution, publications });
+					if (JSON.stringify(next) !== JSON.stringify(execution)) yield* this.put(next);
+				}
+			}),
+			'coordinator.packagePublished',
+			{ manager, name, version },
 		);
 	}
 	private publishedRelease(input: Execution): CoordinatorEffect<Execution, DomainError> {
@@ -3276,7 +3309,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const execution = yield* this.get(id);
-				if (['succeeded', 'cancelled'].includes(execution.state)) {
+				if (execution.state === 'succeeded' || (execution.state === 'cancelled' && !recoverable(execution))) {
 					return yield* precondition('Execution has already finished');
 				}
 				if (execution.runId) {
@@ -3302,7 +3335,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						if (cancelled._tag === 'Failure') return yield* cancelled.failure;
 					}
 				}
-				const next: Execution = { ...execution, state: 'cancelled', reason: `Cancelled by ${actor}` };
+				const next: Execution = {
+					...execution,
+					state: 'cancelled',
+					cancelledBy: actor,
+					reason: `Cancelled by ${actor}`,
+				};
 				yield* this.put(next);
 				yield* (yield* this.store).audit(actor, 'execution.cancel', id);
 				return next;
@@ -3921,10 +3959,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (result.observation.completed) {
 					for (let i = 0; i < execution.publications.length; i++) {
 						const publication = execution.publications[i];
-						if (publication && recheckable(publication)) {
+						if (
+							publication
+							&& (recheckable(publication)
+								|| verifiableCancellation(publication))
+						) {
 							const context = (yield* this.gateway).verification(execution.repository, execution.repositoryId);
 							const transport = (yield* Automation).dependencies.transport;
-							execution.publications[i] = yield* verifyPublication(publication, transport, context);
+							execution.publications[i] = recheckedPublication(
+								publication,
+								yield* verifyPublication(publication, transport, context),
+							);
 						}
 					}
 					const limited = execution.publications.flatMap(publication =>
@@ -4225,7 +4270,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					.map((e) => e.stream),
 			);
 			const unresolved = (execution: Execution) =>
-				['succeeded', 'failed'].includes(execution.state) && execution.publications.some(recheckable);
+				(execution.state === 'succeeded' || recoverable(execution)) && execution.publications.some(recheckable);
 			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
 				yield* this.requestReconcile(started + reconcileInterval);
 			}

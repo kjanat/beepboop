@@ -53,15 +53,16 @@ jobs:
         env: { RELEASE_CONTEXT: "${{ steps.release.outputs.context }}" }
       - name: Publication report
         id: report
-        if: ${{ !cancelled() && steps.metadata.outcome == 'success' }}
+        if: ${{ always() && steps.metadata.outcome == 'success' }}
         run: bun src/tooling/cli/release.ts report
         env:
           RELEASE_CONTEXT: ${{ steps.release.outputs.context }}
+          JOB_STATUS: ${{ job.status }}
           NPM_OUTCOME: ${{ steps.npm.outcome }}
           NPM_INTEGRITY: ${{ steps.npm.outputs.integrity }}
           JSR_OUTCOME: ${{ steps.jsr.outcome }}
       - uses: $/actions/report
-        if: ${{ !cancelled() && steps.report.outcome == 'success' }}
+        if: ${{ always() && steps.report.outcome == 'success' }}
         with:
           execution-id: ${{ steps.release.outputs.execution-id }}
           publications: ${{ steps.report.outputs.publications }}
