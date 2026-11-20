@@ -186,7 +186,7 @@ export function integrateReleaseWorkflow(
 			return fail('preparation and publication need different jobs');
 		}
 		const gate = (operation: 'prepare' | 'promote') =>
-			`\u0024{{ inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}' }}`;
+			expression(`inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}'`);
 		const document = parseDocument(snapshot.files[path] ?? 'name: Release\non: {}\njobs: {}\n');
 		if (document.errors.length) return fail('invalid YAML');
 		const existing = snapshot.files[path] !== undefined;
@@ -481,7 +481,7 @@ function integrate(
 	const id = typeof existingBegin?.id === 'string' ? existingBegin.id : 'beepboop';
 	if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(id)) fail('begin action needs a static step ID');
 	if (!existingBegin && steps.some(step => step.id === id)) fail(`step ID ${id} is already used`);
-	const context = `\u0024{{ steps.${id}.outputs.context }}`;
+	const context = expression(`steps.${id}.outputs.context`);
 	const action = (name: string) => {
 		// A local integration is evidence, not a repository-name special case.
 		if (['action.yml', 'action.yaml'].some(file => snapshot.files[`actions/${name}/${file}`])) {
@@ -510,14 +510,14 @@ function integrate(
 				uses: pinned('checkout'),
 				with: {
 					...object(checkout.with),
-					ref: `\u0024{{ fromJSON(steps.${id}.outputs.context).sourceSha }}`,
+					ref: expression(`fromJSON(steps.${id}.outputs.context).sourceSha`),
 					'persist-credentials': false,
 				},
 			},
 		);
 	}
 	const beginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
-	const sourceRef = `\u0024{{ fromJSON(steps.${id}.outputs.context).sourceSha }}`;
+	const sourceRef = expression(`fromJSON(steps.${id}.outputs.context).sourceSha`);
 	if (
 		existingBegin
 		&& !steps.some((step, index) =>
@@ -586,14 +586,14 @@ function integrate(
 			{
 				id: 'beepboop_credentials',
 				uses: action('credentials'),
-				with: { 'execution-id': `\${{ steps.${id}.outputs.execution-id }}`, aliases: JSON.stringify(aliases) },
+				with: { 'execution-id': expression(`steps.${id}.outputs.execution-id`), aliases: JSON.stringify(aliases) },
 			},
 			{
 				...script,
 				env: Object.fromEntries(
 					Object.entries(credentials).map(([name, alias]) => [
 						name,
-						`\${{ fromJSON(steps.beepboop_credentials.outputs.values)['${alias}'] }}`,
+						expression(`fromJSON(steps.beepboop_credentials.outputs.values)['${alias}']`),
 					]),
 				),
 			},
@@ -620,7 +620,7 @@ function integrate(
 				)
 					.map(packageId),
 			);
-			const execution = `\${{ steps.${id}.outputs.execution-id }}`;
+			const execution = expression(`steps.${id}.outputs.execution-id`);
 			const beyondSteps = { ...job, steps: undefined };
 			const migrated = steps.flatMap((step, index) => {
 				if (index === plainStep) {
@@ -700,7 +700,7 @@ function integrate(
 						name: 'Publish selected packages',
 						uses: action('publish'),
 						with: {
-							'execution-id': `\${{ steps.${id}.outputs.execution-id }}`,
+							'execution-id': expression(`steps.${id}.outputs.execution-id`),
 							...(aliases.length ? { credentials: JSON.stringify(credentials) } : {}),
 						},
 					}]
@@ -725,19 +725,23 @@ function integrate(
 				id: packageId(pkg),
 				manager: pkg.manager,
 				name: pkg.name,
-				version: `\u0024{{ fromJSON(steps.${id}.outputs.context).version }}`,
+				version: expression(`fromJSON(steps.${id}.outputs.context).version`),
 				required: required.includes(packageId(pkg)),
 				outcome: step === 'beepboop_publish' && crateOutcome(choice.commands, pkg.name)
-					? `\u0024{{ case(steps.${step}.outputs['${pkg.name}'] == 'succeeded', 'succeeded', steps.${step}.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}`
-					: `\u0024{{ case(steps.${step}.outcome == 'success', 'succeeded', steps.${step}.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed') }}`,
+					? expression(
+						`case(steps.${step}.outputs['${pkg.name}'] == 'succeeded', 'succeeded', steps.${step}.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed')`,
+					)
+					: expression(
+						`case(steps.${step}.outcome == 'success', 'succeeded', steps.${step}.outcome == 'failure', 'failed', job.status == 'cancelled', 'cancelled', 'failed')`,
+					),
 			};
 		});
 		if (!ledger || publications.length) {
 			steps.push({
 				uses: action('report'),
-				if: `\u0024{{ always() && steps.${id}.outcome == 'success' }}`,
+				if: expression(`always() && steps.${id}.outcome == 'success'`),
 				with: {
-					'execution-id': `\u0024{{ steps.${id}.outputs.execution-id }}`,
+					'execution-id': expression(`steps.${id}.outputs.execution-id`),
 					publications: `${JSON.stringify(publications, null, 2)}\n`,
 				},
 			});
@@ -811,7 +815,7 @@ function integrate(
 	) {
 		steps.splice(refs + 1, 0, {
 			uses: action('publish-release'),
-			with: { 'execution-id': `\u0024{{ steps.${id}.outputs.execution-id }}` },
+			with: { 'execution-id': expression(`steps.${id}.outputs.execution-id`) },
 		});
 	}
 	if (
@@ -820,7 +824,7 @@ function integrate(
 		fail('credentials need setup commands to receive them, or a beepboop_credentials step in the job');
 	}
 	const reports = steps.filter(step => actionRole(step.uses) === 'report');
-	const begun = `\u0024{{ steps.${id}.outputs.execution-id }}`;
+	const begun = expression(`steps.${id}.outputs.execution-id`);
 	const report = reports.find(step => object(step.with)['execution-id'] === begun)
 		?? (emptied ? undefined : reports[0]);
 	if (
