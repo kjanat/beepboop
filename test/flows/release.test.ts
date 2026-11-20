@@ -2,6 +2,7 @@ import { expect, spyOn, test } from 'bun:test';
 import { join } from 'node:path';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
+import { ownerId } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { loggedErrors } from '@root/test/support/process.ts';
@@ -14,6 +15,7 @@ import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
 import { createExecution, runFailedNote } from '@/automation/execution';
+import { Automation } from '@/automation/service';
 import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
 import { requireReady } from '@/domain/repository';
@@ -159,7 +161,7 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(world.network.unrouted).toEqual([]);
 });
 
-async function finishedPromotion(outcome: 'pending' | 'skipped' | 'cancelled') {
+async function finishedPromotion(outcome: 'pending' | 'skipped' | 'cancelled', published = false) {
 	const conclusion = outcome === 'cancelled' ? 'cancelled' : 'success';
 	const session = await world.cliSession();
 	const repository = await discoveredWidget(world, session);
@@ -187,6 +189,7 @@ async function finishedPromotion(outcome: 'pending' | 'skipped' | 'cancelled') {
 			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome },
 		]),
 	});
+	if (published) world.npm.publish('widget', '1.1.0');
 	run.status = 'completed';
 	run.conclusion = conclusion;
 	await world.workflowRun(repository, run, conclusion, 'workflow_dispatch');
@@ -1049,22 +1052,55 @@ test('a cancelled run with a cancelled publication settles as cancelled', async 
 	expect(decodeExecutionV1(stored).state).toBe('cancelled');
 });
 
-test('a cancelled publication that reached the registry settles as succeeded', async () => {
+test('a cancelled publication already on the registry when the run ends settles as succeeded', async () => {
+	const { finished } = await finishedPromotion('cancelled', true);
+	expect([finished.state, finished.publications.map(publication => publication.outcome)]).toEqual([
+		'succeeded',
+		['succeeded'],
+	]);
+});
+
+test('the package watcher settles a cancelled publication once its version appears', async () => {
 	const { api } = await finishedPromotion('cancelled');
-	world.network.serve('registry.npmjs.org', () => new Response('missing', { status: 404 }));
+	const watch = () => world.run(Automation.use(service => service.scheduled));
+	world.npm.publish('widget', '1.0.0');
+	await watch();
 	await world.wait(61_000);
-	const missing = await only(api, 'promote');
-	expect([missing.state, missing.publications.map(publication => publication.outcome)]).toEqual([
+	const waiting = await only(api, 'promote');
+	expect([waiting.state, waiting.publications.map(publication => publication.outcome)]).toEqual([
 		'cancelled',
 		['cancelled'],
 	]);
-	world.network.serve('registry.npmjs.org', request => world.npm.handle(request));
 	world.npm.publish('widget', '1.1.0');
-	await world.wait(61_000);
+	await watch();
 	const settled = await only(api, 'promote');
 	expect([settled.state, settled.publications.map(publication => publication.outcome)]).toEqual([
 		'succeeded',
 		['succeeded'],
+	]);
+});
+
+test('a definite registry failure replaces a cancelled publication', async () => {
+	const { api, repository } = await finishedPromotion('cancelled');
+	world.network.serve('registry.npmjs.org', () => Response.json({ name: 'widget', version: '1.1.0' }));
+	await world.coordinator(repository).packagePublished('npm', 'widget', '1.1.0');
+	const settled = await only(api, 'promote');
+	expect([settled.state, settled.publications.map(publication => publication.outcome)]).toEqual([
+		'failed',
+		['failed'],
+	]);
+});
+
+test('an operator cancellation stays cancelled when the registry later shows the version', async () => {
+	const { api, repository, promotion } = await finishedPromotion('cancelled');
+	const cancelled = await world.coordinator(repository).cancel(promotion.id, String(ownerId));
+	expect(cancelled.cancelledBy).toBe(String(ownerId));
+	world.npm.publish('widget', '1.1.0');
+	await world.coordinator(repository).packagePublished('npm', 'widget', '1.1.0');
+	const stopped = await only(api, 'promote');
+	expect([stopped.state, stopped.publications.map(publication => publication.outcome)]).toEqual([
+		'cancelled',
+		['cancelled'],
 	]);
 });
 

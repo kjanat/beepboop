@@ -198,6 +198,7 @@ export interface Execution {
 	github?: GitHubRunState;
 	attempts: number;
 	initiatedBy?: string;
+	cancelledBy?: string;
 	package?: PackageTarget;
 	reservation?: PublishKind;
 	notBefore?: number;

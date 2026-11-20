@@ -1,5 +1,12 @@
 import { expect, test } from 'bun:test';
-import { publishedAfterFailure, runFailedNote, settleRun } from '@/automation/execution';
+import {
+	publishedAfterFailure,
+	rechecked,
+	recheckedPublication,
+	recoverable,
+	runFailedNote,
+	settleRun,
+} from '@/automation/execution';
 import { classifyJob, classifyRun, githubFailureReason } from '@/automation/github-state';
 import type { RunJob } from '@/automation/job-gate';
 import type { Execution } from '@/automation/types';
@@ -188,6 +195,45 @@ test('a cancelled run settles as cancelled unless a required publication failed'
 	expect(pending.state).toBe('cancelled');
 	expect(publishedAfterFailure({ ...pending, publications: [published] })?.state).toBe('succeeded');
 	expect(publishedAfterFailure(pending)).toBeUndefined();
+});
+
+test('a registry recheck keeps a cancelled publication unless the registry gives a definite answer', () => {
+	const cancelled = { ...published, outcome: 'cancelled' as const };
+	for (const outcome of ['pending', 'uncertain'] as const) {
+		expect(recheckedPublication(cancelled, { ...published, outcome })).toBe(cancelled);
+	}
+	for (const outcome of ['succeeded', 'failed'] as const) {
+		expect(recheckedPublication(cancelled, { ...published, outcome }).outcome).toBe(outcome);
+	}
+	const pending = { ...published, outcome: 'pending' as const };
+	expect(recheckedPublication(pending, { ...published, outcome: 'uncertain' }).outcome).toBe('uncertain');
+	const source = { ...execution(), state: 'cancelled' as const };
+	expect(rechecked({ ...source, publications: [{ ...published, outcome: 'failed' }] }).state).toBe('failed');
+	expect(rechecked({ ...source, publications: [published] }).state).toBe('succeeded');
+	const waiting = { ...source, publications: [cancelled] };
+	expect(rechecked(waiting)).toBe(waiting);
+	const stopped = { ...source, cancelledBy: '42', publications: [{ ...published, outcome: 'failed' as const }] };
+	expect(rechecked(stopped)).toBe(stopped);
+});
+
+test('only failed runs and GitHub cancellations recover; an operator cancellation stays stopped', () => {
+	const cancelled = { ...execution(), state: 'cancelled' as const, publications: [published] };
+	expect(recoverable({ ...execution(), state: 'failed' })).toBe(true);
+	expect(recoverable(cancelled)).toBe(true);
+	expect(publishedAfterFailure(cancelled)?.state).toBe('succeeded');
+	const stopped = { ...cancelled, cancelledBy: '42', reason: 'Cancelled by 42' };
+	expect(recoverable(stopped)).toBe(false);
+	expect(publishedAfterFailure(stopped)).toBeUndefined();
+	expect(recoverable({ ...execution(), state: 'succeeded' })).toBe(false);
+});
+
+test('a stored operator cancellation decodes with the actor who cancelled it', () => {
+	const legacy = { ...execution(), state: 'cancelled', reason: 'Cancelled by 42' };
+	expect(decodeExecutionV1(JSON.parse(JSON.stringify(legacy))).cancelledBy).toBe('42');
+	const github = { ...legacy, reason: 'GitHub workflow cancelled: Publish (cancelled)' };
+	expect(decodeExecutionV1(JSON.parse(JSON.stringify(github))).cancelledBy).toBeUndefined();
+	const recorded = { ...legacy, cancelledBy: '7' };
+	expect(decodeExecutionV1(JSON.parse(JSON.stringify(recorded))).cancelledBy).toBe('7');
 });
 
 test('a cancelled required publication cancels a successful run', () => {

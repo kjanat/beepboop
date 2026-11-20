@@ -178,7 +178,7 @@ await main(Effect.gen(function*() {
 				required: true,
 				outcome: process.env[`${manager.toUpperCase()}_OUTCOME`] === 'success'
 					? 'succeeded'
-					: process.env.JOB_STATUS === 'cancelled'
+					: process.env[`${manager.toUpperCase()}_OUTCOME`] !== 'failure' && process.env.JOB_STATUS === 'cancelled'
 					? 'cancelled'
 					: 'failed',
 				...(manager === 'npm'

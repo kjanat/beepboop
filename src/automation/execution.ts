@@ -240,19 +240,33 @@ export function settleRun(execution: Execution, result: GitHubRunResult): Execut
 	}
 	return settled;
 }
+export function recoverable(execution: Execution): boolean {
+	return execution.state === 'failed' || (execution.state === 'cancelled' && execution.cancelledBy === undefined);
+}
 export function publishedAfterFailure(execution: Execution): Execution | undefined {
-	if (!['failed', 'cancelled'].includes(execution.state) || execution.runId === undefined) return undefined;
+	if (!recoverable(execution) || execution.runId === undefined) return undefined;
 	const settled = execution.github?.completed
 		? settleRun(execution, { observation: execution.github, jobs: [], retry: undefined })
 		: settle(execution, false);
 	return settled.state === 'succeeded' ? settled : undefined;
 }
+export function rechecked(execution: Execution): Execution {
+	const published = publishedAfterFailure(execution);
+	if (published) return published;
+	return execution.state === 'cancelled' && recoverable(execution)
+			&& requiredPublications(execution).some((p) => p.outcome === 'failed')
+		? { ...execution, state: 'failed' }
+		: execution;
+}
 export function recheckable(publication: Publication): boolean {
 	return canVerifyPublication(publication.manager)
-		&& ['pending', 'uncertain', 'cancelled'].includes(publication.outcome);
+		&& ['pending', 'uncertain'].includes(publication.outcome);
 }
-export function rechecked(prior: Publication, checked: Publication): Publication {
-	return prior.outcome === 'cancelled' && checked.outcome !== 'succeeded' ? prior : checked;
+export function verifiableCancellation(publication: Publication): boolean {
+	return publication.outcome === 'cancelled' && canVerifyPublication(publication.manager);
+}
+export function recheckedPublication(prior: Publication, checked: Publication): Publication {
+	return prior.outcome === 'cancelled' && !['succeeded', 'failed'].includes(checked.outcome) ? prior : checked;
 }
 export function mergePublications(
 	prior: Publication[],

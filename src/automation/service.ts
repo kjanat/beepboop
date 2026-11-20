@@ -967,10 +967,28 @@ export class AutomationService {
 				return yield* precondition('Release event requires its upstream identity');
 			}
 			const deliveries: SubscriptionDelivery[] = [];
+			const separator = event.source.indexOf(':');
+			const published = event.event === 'package.version.changed' && event.version && separator > 0
+				? {
+					registry: event.source.slice(0, separator),
+					name: event.source.slice(separator + 1),
+					version: event.version,
+				}
+				: undefined;
 			for (const stored of yield* this.store.readableRepositories()) {
 				const state = readiness(stored);
 				if (state.kind !== 'ready') continue;
 				const repository = state.repository;
+				if (
+					published
+					&& repository.inventory.packages.some(pkg =>
+						pkg.manager === published.registry && pkg.name === published.name
+					)
+				) {
+					yield* fromPromise(() =>
+						this.coordinator(repository.id).packagePublished(published.registry, published.name, published.version)
+					);
+				}
 				for (const subscription of repository.configuration.subscriptions) {
 					if (!matchesSubscription(subscription, event)) continue;
 					if ('issue' in subscription) {

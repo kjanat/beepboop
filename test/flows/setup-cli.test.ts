@@ -326,7 +326,7 @@ jobs:
 	expect(publications.map(pkg => [pkg.name, pkg.outcome])).toEqual([
 		[
 			'package-a',
-			"${{ steps.publish_a.outcome == 'success' && 'succeeded' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
+			"${{ steps.publish_a.outcome == 'success' && 'succeeded' || steps.publish_a.outcome == 'failure' && 'failed' || job.status == 'cancelled' && 'cancelled' || 'failed' }}",
 		],
 	]);
 });
