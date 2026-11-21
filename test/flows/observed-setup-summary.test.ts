@@ -110,14 +110,27 @@ test('observed Cargo adoption distinguishes warnings, readiness, and tag filters
 	);
 	expect(stream.required).toEqual(stream.packages);
 	expect(stream.versioning).toBe('workspace');
-	expect(stream.promote).toBeUndefined();
+	expect(stream.promote).toEqual({
+		file: 'release-main.yml',
+		job: 'promote',
+		triggers: 'review',
+		commands: '',
+		publicationSteps: {},
+		tagPrefix: 'v',
+	});
+	expect(stream.prepare?.commands).toBe('cargo test --workspace');
 	expect(stream.observe).toEqual([{
 		name: 'publish',
 		file: 'publish.yml',
 		ref: 'refs/tags/v*',
 		publications: stream.packages,
+		needs: ['promote'],
 	}]);
-	expect(plan.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json']);
+	expect(plan.edits.map(edit => edit.path)).toEqual([
+		'.github/beepboop.json',
+		'.github/workflows/prepare-release.yml',
+		'.github/workflows/release-main.yml',
+	]);
 	expect(plan.blockers).toEqual([]);
 	expect(plan.notes.some(note => note.includes('lacks a license file'))).toBe(false);
 	const summary = streamSummary(stream, plan).join('\n');
@@ -130,7 +143,7 @@ test('observed Cargo adoption distinguishes warnings, readiness, and tag filters
 	expect(body).toContain(summary.split('\n')[0] ?? 'missing summary');
 	expect(body).toContain('crates.io returned 404 for tool-core');
 	expect(body).not.toContain('unverified');
-	expect(body).toContain('Once publishing prerequisites are satisfied, start the next release');
+	expect(body).toContain('Start a release with `beepboop release` in a checkout or from the dashboard.');
 	expect(body).not.toContain('lacks a license file');
 	expect(body).not.toContain('### Held packages');
 	expect(body).not.toContain('Beepboop holds its release');

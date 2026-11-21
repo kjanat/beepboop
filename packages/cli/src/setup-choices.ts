@@ -614,7 +614,6 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 							triggers: 'dispatchOnly',
 							commands: stream.actionRelease.kind === 'distribution' ? plan.actionRelease.commands : '',
 							publicationSteps: {},
-							tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`),
 						};
 					}
 				}

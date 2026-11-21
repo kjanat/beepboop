@@ -11,7 +11,12 @@ from the existing release workflows. It reads the workflows, the local actions,
 scripts and task recipes they run, and the repository's tags. It groups them
 into release streams. Each tag family, manually dispatched release and scheduled
 channel gets one stream. Each stream observes its existing workflows and keeps
-their triggers. The initial proposal changes `.github/beepboop.json`. Selecting managed publication can also create or update workflows.
+their triggers. For a stream that starts from a tag family, the proposal also
+creates a `release-<stream>.yml` workflow under `promote`. Beepboop runs it to
+push the version tag, and that tag starts the observed workflows. Beepboop
+starts the release, and the observed workflows still publish. A repository with
+one stream tags `v<version>`. With several streams, `main` tags `v<version>`
+and every other stream tags `<stream>-v<version>`.
 
 The setup PR body has a **Release plan** section. For each stream it lists:
 
@@ -391,6 +396,29 @@ use the run name `Release operation ${{ inputs.beepboop_execution_id }}`.
 `BEEPBOOP_EXECUTION_ID` for later steps. Call `begin` in each participating
 job. The context holds the requested version and the source commit. Calls from
 the same observed run, stream and operation attach to the same execution.
+
+Setup adopts a dispatch workflow that already calls `begin` in several jobs
+and leaves the file as it is. Every job with `begin` needs `id-token: write`.
+Every checkout in such a job checks out the begin context `sourceSha`, or a job
+output that carries it, and at least one of them runs after `begin` without `if`
+or `continue-on-error`. A checkout before `begin` may load a local `begin`
+action from the dispatch ref. A planned checkout at the same path and
+repository must follow it, and only `begin` and other checkouts may run between
+them. Every other required dispatch input needs a default.
+The `report` steps must cover every selected package, and `publish-refs` must
+tag the release when the stream pushes tags. A distribution release passes its
+files to each `publish-refs` step.
+
+Setup adds the aliases of each `actions/credentials` step, and the aliases in
+the `credentials` input of `actions/publish`, to the stream's `credentials`.
+It reads the prepare, promote and operation workflows. Merging the setup PR
+grants each alias to the operation and environment of its job. The `begin`
+step of a job names its operation. A job without `begin` takes the operation of
+its `beepboop_operation` condition, written with or without `${{ }}`. The job
+that setup integrates belongs to the operation it is selected for. A job
+environment written as an expression blocks setup. A credential input that
+holds an expression or invalid JSON blocks setup. Merging grants only aliases
+in the merged `credentials` list.
 
 ## Publish through Beepboop
 
@@ -1405,6 +1433,10 @@ Beepboop answers the backfill in pages. A page starts checks for 10 seconds and
 answers within 20, and the CLI requests pages until every tag has an answer. A
 check still running after 20 seconds reports a failure, and the next backfill
 checks that tag again.
+
+Setup writes `packageTags` with every package of the stream that Beepboop can
+check on its registry when the stream's version tag is `v<version>` and the
+configuration has no `packageTags` yet.
 
 Discovery blocks a `packageTags` entry that matches no package, matches only
 packages that skip their public registry, or is not in the stream's

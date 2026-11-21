@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishRefs } from '@root/actions/runtime/refs.ts';
@@ -106,6 +106,88 @@ test('a replacing ref plan moves the version tag to the new release commit under
 		expect(gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0^{commit}'])).toBe(fixed);
 		expect(gitOutput(origin, ['cat-file', '-t', 'refs/tags/v1.0.0'])).toBe('tag');
 	} finally {
+		dispose();
+	}
+});
+
+test('a ref plan publishes from a job without a checkout and removes its scratch repository', async () => {
+	const { checkout, origin, fixed, dispose } = moving();
+	const workspace = mkdtempSync(join(tmpdir(), 'beepboop-workspace-'));
+	const temp = mkdtempSync(join(tmpdir(), 'beepboop-runner-temp-'));
+	const runnerTemp = process.env.RUNNER_TEMP;
+	process.env.RUNNER_TEMP = temp;
+	try {
+		gitOutput(checkout.dir, ['push', '-q', origin, `${fixed}:refs/heads/main`]);
+		const change = { name: 'v1.0.1', expected: null, commit: fixed, annotated: false, signed: false };
+		await Effect.runPromise(
+			publishRefs(
+				{ repository: 'octo/widget', executionId: 'e', version: '1.0.1', changes: [change] },
+				workspace,
+				origin,
+			),
+		);
+		expect(gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.1'])).toBe(fixed);
+		expect([readdirSync(workspace), readdirSync(temp)]).toEqual([[], []]);
+		const blocked = join(temp, 'file');
+		writeFileSync(blocked, '');
+		process.env.RUNNER_TEMP = blocked;
+		const exit = await Effect.runPromiseExit(
+			publishRefs(
+				{ repository: 'octo/widget', executionId: 'e', version: '1.0.1', changes: [{ ...change, name: 'v1.0.2' }] },
+				workspace,
+				origin,
+			),
+		);
+		expect(JSON.stringify(exit)).toContain('Could not create a repository for the release refs');
+	} finally {
+		if (runnerTemp === undefined) delete process.env.RUNNER_TEMP;
+		else process.env.RUNNER_TEMP = runnerTemp;
+		rmSync(workspace, { recursive: true, force: true });
+		rmSync(temp, { recursive: true, force: true });
+		dispose();
+	}
+});
+
+test('a job without a checkout tags with the step identity and replays its published tag object', async () => {
+	const { checkout, origin, old, fixed, plan, dispose } = moving();
+	const workspace = mkdtempSync(join(tmpdir(), 'beepboop-workspace-'));
+	const names = [
+		'GIT_CONFIG_GLOBAL',
+		'GIT_CONFIG_NOSYSTEM',
+		'GIT_CONFIG_COUNT',
+		'GIT_CONFIG_KEY_0',
+		'GIT_CONFIG_VALUE_0',
+		'GIT_COMMITTER_NAME',
+		'GIT_COMMITTER_EMAIL',
+		'GIT_COMMITTER_DATE',
+	];
+	const saved = names.map(name => [name, process.env[name]] as const);
+	Object.assign(process.env, {
+		GIT_CONFIG_GLOBAL: '/dev/null',
+		GIT_CONFIG_NOSYSTEM: '1',
+		GIT_CONFIG_COUNT: '1',
+		GIT_CONFIG_KEY_0: 'user.useConfigOnly',
+		GIT_CONFIG_VALUE_0: 'true',
+		GIT_COMMITTER_NAME: 'beepboop[bot]',
+		GIT_COMMITTER_EMAIL: 'bot@example.com',
+		GIT_COMMITTER_DATE: '1767225600 +0000',
+	});
+	try {
+		gitOutput(checkout.dir, ['push', '-q', origin, `${fixed}:refs/heads/main`]);
+		await Effect.runPromise(publishRefs(plan(old), workspace, origin));
+		const published = gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0']);
+		expect(gitOutput(origin, ['cat-file', '-p', published])).toContain(
+			'tagger beepboop[bot] <bot@example.com> 1767225600 +0000',
+		);
+		process.env.GIT_COMMITTER_DATE = '1767229200 +0000';
+		await Effect.runPromise(publishRefs(plan(old), workspace, origin));
+		expect([gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0']), readdirSync(workspace)]).toEqual([published, []]);
+	} finally {
+		for (const [name, value] of saved) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+		rmSync(workspace, { recursive: true, force: true });
 		dispose();
 	}
 });

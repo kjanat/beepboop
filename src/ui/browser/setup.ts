@@ -233,7 +233,15 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 				: undefined,
 			packages: selected.filter(entry => entry.input.checked).map(entry => entry.pkg),
 		});
-		const publishing = workflow(body, 'promote', plan, selection, value.promote);
+		const published = () => {
+			const chosen = selection();
+			const observed = observing.checked ? value.observe ?? [] : [];
+			return {
+				...chosen,
+				packages: chosen.packages.filter(pkg => !observed.some(entry => entry.publications.includes(pkg.id))),
+			};
+		};
+		const publishing = workflow(body, 'promote', plan, published, value.promote);
 		const preparing = workflow(body, 'prepare', plan, selection, value.prepare, publishing);
 		action?.addEventListener('change', () => {
 			publishing.refresh();
@@ -259,7 +267,11 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 				picker.disabled = !kept(picker.dataset.workflowRole);
 			}
 		};
-		observing.addEventListener('change', showPickers);
+		observing.addEventListener('change', () => {
+			showPickers();
+			publishing.refresh();
+			preparing.refresh();
+		});
 		showPickers();
 		body.append(groupAdvanced);
 		enabled.addEventListener('change', () => {

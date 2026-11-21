@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -99,12 +100,32 @@ function createTag(git: Git, ref: string, change: RefChange, version: string): E
 	});
 }
 
-function prepareTag(git: Git, ref: string, change: RefChange, version: string): Effect.Effect<string, ActionFailure> {
+function publishedTag(git: Git, remote: string, ref: string, change: RefChange): Effect.Effect<boolean, ActionFailure> {
+	return Effect.gen(function*() {
+		if (!(yield* git.read('ls-remote', remote, ref)).split(/\s+/)[0]) return false;
+		yield* git.read('fetch', '--no-tags', remote, ref);
+		return yield* verifyTag(git, 'FETCH_HEAD', change, 'Published tag differs from the ref plan').pipe(
+			Effect.as(true),
+			Effect.orElseSucceed(() => false),
+		);
+	});
+}
+
+function prepareTag(
+	git: Git,
+	remote: string,
+	ref: string,
+	change: RefChange,
+	version: string,
+): Effect.Effect<string, ActionFailure> {
 	return Effect.gen(function*() {
 		if (
 			change.replaces && (yield* git.exists(ref)) && (yield* git.read('rev-parse', `${ref}^{commit}`)) !== change.commit
 		) {
 			yield* git.read('update-ref', '-d', ref);
+		}
+		if (!(yield* git.exists(ref)) && (yield* publishedTag(git, remote, ref, change))) {
+			yield* git.read('update-ref', ref, 'FETCH_HEAD', '');
 		}
 		if (yield* git.exists(ref)) {
 			yield* verifyTag(git, ref, change, 'Local tag differs from the ref plan');
@@ -181,12 +202,21 @@ function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, A
 				yield* verifyPublishedTag(git, remote, ref, change);
 				continue;
 			}
-			const object = change.annotated ? yield* prepareTag(git, ref, change, plan.version) : change.commit;
+			const object = change.annotated ? yield* prepareTag(git, remote, ref, change, plan.version) : change.commit;
 			if (plan.distribution && (yield* git.read('ls-remote', remote, ref)).split(/\s+/)[0] === object) continue;
 			leases.push(`--force-with-lease=${ref}:${change.expected ?? ''}`);
 			refspecs.push(`${object}:${ref}`);
 		}
 		if (refspecs.length) yield* git.read('push', '--atomic', ...leases, remote, ...refspecs);
+	});
+}
+
+function scratchRepository(root: string): Effect.Effect<string | undefined, ActionFailure> {
+	return Effect.gen(function*() {
+		if (git(['rev-parse', '--git-dir'], { cwd: root }).ok) return undefined;
+		const scratch = join(process.env.RUNNER_TEMP || tmpdir(), `beepboop-refs-${randomUUID()}`);
+		if (git(['init', '--quiet', scratch]).ok) return scratch;
+		return yield* new ActionFailure({ message: 'Could not create a repository for the release refs' });
 	});
 }
 
@@ -200,12 +230,21 @@ export function publishRefs(
 	if (plan.distribution && publicKey === undefined) {
 		return Effect.fail(new ActionFailure({ message: 'Distribution publication requires the signing key' }));
 	}
-	if (publicKey === undefined) return publish(plan, createGit(root, token), remote);
 	return Effect.acquireUseRelease(
-		Effect.fromResult(attempt(() => mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'beepboop-gnupg-')))),
-		keyring =>
-			importKey(keyring, publicKey).pipe(Effect.andThen(publish(plan, createGit(root, token, keyring), remote))),
-		keyring => Effect.sync(() => rmSync(keyring, { recursive: true, force: true })),
+		scratchRepository(root),
+		scratch => {
+			const repository = scratch ?? root;
+			if (publicKey === undefined) return publish(plan, createGit(repository, token), remote);
+			return Effect.acquireUseRelease(
+				Effect.fromResult(attempt(() => mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'beepboop-gnupg-')))),
+				keyring =>
+					importKey(keyring, publicKey).pipe(
+						Effect.andThen(publish(plan, createGit(repository, token, keyring), remote)),
+					),
+				keyring => Effect.sync(() => rmSync(keyring, { recursive: true, force: true })),
+			);
+		},
+		scratch => Effect.sync(() => scratch && rmSync(scratch, { recursive: true, force: true })),
 	);
 }
 

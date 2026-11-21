@@ -3039,7 +3039,7 @@ describe('adoption PR', () => {
 		world = created;
 	});
 
-	test('a simple plugin release is adopted without entering workflows, and regenerates identically', async () => {
+	test('a simple plugin release keeps its workflow, gains a tagging workflow, and regenerates identically', async () => {
 		const { snapshot } = await load('dprint-plugin-svg');
 		const repository = world.github.create(snapshot.repository.name, snapshot.files, snapshot.repository.defaultBranch);
 		const api = bearer(world, await world.cliSession());
@@ -3059,10 +3059,21 @@ describe('adoption PR', () => {
 				file: 'release.yml',
 				ref: 'refs/tags/v*',
 				publications: ['pkg:github/kjanat/dprint-plugin-svg'],
+				needs: ['promote'],
 			}],
+			promote: {
+				file: 'release-main.yml',
+				job: 'promote',
+				triggers: 'review',
+				commands: '',
+				publicationSteps: {},
+				tagPrefix: 'v',
+			},
 		}]);
 		expect(plan.adoption?.join('\n')).toContain('### Stream `main`');
-		expect(plan.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json']);
+		expect(plan.edits.map(edit => edit.path)).toEqual(['.github/beepboop.json', '.github/workflows/release-main.yml']);
+		expect(snapshot.files['.github/workflows/release.yml']).toBeDefined();
+		expect(plan.edits.some(edit => edit.path === '.github/workflows/release.yml')).toBe(false);
 		const applied = await applySetup(api, repository.name, plan, plan.choices);
 		expect(applied.status).toBe(200);
 		expect(repository.pulls).toHaveLength(1);

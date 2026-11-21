@@ -35,6 +35,7 @@ import {
 import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
 import type { PublishingAccess } from '@/automation/setup-publishing';
+import { workflowCredentials } from '@/automation/setup-workflows';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type {
@@ -47,6 +48,7 @@ import type {
 	Stream,
 	SubscriptionDelivery,
 } from '@/automation/types';
+import type { Grant } from '@/automation/vault';
 import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
 import type { WinGetBindings } from '@/automation/winget';
 import { WinGetService } from '@/automation/winget';
@@ -886,11 +888,17 @@ export class AutomationService {
 			const choices = yield* fromSync(() => decodeSync(Schema.optional(setupChoicesSchema), saved.choices));
 			if (!choices) return;
 			const generated = setupEdits(saved);
+			const workflowPath = (file: string | undefined) => file === undefined ? [] : [`.github/workflows/${file}`];
+			const workflows = choices.streams.flatMap(stream => [
+				...workflowPath(stream.prepare?.file),
+				...workflowPath(stream.promote?.file),
+				...(stream.operations ?? []).flatMap(entry => workflowPath(entry.file)),
+			]);
 			const merged = yield* this.gateway.snapshot(
 				repository.name,
 				repository.id,
 				pull.merge_commit_sha,
-				generated.map(edit => edit.path),
+				[...new Set([...generated.map(edit => edit.path), ...workflows])],
 			);
 			if (!generated.length || generated.some(edit => merged.files[edit.path] !== edit.after)) return;
 			yield* this.refresh(repository.name, repository.id);
@@ -901,25 +909,57 @@ export class AutomationService {
 				yield* this.credentials.grantDocuments({ repositoryId: repository.id }),
 				parseGrant,
 			);
+			const granted: Grant[] = [];
 			for (const stream of choices.streams) {
-				const requested = [
+				const requested: { operation: string; alias: string; environment?: string }[] = [
 					...(['prepare', 'promote'] as const).flatMap(operation =>
 						Object.values(stream[operation]?.credentials ?? {}).map(alias => ({ operation, alias }))
+					),
+					...(['prepare', 'promote'] as const).flatMap(operation =>
+						workflowPath(stream[operation]?.file).flatMap(path =>
+							workflowCredentials(merged.files[path], operation).credentials.map(credential => ({
+								operation,
+								...credential,
+							}))
+						)
 					),
 					...(stream.operations ?? []).flatMap(entry =>
 						Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, alias }))
 					),
+					...(stream.operations ?? []).flatMap(entry =>
+						workflowPath(entry.file).flatMap(path =>
+							workflowCredentials(merged.files[path], entry.name).credentials.map(credential => ({
+								operation: entry.name,
+								...credential,
+							}))
+						)
+					),
 				];
-				for (const { operation, alias } of requested) {
+				const approved = ready.configuration.streams[stream.name]?.credentials ?? [];
+				for (const { operation, alias, environment } of requested) {
+					if (!approved.includes(alias) || environment?.includes('${{')) {
+						yield* Effect.logWarning('setup.grant.skipped').pipe(
+							Effect.annotateLogs({ repository: repository.name, stream: stream.name, operation, alias, environment }),
+						);
+						continue;
+					}
 					if ((yield* this.credentials.activeVersion(alias)) === undefined) continue;
-					const grant = yield* configuredGrant(ready, { stream: stream.name, operation, alias, delivery: 'runtime' });
+					const grant = yield* configuredGrant(ready, {
+						stream: stream.name,
+						operation,
+						alias,
+						delivery: 'runtime',
+						...(environment === undefined ? {} : { environment }),
+					});
 					if (
-						existing.some(other =>
+						[...existing, ...granted].some(other =>
 							other.alias === grant.alias && other.operation === grant.operation
 							&& other.workflow === grant.workflow && other.ref === grant.ref && other.delivery === 'runtime'
+							&& other.environment === grant.environment
 						)
 					) continue;
 					yield* this.vault().grant(grant, `merge:${pull.merged_by.login}`);
+					granted.push(grant);
 				}
 			}
 			yield* fromPromise(() => this.coordinator(repository.id).wake());

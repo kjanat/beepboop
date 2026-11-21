@@ -3,7 +3,7 @@ import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
-import { discover, versionsInFiles } from '@/automation/managers';
+import { canVerifyPublication, discover, versionsInFiles } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
@@ -15,7 +15,7 @@ import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { actionReleaseOffer } from '@/automation/setup-action';
 import { behaviourChanges, changeDetails, onboardingBranch } from '@/automation/setup-changes';
 import { completeTaggedStreams } from '@/automation/setup-completion';
-import { crateScript, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
+import { crateScript, defaultTagPrefix, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import { checkPublishing } from '@/automation/setup-publishing';
 import { startWorkflow } from '@/automation/setup-start';
@@ -29,7 +29,13 @@ import type {
 	WorkflowEvidence,
 } from '@/automation/setup-types';
 import { approvals, triggerHandovers, versionings } from '@/automation/setup-types';
-import { integrateReleaseWorkflow, integrateWorkflow, workflowEvidence } from '@/automation/setup-workflows';
+import {
+	integrateReleaseWorkflow,
+	integrateWorkflow,
+	workflowActions,
+	workflowCredentials,
+	workflowEvidence,
+} from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, Snapshot } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 import {
@@ -598,6 +604,20 @@ function drafted(
 			if (!selection.companionModules?.length) delete updated.companionModules;
 			if (!selection.versionSource) delete updated.versionSource;
 			if (!selection.needs) delete updated.needs;
+			const requested = (operation: string, workflow: { file: string; job?: string } | undefined) => {
+				const file = workflow?.file;
+				const found = workflowCredentials(
+					file === undefined ? undefined : snapshot.files[`.github/workflows/${file}`],
+					operation,
+					workflow?.job,
+				);
+				for (const job of found.unresolved) {
+					blockers.push(
+						`${file}: list the credential aliases of job ${job} as literal JSON. Beepboop grants the aliases that setup reads from the workflow.`,
+					);
+				}
+				return found.credentials.map(credential => ({ operation, file, ...credential }));
+			};
 			const granted = [
 				...(['prepare', 'promote'] as const).flatMap(operation =>
 					Object.values(selection[operation]?.credentials ?? {}).map(alias => ({
@@ -606,9 +626,11 @@ function drafted(
 						alias,
 					}))
 				),
+				...(['prepare', 'promote'] as const).flatMap(operation => requested(operation, selection[operation])),
 				...(selection.operations ?? []).flatMap(entry =>
 					Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, file: entry.file, alias }))
 				),
+				...(selection.operations ?? []).flatMap(entry => requested(entry.name, entry)),
 			];
 			const credentials = [
 				...new Set([
@@ -617,9 +639,20 @@ function drafted(
 				]),
 			];
 			if (credentials.length) updated.credentials = credentials;
-			for (const { operation, file, alias } of granted) {
+			for (const entry of new Map(granted.map(entry => [JSON.stringify(entry), entry])).values()) {
+				const environment = 'environment' in entry && typeof entry.environment === 'string'
+					? entry.environment
+					: undefined;
+				if (environment?.includes('${{')) {
+					blockers.push(
+						`${entry.file}: give the job that requests ${entry.alias} a fixed environment name. Beepboop grants a credential to one named environment.`,
+					);
+					continue;
+				}
 				notes.push(
-					`${file}: when the repository owner merges this PR, Beepboop grants it the stored ${alias} secret for the ${operation} operation.`,
+					`${entry.file}: when the repository owner merges this PR, Beepboop grants it the stored ${entry.alias} secret for the ${entry.operation} operation${
+						environment === undefined ? '' : ` in the ${environment} environment`
+					}.`,
 				);
 			}
 			const bindings = Object.fromEntries(
@@ -729,6 +762,11 @@ function drafted(
 							: {}),
 					};
 				}
+				const packageTags = selected.filter(pkg => canVerifyPublication(pkg.manager)).map(packageId);
+				if (
+					operation === 'promote' && object(binding.refs).prefix === 'v' && current.packageTags === undefined
+					&& packageTags.length
+				) updated.packageTags = packageTags;
 				if (shared) inputs.beepboop_operation = operation === 'promote' ? 'publish' : 'prepare';
 				else delete inputs.beepboop_operation;
 				if (Object.keys(inputs).length) binding.inputs = inputs;
@@ -962,8 +1000,9 @@ function releases(
 	if (stream.actionRelease) return !!workflow;
 	if (!workflow || workflow.binaries || stream.observe?.length || stream.versionSource) return false;
 	const release = `github-release:${snapshot.repository.name}`;
+	const source = snapshot.files[`.github/workflows/${workflow.file}`];
 	return Array.isArray(previous.publications) && previous.publications.includes(release)
-		|| !!workflow.tagPrefix && snapshot.files[`.github/workflows/${workflow.file}`] === undefined;
+		|| !!workflow.tagPrefix && source === undefined || workflowActions(source).has('publish-release');
 }
 function completeChoices(
 	snapshot: Snapshot,
@@ -982,6 +1021,8 @@ function completeChoices(
 		manager: pkg.manager,
 		...(pkg.versionSource ? { versionSource: pkg.versionSource } : {}),
 	}));
+	const streamCount =
+		new Set([...Object.keys(object(raw.streams)), ...choices.streams.map(stream => stream.name)]).size;
 	const completed = {
 		...choices,
 		streams: choices.streams.map(stream => {
@@ -989,7 +1030,7 @@ function completeChoices(
 			const previousPolicy = object(object(object(object(object(raw.streams)[stream.name]).promote).workflow).refs);
 			const actionPrefix = typeof previousPolicy.prefix === 'string'
 				? previousPolicy.prefix
-				: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`);
+				: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, streamCount);
 			const elsewhere = new Set([
 				...(stream.operations?.flatMap(entry => entry.publications) ?? []),
 				...(stream.observe?.flatMap(entry => entry.publications) ?? []),
@@ -1012,7 +1053,8 @@ function completeChoices(
 				const commands = refreshedCommands(operation, combined, scope, candidates, context);
 				const generated = commands !== ''
 					&& (commands === suggestedCommands(operation, scope, context) || crateScript(commands));
-				const fresh = snapshot.files[`.github/workflows/${workflow.file}`] === undefined;
+				const source = snapshot.files[`.github/workflows/${workflow.file}`];
+				const tagged = source === undefined || workflowActions(source).has('publish-refs');
 				return {
 					...workflow,
 					commands,
@@ -1021,9 +1063,9 @@ function completeChoices(
 							&& scope.packages.some(pkg => pkg.manager === 'cargo')
 						? { credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' } }
 						: {}),
-					...(operation === 'promote' && fresh && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
+					...(operation === 'promote' && tagged && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
 							&& !stream.actionRelease
-						? { tagPrefix: stream.versionSource?.prefix ?? (stream.name === 'main' ? 'v' : `${stream.name}-v`) }
+						? { tagPrefix: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, streamCount) }
 						: {}),
 				};
 			};

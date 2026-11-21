@@ -1,0 +1,30 @@
+name: Publish
+run-name: ${{ inputs.beepboop_title || github.workflow }}
+on:
+  workflow_dispatch:
+    inputs:
+      beepboop_execution_id: { type: string, required: true }
+      beepboop_title: { type: string, required: false }
+permissions: { contents: read, id-token: write }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: kjanat/beepboop/actions/begin@v1
+        id: start
+        with: { execution-id: "${{ inputs.beepboop_execution_id }}", stream: main, operation: promote }
+      - uses: actions/checkout@v7
+        with: { ref: "${{ fromJSON(steps.start.outputs.context).sourceSha }}" }
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: kjanat/beepboop/actions/begin@v1
+        id: beepboop
+        with: { execution-id: "${{ inputs.beepboop_execution_id }}", stream: main, operation: promote }
+      - id: npm
+        run: npm publish
+      - uses: kjanat/beepboop/actions/report@v1
+        with:
+          execution-id: ${{ steps.beepboop.outputs.execution-id }}
+          publications: '[{"id":"pkg:npm/widget"}]'

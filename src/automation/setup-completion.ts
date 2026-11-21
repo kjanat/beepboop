@@ -57,7 +57,7 @@ export function completeTaggedStreams(
 		}),
 	);
 	const [version] = versions;
-	if (versions.size !== 1 || !version) return streams;
+	if (versions.size > 1) return streams;
 	const open = (pkg: Package) =>
 		publishable(pkg) && !targeted.has(packageId(pkg)) && !stream.packages.includes(packageId(pkg));
 	const order = inventory.publicationOrder;
@@ -65,9 +65,9 @@ export function completeTaggedStreams(
 		const index = order.indexOf(packageId(pkg));
 		return index < 0 ? order.length : index;
 	};
-	const crates = inventory.packages.filter(pkg => pkg.manager === 'cargo' && open(pkg) && pkg.version === version)
-		.sort((left, right) => rank(left) - rank(right));
-	if (!crates.length) return streams;
+	const crates = inventory.packages.filter(pkg =>
+		pkg.manager === 'cargo' && open(pkg) && version !== undefined && pkg.version === version
+	).sort((left, right) => rank(left) - rank(right));
 	const modulePrefix = (pkg: Package) => pkg.versionSource.slice('tags:'.length);
 	const released = (pkg: Package) => (snapshot.tags ?? []).some(tag => tag.startsWith(modulePrefix(pkg)));
 	const modules = inventory.packages.filter(pkg =>
@@ -81,12 +81,19 @@ export function completeTaggedStreams(
 			[...source.matchAll(/^\s*(?:-\s+)?run:\s*(cargo test\b[^\n#]*)$/gm)].map(match => match[1]?.trim())
 		)
 		.filter((command): command is string => !!command && !/\$\{\{/.test(command));
-	const preparation = [
+	const cargo = crates.length > 0 || stream.packages.some(id => byId.get(id)?.manager === 'cargo');
+	const preparation = version === undefined ? [] : [
 		...lockfiles.flatMap(path => {
 			const command = lockCommands.find(([pattern]) => pattern.test(path))?.[1];
 			return command ? [within(path, command)] : [];
 		}),
-		tests[0] ?? 'cargo test --workspace --locked',
+		...(cargo
+			? [
+				tests[0] ?? (snapshot.paths.some(path => /(?:^|\/)Cargo\.lock$/.test(path))
+					? 'cargo test --workspace --locked'
+					: 'cargo test --workspace'),
+			]
+			: []),
 	];
 	const joined = modules.filter(pkg => !released(pkg));
 	const moduleIds = joined.map(packageId);
@@ -130,9 +137,10 @@ export function completeTaggedStreams(
 		publicationSteps: {},
 		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
 	};
-	const { versionSource: _, ...rest } = stream;
+	const { versionSource, ...rest } = stream;
 	const completed: Stream = {
 		...rest,
+		...(version === undefined && versionSource ? { versionSource } : {}),
 		...(starter
 			? { observe: (stream.observe ?? []).map(entry => entry === starter ? { ...entry, needs: ['promote'] } : entry) }
 			: {}),
@@ -143,6 +151,7 @@ export function completeTaggedStreams(
 			? {
 				prepare: {
 					file: unusedFile('prepare-release', taken),
+					job: 'prepare',
 					triggers: 'review',
 					commands: preparation.join('\n'),
 					publicationSteps: {},
@@ -153,19 +162,24 @@ export function completeTaggedStreams(
 			? {
 				promote: {
 					file: unusedFile(`release-${stream.name}`, taken),
+					job: 'promote',
 					triggers: 'review',
 					commands: '',
 					publicationSteps: {},
 					tagPrefix,
 				},
-				operations: [{
-					name: 'crates',
-					file: unusedFile('publish-crates', taken),
-					...publish,
-					needs: [starter.name],
-					...(gate.length ? { needsJobs: { [starter.name]: gate } } : {}),
-					publications: crates.map(packageId),
-				}],
+				...(crates.length
+					? {
+						operations: [{
+							name: 'crates',
+							file: unusedFile('publish-crates', taken),
+							...publish,
+							needs: [starter.name],
+							...(gate.length ? { needsJobs: { [starter.name]: gate } } : {}),
+							publications: crates.map(packageId),
+						}],
+					}
+					: {}),
 			}
 			: { promote: { file: unusedFile('release-crates', taken), ...publish, tagPrefix } }),
 	};

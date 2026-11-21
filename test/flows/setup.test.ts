@@ -2742,6 +2742,15 @@ jobs:
 	expect(after).toContain('- uses: acme/tool@0123456789abcdef0123456789abcdef01234567 # v9.9.9\n');
 	expect(after).toContain('actions/publish@');
 	expect(after.endsWith('\n')).toBe(false);
+	world.github.push(repository, {
+		'.github/workflows/release.yml': existing
+			.replace(`if: ${gate('prepare')}`, "if: inputs.beepboop_operation == 'prepare'")
+			.replace(`if: ${gate('publish')}`, "if:  ${{inputs.beepboop_operation=='publish'}}"),
+	}, 'Write the operation conditions without delimiters');
+	const unwrapped = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(unwrapped.blockers).toEqual([]);
 });
 
 test('integrating a workflow keeps a step that aliases an anchor in a dispatch input default', async () => {

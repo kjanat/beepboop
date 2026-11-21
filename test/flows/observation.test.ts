@@ -3,7 +3,7 @@ import { begin } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { bearer, field } from '@root/test/support/http.ts';
 import { runWorkflow } from '@root/test/support/repositories.ts';
-import { applyChoices, applySetup, discoverSetup } from '@root/test/support/setup.ts';
+import { applyChoices, applySetup, discoverSetup, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
@@ -44,11 +44,24 @@ function npmRelease(name: string, version: string, on: string, run = 'npm publis
 	});
 }
 
-async function adopt(repository: Repository) {
+function observedOnly(choices: SetupChoices): SetupChoices {
+	return {
+		...choices,
+		streams: choices.streams.map(({ prepare: _prepare, promote: _promote, ...stream }) => ({
+			...stream,
+			...(stream.observe ? { observe: stream.observe.map(({ needs: _needs, ...binding }) => binding) } : {}),
+		})),
+	};
+}
+
+async function adopt(repository: Repository, observed = false) {
 	const api = bearer(world, await world.cliSession());
 	const plan = await discoverSetup(api, repository.name);
 	expect(plan.blockers).toEqual([]);
-	const applied = await applySetup(api, repository.name, plan, plan.choices);
+	const choices = observed ? observedOnly(plan.choices) : plan.choices;
+	const reviewed = observed ? await previewSetup(api, repository.name, choices) : plan;
+	expect(reviewed.blockers).toEqual([]);
+	const applied = await applySetup(api, repository.name, reviewed, choices);
 	expect(applied.status).toBe(200);
 	world.github.merge(repository, 1);
 	const reopened = await discoverSetup(api, repository.name);
@@ -82,11 +95,15 @@ async function observe(
 
 test('an adopted prefixed tag family is observed with its version and publication', async () => {
 	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
-	const { plan, reopened } = await adopt(repository);
-	expect(plan.choices.streams[0]?.observe).toEqual([
-		{ name: 'release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: ['pkg:npm/widget'] },
-	]);
-	expect(reopened.choices.streams[0]?.observe).toEqual(plan.choices.streams[0]?.observe);
+	const { plan, reopened } = await adopt(repository, true);
+	const binding = {
+		name: 'release',
+		file: 'release.yml',
+		ref: 'refs/tags/widget-v*',
+		publications: ['pkg:npm/widget'],
+	};
+	expect(plan.choices.streams[0]?.observe).toEqual([{ ...binding, needs: ['promote'] }]);
+	expect(reopened.choices.streams[0]?.observe).toEqual([binding]);
 	world.npm.publish('widget', '1.2.0');
 	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
 	const [execution, ...rest] = await observe(repository, 'push', 'widget-v1.2.0');
@@ -157,7 +174,13 @@ test('a workflow with tag and dispatch triggers is observed once, on its tags', 
 	);
 	const { plan } = await adopt(repository);
 	expect(plan.choices.streams[0]?.observe).toEqual([
-		{ name: 'release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: ['pkg:npm/widget'] },
+		{
+			name: 'release',
+			file: 'release.yml',
+			ref: 'refs/tags/widget-v*',
+			publications: ['pkg:npm/widget'],
+			needs: ['promote'],
+		},
 	]);
 });
 
@@ -288,7 +311,7 @@ test('an observe binding on a shorthand tag glob keeps the tag version', async (
 
 test('an observe binding on a numbered tag glob keeps every version component', async () => {
 	const repository = npmRelease('widget', '1.2.3', "{ push: { tags: ['v*'] } }");
-	const { plan } = await adopt(repository);
+	const { plan } = await adopt(repository, true);
 	await pin(repository, plan, 'refs/tags/v1.*');
 	world.npm.publish('widget', '1.2.3');
 	repository.refs.set('tags/v1.2.3', world.github.head(repository));
@@ -426,7 +449,7 @@ test('retrying a failed observed tag release by its short ID re-runs the failed 
 
 async function failedTagRelease(conclusion: string, tag: string, ref?: string) {
 	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
-	const { plan } = await adopt(repository);
+	const { plan } = await adopt(repository, true);
 	if (ref !== undefined) await pin(repository, plan, ref);
 	repository.refs.set(`tags/${tag}`, world.github.head(repository));
 	const [failed] = await complete(repository, { id: 9001, event: 'push', branch: tag, conclusion, attempt: 1 });
@@ -487,7 +510,7 @@ test('a retry refuses a shorthand tag pattern whose tag was deleted while a bran
 
 test('a retry of a branch run under a shorthand pattern ignores a tag created with the branch name', async () => {
 	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
-	const { plan } = await adopt(repository);
+	const { plan } = await adopt(repository, true);
 	await pin(repository, plan, 'widget-v*');
 	repository.refs.set('heads/widget-v1.2.0', world.github.head(repository));
 	const [failed] = await complete(repository, {
@@ -521,7 +544,7 @@ test('an execution stored without its ref namespace still probes tags and then b
 
 test('a run that registers itself records the namespace of the ref it ran on', async () => {
 	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
-	const { plan } = await adopt(repository);
+	const { plan } = await adopt(repository, true);
 	await pin(repository, plan, 'widget-v*');
 	const [stream] = plan.choices.streams;
 	const operation = stream?.observe?.[0]?.name;
@@ -756,7 +779,7 @@ test('a workflow_run run on a prefixed tag matches its tag binding', async () =>
 	});
 	const { plan } = await adopt(repository);
 	expect(plan.choices.streams[0]?.observe).toEqual([
-		{ name: 'release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: [] },
+		{ name: 'release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: [], needs: ['promote'] },
 		{ name: 'publish', file: 'publish.yml', ref: 'refs/tags/widget-v*', publications: ['pkg:npm/widget'] },
 	]);
 	world.npm.publish('widget', '1.2.0');
@@ -940,6 +963,7 @@ test('editing an adopted stream clears publications and leaves observation', asy
 		mode: 'observe',
 		ref: 'refs/tags/widget-v*',
 		publications: [],
+		needs: ['promote'],
 	});
 	const { observe: _observe, versionSource: _versionSource, ...managed } = stream;
 	await apply({

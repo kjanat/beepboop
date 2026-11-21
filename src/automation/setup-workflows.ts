@@ -11,6 +11,7 @@ import {
 	assetConflicts,
 	assetSteps,
 	beginJobId,
+	begunSource,
 	binaryJobs,
 	buildJobId,
 	expression,
@@ -116,6 +117,234 @@ function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEv
 const executionInput = expression('inputs.beepboop_execution_id');
 const runName = expression('inputs.beepboop_title || github.workflow');
 
+function beepboopAction(value: unknown): string | undefined {
+	if (typeof value !== 'string') return;
+	return /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)([\w-]+)(?:@[\w./-]+)?$/.exec(value)?.[1];
+}
+function jobsOf(source: string | undefined): Record<string, unknown> {
+	return object(Result.getOrElse(yaml(source ?? ''), (): Record<string, unknown> => ({})).jobs);
+}
+function stepsOf(job: unknown): Record<string, unknown>[] {
+	const steps = object(job).steps;
+	return Array.isArray(steps) ? steps.map(object) : [];
+}
+export function workflowActions(source: string | undefined): Set<string> {
+	return new Set(
+		Object.values(jobsOf(source)).flatMap(job => stepsOf(job).flatMap(step => beepboopAction(step.uses) ?? [])),
+	);
+}
+export interface WorkflowCredential {
+	alias: string;
+	environment?: string;
+}
+export interface WorkflowCredentials {
+	credentials: WorkflowCredential[];
+	unresolved: string[];
+}
+function operationGate(operation: string): string {
+	return expression(`inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}'`);
+}
+function guards(job: unknown, operation: string): boolean {
+	const condition = (value: unknown) => {
+		const source = String(value ?? '').trim();
+		return (/^\$\{\{([\s\S]*)\}\}$/.exec(source)?.[1] ?? source).replace(/\s+/g, '');
+	};
+	return condition(object(job).if) === condition(operationGate(operation));
+}
+function runsOperation(job: unknown, operation: string): boolean {
+	const begin = stepsOf(job).find(step => actionRole(step.uses) === 'begin');
+	return begin ? object(begin.with).operation === operation : guards(job, operation);
+}
+export function workflowCredentials(
+	source: string | undefined,
+	operation: string,
+	selected?: string,
+): WorkflowCredentials {
+	const found = new Map<string, WorkflowCredential>(), unresolved = new Set<string>();
+	const jobs = Object.entries(jobsOf(source));
+	const integrated = selected || (jobs.length === 1 ? jobs[0]?.[0] : undefined);
+	for (const [name, job] of jobs.filter(([name, job]) => name === integrated || runsOperation(job, operation))) {
+		const declared = object(job).environment;
+		const environment = typeof declared === 'string' ? declared : object(declared).name;
+		for (const step of stepsOf(job)) {
+			const action = beepboopAction(step.uses);
+			const input = action === 'credentials'
+				? object(step.with).aliases
+				: action === 'publish'
+				? object(step.with).credentials
+				: undefined;
+			if (input === undefined) continue;
+			const parsed = Result.try((): unknown => JSON.parse(String(input)));
+			if (Result.isFailure(parsed) || String(input).includes('${{')) {
+				unresolved.add(name);
+				continue;
+			}
+			const aliases: unknown[] = Array.isArray(parsed.success)
+				? parsed.success
+				: Object.values(object(parsed.success));
+			for (const alias of aliases) {
+				if (typeof alias !== 'string' || !alias) continue;
+				const credential = typeof environment === 'string' ? { alias, environment } : { alias };
+				found.set(JSON.stringify(credential), credential);
+			}
+		}
+	}
+	return { credentials: [...found.values()], unresolved: [...unresolved] };
+}
+function isCheckout(step: Record<string, unknown>): boolean {
+	return typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@');
+}
+function checkoutLocation(step: Record<string, unknown>): string {
+	const inputs = object(step.with);
+	return JSON.stringify([String(inputs.repository ?? ''), String(inputs.path ?? '')]);
+}
+const rootCheckout = checkoutLocation({});
+function plannedCheckout(
+	steps: Record<string, unknown>[],
+	begin: number,
+	planned: (ref: unknown) => boolean,
+	location?: string,
+): number {
+	return steps.findIndex((step, index) =>
+		index > begin && isCheckout(step) && step.if === undefined && !step['continue-on-error']
+		&& (location === undefined || checkoutLocation(step) === location) && planned(object(step.with).ref)
+	);
+}
+function stepsBetween(steps: Record<string, unknown>[], from: number, to: number): boolean {
+	return steps.slice(from + 1, to).some(step => !isCheckout(step) && actionRole(step.uses) !== 'begin');
+}
+function wiredJobs(jobs: Record<string, unknown>, stream: string, operation: string): string[] {
+	const generated = Object.entries(jobs).some(([name, job]) =>
+		name.startsWith('build-') && stepsOf(job).some(step => object(step.with).ref === begunSource)
+	);
+	return Object.keys(jobs).filter(name =>
+		!(generated && name === beginJobId && ownedBinaryJob(name, object(jobs[name])))
+		&& stepsOf(jobs[name]).some(step =>
+			actionRole(step.uses) === 'begin' && object(step.with).stream === stream
+			&& object(step.with).operation === operation
+		)
+	);
+}
+function acrossJobs(
+	root: Record<string, unknown>,
+	wired: string[],
+	choice: SetupWorkflow,
+	packages: Package[],
+	release: boolean,
+	distributionFiles: string[] | undefined,
+): string[] {
+	const problems: string[] = [], jobs = object(root.jobs);
+	const inner = (value: unknown) => /^\$\{\{\s*(.*?)\s*\}\}$/.exec(String(value ?? ''))?.[1]?.replace(/\s+/g, '');
+	const beginId = (job: unknown) => stepsOf(job).find(step => actionRole(step.uses) === 'begin')?.id;
+	const sourceOf = (job: unknown) => `fromJSON(steps.${String(beginId(job))}.outputs.context).sourceSha`;
+	const carriesSource = (job: string, output: string) =>
+		wired.includes(job) && inner(object(object(jobs[job]).outputs)[output]) === sourceOf(jobs[job]);
+	if (workflowEvents(root).some(event => event !== 'workflow_dispatch')) {
+		problems.push('a workflow that runs Beepboop in several jobs must run only on workflow_dispatch');
+	}
+	const inputs = object(object(object(root.on).workflow_dispatch).inputs);
+	const execution = object(inputs.beepboop_execution_id), title = object(inputs.beepboop_title);
+	if (execution.type !== 'string' || execution.required !== true) {
+		problems.push('workflow_dispatch needs the required string input beepboop_execution_id');
+	}
+	if (title.type !== 'string' || title.required === true) {
+		problems.push('workflow_dispatch needs the optional string input beepboop_title');
+	}
+	for (const [name, value] of Object.entries(inputs)) {
+		const own = name === 'beepboop_execution_id' || name === 'beepboop_title';
+		if (!own && object(value).required === true && object(value).default === undefined) {
+			problems.push(`required dispatch input ${name} needs a configured default`);
+		}
+	}
+	if (root['run-name'] !== runName) problems.push(`set run-name to ${runName}`);
+	const reported = new Set<string>(), used = new Set<string>();
+	for (const [name, job] of Object.entries(jobs)) {
+		const steps = stepsOf(job);
+		if (!wired.includes(name)) {
+			if (steps.some(step => ['report', 'publish'].includes(actionRole(step.uses) ?? ''))) {
+				problems.push(`job ${name} reports publications without a begin step`);
+			}
+			continue;
+		}
+		const begins = steps.filter(step => actionRole(step.uses) === 'begin');
+		const id = begins[0]?.id;
+		if (begins.length > 1) problems.push(`job ${name} has more than one begin step`);
+		if (typeof id !== 'string' || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(id)) {
+			problems.push(`job ${name}: begin needs a static step ID`);
+		}
+		if (object(begins[0]?.with)['execution-id'] !== executionInput) {
+			problems.push(`job ${name}: begin must take inputs.beepboop_execution_id`);
+		}
+		const permissions = object(job).permissions ?? root.permissions;
+		if (permissions !== 'write-all' && object(permissions)['id-token'] !== 'write') {
+			problems.push(`job ${name} needs id-token: write`);
+		}
+		const started = steps.findIndex(step => actionRole(step.uses) === 'begin');
+		const planned = (value: unknown) => {
+			const ref = inner(value), needed = /^needs\.([\w-]+)\.outputs\.([\w-]+)$/.exec(ref ?? '');
+			return ref === sourceOf(job)
+				|| !!(needed?.[1] && needed[2] && jobNeeds(object(job).needs).includes(needed[1])
+					&& carriesSource(needed[1], needed[2]));
+		};
+		const unconditional = plannedCheckout(steps, started, planned) >= 0;
+		if (
+			!unconditional
+			&& steps.some((step, index) => index > started && isCheckout(step) && planned(object(step.with).ref))
+		) {
+			problems.push(`job ${name}: check out the begin context sourceSha in a step without if or continue-on-error`);
+		}
+		for (const [index, step] of steps.entries()) {
+			const action = beepboopAction(step.uses);
+			if (action) used.add(action);
+			const ref = object(step.with).ref;
+			if (isCheckout(step) && inner(ref) === sourceOf(job) && index < started) {
+				problems.push(`job ${name}: check out the begin context sourceSha after the begin step`);
+			} else if (isCheckout(step) && !planned(ref)) {
+				const replaced = plannedCheckout(steps, started, planned, checkoutLocation(step));
+				if (index > started || !unconditional) {
+					problems.push(`job ${name}: check out the begin context sourceSha, or a job output that carries it`);
+				} else if (replaced < 0) {
+					problems.push(
+						`job ${name}: check out the begin context sourceSha at the path and repository of the bootstrap checkout`,
+					);
+				} else if (stepsBetween(steps, index, replaced)) {
+					problems.push(
+						`job ${name}: move the steps between the bootstrap checkout and the planned checkout after the planned checkout`,
+					);
+				}
+			}
+			if (
+				distributionFiles?.length && action === 'publish-refs'
+				&& !isDeepStrictEqual(
+					Result.getOrElse(
+						Result.try((): unknown => JSON.parse(String(object(step.with).files))),
+						(): unknown => undefined,
+					),
+					distributionFiles,
+				)
+			) {
+				problems.push(`job ${name}: pass the distribution files ${JSON.stringify(distributionFiles)} to publish-refs`);
+			}
+			if (actionRole(step.uses) !== 'report') continue;
+			if (object(step.with)['execution-id'] !== expression(`steps.${String(id)}.outputs.execution-id`)) {
+				problems.push(`job ${name}: report must take the begin execution ID`);
+			}
+			const entries = publicationEntries(object(step.with).publications);
+			if (!entries) problems.push(`job ${name}: report publications must be a JSON array`);
+			for (const entry of entries ?? []) if (typeof entry.id === 'string') reported.add(entry.id);
+		}
+	}
+	for (const pkg of packages) {
+		const ledger = used.has('publish') && ledgerManagers.some(manager => manager === pkg.manager);
+		if (!reported.has(packageId(pkg)) && !ledger) {
+			problems.push(`report a result for ${packageId(pkg)} from a job with a begin step`);
+		}
+	}
+	if (choice.tagPrefix && !used.has('publish-refs')) problems.push('tag the release with publish-refs');
+	if (release && !used.has('publish-release')) problems.push('publish the GitHub release with publish-release');
+	return problems;
+}
+
 /** Patch only selected jobs and the dispatch contract; leave other YAML nodes and comments intact. */
 export function integrateWorkflow(
 	snapshot: Snapshot,
@@ -185,8 +414,6 @@ export function integrateReleaseWorkflow(
 		if (prepare.file !== promote.file || prepareJob === publishJob) {
 			return fail('preparation and publication need different jobs');
 		}
-		const gate = (operation: 'prepare' | 'promote') =>
-			expression(`inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}'`);
 		const document = parseDocument(snapshot.files[path] ?? 'name: Release\non: {}\njobs: {}\n');
 		if (document.errors.length) return fail('invalid YAML');
 		const existing = snapshot.files[path] !== undefined;
@@ -195,7 +422,7 @@ export function integrateReleaseWorkflow(
 		const built = Object.keys(jobs).filter(name => ownedBinaryJob(name, object(jobs[name])));
 		if (
 			existing && (Object.keys(jobs).length - built.length !== 2
-				|| object(jobs[prepareJob]).if !== gate('prepare') || object(jobs[publishJob]).if !== gate('promote')
+				|| !guards(jobs[prepareJob], 'prepare') || !guards(jobs[publishJob], 'promote')
 				|| Object.keys(object(raw.on)).some(event => event !== 'workflow_dispatch'))
 		) {
 			return fail('shared workflows need separate preparation and publication jobs guarded by beepboop_operation');
@@ -232,10 +459,10 @@ export function integrateReleaseWorkflow(
 			default: 'publish',
 			required: true,
 		});
-		combined.setIn(['jobs', prepareJob, 'if'], gate('prepare'));
-		combined.setIn(['jobs', publishJob, 'if'], gate('promote'));
+		combined.setIn(['jobs', prepareJob, 'if'], operationGate('prepare'));
+		combined.setIn(['jobs', publishJob, 'if'], operationGate('promote'));
 		for (const name of promote.binaries ? [beginJobId, ...promote.binaries.builds.map(buildJobId)] : []) {
-			combined.setIn(['jobs', name, 'if'], gate('promote'));
+			combined.setIn(['jobs', name, 'if'], operationGate('promote'));
 		}
 		return { content: matchEnding(renderWorkflow(combined), snapshot.files[path]), blockers, notes };
 	});
@@ -364,6 +591,15 @@ function integrate(
 	let emptied = false;
 	const blockers: string[] = [], notes: string[] = [];
 	const fail = (message: string) => blockers.push(`${choice.file}: ${message}`);
+	const wired = original && !choice.binaries && operation !== 'prepare' ? wiredJobs(jobs, stream, operation) : [];
+	const obstacles = jobObstacles(jobs);
+	if (wired.length > 1 || wired.some(name => obstacles[name]?.some(reason => reason.startsWith('needs ')))) {
+		for (const problem of acrossJobs(root, wired, choice, packages, release, distributionFiles)) fail(problem);
+		if (!blockers.length) {
+			notes.push(`${choice.file}: runs Beepboop in jobs ${wired.join(', ')}; setup leaves the workflow unchanged.`);
+		}
+		return { content: original ?? '', blockers, notes };
+	}
 	const jobName = choice.job || (Object.keys(jobs).length === 1 ? Object.keys(jobs)[0] : undefined)
 		|| (original ? '' : operation);
 	if (!jobName || (original && !jobs[jobName])) {
@@ -497,7 +733,7 @@ function integrate(
 			fail('existing begin action must take inputs.beepboop_execution_id');
 		}
 	} else {
-		const checkouts = steps.filter(step => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
+		const checkouts = steps.filter(isCheckout);
 		if (checkouts.length > 1 || checkouts.some(step => object(step.with).path || object(step.with).repository)) {
 			fail('multiple or non-root checkouts need manual integration');
 		}
@@ -518,14 +754,8 @@ function integrate(
 	}
 	const beginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
 	const sourceRef = expression(`fromJSON(steps.${id}.outputs.context).sourceSha`);
-	if (
-		existingBegin
-		&& !steps.some((step, index) =>
-			index > beginIndex && typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
-			&& object(step.with).ref === sourceRef
-		)
-	) {
-		const checkouts = steps.filter(step => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
+	if (existingBegin && plannedCheckout(steps, beginIndex, ref => ref === sourceRef, rootCheckout) < 0) {
+		const checkouts = steps.filter(isCheckout);
 		if (steps.slice(0, beginIndex).some(step => !checkouts.includes(step))) {
 			fail(
 				'steps before begin need explicit integration; prepare dependencies and build output after the planned checkout',
@@ -558,11 +788,12 @@ function integrate(
 		}
 	}
 	const integratedBeginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
-	const approvedIndex = steps.findIndex((step, index) =>
-		index > integratedBeginIndex && typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')
-		&& object(step.with).ref === sourceRef
-	);
+	const approvedIndex = plannedCheckout(steps, integratedBeginIndex, ref => ref === sourceRef, rootCheckout);
+	const firstCheckout = steps.findIndex(isCheckout);
 	if (approvedIndex < 0) fail('checkout the execution sourceSha after begin');
+	else if (firstCheckout < integratedBeginIndex && stepsBetween(steps, firstCheckout, approvedIndex)) {
+		fail('move the steps between the first checkout and the checkout of the execution sourceSha after that checkout');
+	}
 	const credentials = choice.credentials ?? {}, aliases = [...new Set(Object.values(credentials))];
 	const mise =
 		['mise.toml', '.mise.toml', '.config/mise.toml', '.tool-versions'].some(path => snapshot.files[path] !== undefined)
