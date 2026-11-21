@@ -850,6 +850,33 @@ test.each([false, true])(
 	},
 );
 
+test.each(
+	[
+		['failed', false],
+		['cancelled', false],
+		['failed', true],
+	] as const,
+)('a start for a %s preparation, started first: %p, restarts it and publishes', async (stopped, startedFirst) => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
+	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
+	const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
+	if (stopped === 'failed') repository.protectedBranches.add(repository.defaultBranch);
+	const first = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: startedFirst });
+	const { id } = decodeSync(execution, first.body);
+	if (stopped === 'cancelled') expect((await api('/api/executions/cancel', { id })).status).toBe(200);
+	else await world.wait(16_000);
+	expect((await executions(api)).find(entry => entry.id === id)?.state).toBe(stopped);
+	repository.protectedBranches.clear();
+	const restarted = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: true });
+	expect(restarted.status).toBe(200);
+	expect(decodeSync(execution, restarted.body)).toMatchObject({ id, state: 'ready' });
+	expect(restarted.body).toMatchObject({ started: { via: 'cli' } });
+	const head = await landed(repository);
+	expect(head).toMatchObject({ message: 'chore(release): 1.0.1', authorId: botId });
+	expect((await executions(api)).find(entry => entry.id === id)?.state).toBe('succeeded');
+	await publishedOnce(api, repository, 'cli');
+});
+
 test.each(['unopened', 'open', 'edited', 'refusing edits'] as const)(
 	'a start for a version prepared without one starts it, its PR %s',
 	async pr => {

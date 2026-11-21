@@ -60,7 +60,8 @@ prepares the release, and `promote.publishWhen` decides when it publishes.
 `"start": true` or `"force": true` starts the release, and is refused when the
 preview answered `"starts": false`. Without `start` or `force` the release
 starts when the preview answered `"starts": true`. A start for a version
-that was prepared without one starts that preparation.
+that was prepared without one starts that preparation, and a start for a
+version whose preparation failed or was cancelled restarts it.
 The response is a preparation execution. Its immutable plan includes all groups
 and the operation graph. With `prepare.workflow`, the repository workflow applies
 the plan and regenerates lockfiles. Otherwise, Beepboop prepares the PR directly.

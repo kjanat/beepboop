@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A start for a version whose preparation failed or was cancelled restarts that preparation. The start request answered with success and left the preparation stopped, so the release never published.
 - Merging the version PR or version commit of a tag-based stream that was prepared without a start creates its promotion, which follows `promote.publishWhen`. Beepboop only promoted started preparations of tag-based streams, so the merge published nothing.
 - A release of only some packages of a shared-version stream that writes a new version only prepares it, and `start` or `--force` on it is refused. Its merge left the other packages at the old version, and the started release never published.
 - Cargo publishing checks and the App manifest request the repository Variables permission as `actions_variables`, the key GitHub uses. An installation with that permission failed every check with `GitHub App installation lacks required permissions (... variables: read ...)`.

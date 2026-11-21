@@ -242,6 +242,16 @@ function reopened(publications: Publication[]): Publication[] {
 		publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
 	);
 }
+function startedPreparation(prior: Execution, started: ReleaseStarted): Execution {
+	const upgraded: Execution = { ...prior, started };
+	if (upgraded.managed) {
+		upgraded.managed = {
+			...upgraded.managed,
+			body: upgraded.managed.body.replace(preparationBody(prior), preparationBody(upgraded)),
+		};
+	}
+	return upgraded;
+}
 function wakeDue(wake: ReleaseWake): number {
 	return wake === true ? 0 : wake.due;
 }
@@ -1174,11 +1184,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (prior?.operation === 'promote' && execution.approvedBy === 'start') {
 					return yield* this.restartRelease(prior, execution);
 				}
+				if (prior?.operation === 'prepare' && execution.started && ['failed', 'cancelled'].includes(prior.state)) {
+					return yield* this.restartPreparation(prior, execution.started);
+				}
 				if (
 					prior?.operation === 'prepare' && execution.started
 					&& (!prior.started || (execution.started.force && !prior.started.force))
 				) {
-					return yield* this.startPreparation(prior, execution.started);
+					const upgraded = startedPreparation(prior, execution.started);
+					yield* this.put(upgraded);
+					yield* this.restatePreparation(prior, upgraded);
+					return upgraded;
 				}
 				if (prior) return prior;
 				if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
@@ -1274,15 +1290,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
-	private startPreparation(prior: Execution, started: ReleaseStarted): CoordinatorEffect<Execution, DomainError> {
+	private restartPreparation(prior: Execution, started: ReleaseStarted): CoordinatorEffect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const upgraded: Execution = { ...prior, started };
+			const upgraded = startedPreparation(prior, started);
+			yield* this.redispatch(upgraded, reopened(upgraded.publications), 'Start requested');
+			yield* this.restatePreparation(prior, upgraded);
+			return yield* this.get(upgraded.id);
+		});
+	}
+	private restatePreparation(prior: Execution, upgraded: Execution): CoordinatorEffect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
 			const previous = preparationBody(prior);
 			const next = preparationBody(upgraded);
-			if (upgraded.managed) {
-				upgraded.managed = { ...upgraded.managed, body: upgraded.managed.body.replace(previous, next) };
-			}
-			yield* this.put(upgraded);
 			const result = upgraded.prepared?.result ?? upgraded.managed?.result;
 			if (result && result.kind !== 'commit' && previous !== next) {
 				const work = (yield* this.gateway).restatePreparation(
@@ -1294,7 +1313,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				).pipe(logRecovered('preparation.restate-failed', { executionId: upgraded.id, url: result.url }));
 				this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Automation>())(work));
 			}
-			return upgraded;
 		});
 	}
 	private autoMerged(execution: Execution, result: PreparationResult): CoordinatorEffect<PreparationResult> {
