@@ -33,7 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Merging the version PR or version commit of a tag-based stream that was prepared without a start creates its promotion, which follows `promote.publishWhen`. Beepboop only promoted started preparations of tag-based streams, so the merge published nothing.
-- A release of only some packages of a shared-version stream only prepares the version, and `start` or `--force` on it is refused. Its merge left the other packages at the old version, and the started release never published.
+- A release of only some packages of a shared-version stream that writes a new version only prepares it, and `start` or `--force` on it is refused. Its merge left the other packages at the old version, and the started release never published.
 - Cargo publishing checks and the App manifest request the repository Variables permission as `actions_variables`, the key GitHub uses. An installation with that permission failed every check with `GitHub App installation lacks required permissions (... variables: read ...)`.
 - npm publication checks skip invalid `exports` targets when selecting an array fallback and reject an array that ends with an invalid target and has no usable fallback. A valid target still needs its file in the tarball.
 - `beepboop release VERSION` for a version that the default branch already carries creates the publication run of the commit that set the version, the same commit a push releases, also after later commits landed. The command fixes that commit when you run it. It failed with `ALREADY_PREPARED` unless `startFrom` listed `cli`.

@@ -56,9 +56,11 @@ operation graph, configuration, and preset revisions. Single-release preparation
 also requires its preview's `sourceSha` and `planId`; the dashboard supplies them.
 `POST /api/releases/prepare` takes `"start"`. With `"start": false` it
 prepares the release, and `promote.publishWhen` decides when it publishes.
+`"force": true` overrides `"start": false`.
 `"start": true` or `"force": true` starts the release, and is refused when the
 preview answered `"starts": false`. Without `start` or `force` the release
-starts when the preview answered `"starts": true`.
+starts when the preview answered `"starts": true`. A start for a version
+that was prepared without one starts that preparation.
 The response is a preparation execution. Its immutable plan includes all groups
 and the operation graph. With `prepare.workflow`, the repository workflow applies
 the plan and regenerates lockfiles. Otherwise, Beepboop prepares the PR directly.
