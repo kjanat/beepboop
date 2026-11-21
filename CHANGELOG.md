@@ -28,10 +28,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `beepboop release` and the dashboard start a release on every stream that can start one: they bump the version and publish it, and nothing asks again. A stream that versions each package on its own, a tag-based stream without a promotion that publishes the version tag, and a stream that writes a new version only to version files still only prepare it. `startFrom` only lets the Start release workflow start releases. Setup ignores its `dashboard` and `cli` entries and removes them. Starting a version whose release stopped before its workflow ran restarts that release.
-- `POST /api/releases/prepare` takes `"start"`. `"start": false` prepares the release, which then follows `promote.publishWhen`, and `beepboop releases prepare` sends it. `beepboop release` and the dashboard send the preview's `"starts"` answer. `"start": true` on a stream that cannot start is refused.
+- `POST /api/releases/prepare` takes `"start"`. `"start": false` prepares the release, which then follows `promote.publishWhen`, and `beepboop releases prepare` sends it. `beepboop release` and the dashboard send the preview's `"starts"` answer. `"start": true` on a stream that cannot start is refused. `"start": true` for a version that was prepared without a start starts that preparation and rewrites the publication sentence in its open version PR.
 
 ### Fixed
 
+- Merging the version PR or version commit of a tag-based stream that was prepared without a start creates its promotion, which follows `promote.publishWhen`. Beepboop only promoted started preparations of tag-based streams, so the merge published nothing.
 - A release of only some packages of a shared-version stream only prepares the version, and `start` or `--force` on it is refused. Its merge left the other packages at the old version, and the started release never published.
 - Cargo publishing checks and the App manifest request the repository Variables permission as `actions_variables`, the key GitHub uses. An installation with that permission failed every check with `GitHub App installation lacks required permissions (... variables: read ...)`.
 - npm publication checks skip invalid `exports` targets when selecting an array fallback and reject an array that ends with an invalid target and has no usable fallback. A valid target still needs its file in the tarball.
