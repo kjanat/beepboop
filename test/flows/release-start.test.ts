@@ -852,29 +852,66 @@ test.each([false, true])(
 
 test.each(
 	[
-		['failed', false],
-		['cancelled', false],
-		['failed', true],
+		['failed', 'unstarted'],
+		['cancelled', 'unstarted'],
+		['failed', 'started'],
+		['failed', 'forced'],
 	] as const,
-)('a start for a %s preparation, started first: %p, restarts it and publishes', async (stopped, startedFirst) => {
+)('a start for a %s %s preparation restarts it and publishes', async (stopped, first) => {
 	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
 	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
 	const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
 	if (stopped === 'failed') repository.protectedBranches.add(repository.defaultBranch);
-	const first = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: startedFirst });
-	const { id } = decodeSync(execution, first.body);
-	if (stopped === 'cancelled') expect((await api('/api/executions/cancel', { id })).status).toBe(200);
-	else await world.wait(16_000);
-	expect((await executions(api)).find(entry => entry.id === id)?.state).toBe(stopped);
+	const prepared = await api('/api/releases/prepare', {
+		...request,
+		sourceSha,
+		planId,
+		start: first !== 'unstarted',
+		...(first === 'forced' ? { force: true } : {}),
+	});
+	const { id } = decodeSync(execution, prepared.body);
+	const stored = async () => (await executions(api)).find(entry => entry.id === id);
+	if (stopped === 'cancelled') {
+		expect((await api('/api/executions/cancel', { id })).status).toBe(200);
+		expect(await stored()).toHaveProperty('cancelledBy');
+	} else await world.wait(16_000);
+	expect((await stored())?.state).toBe(stopped);
 	repository.protectedBranches.clear();
 	const restarted = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: true });
 	expect(restarted.status).toBe(200);
 	expect(decodeSync(execution, restarted.body)).toMatchObject({ id, state: 'ready' });
-	expect(restarted.body).toMatchObject({ started: { via: 'cli' } });
+	expect(restarted.body).toMatchObject({ started: { via: 'cli', ...(first === 'forced' ? { force: true } : {}) } });
+	expect(await stored()).not.toHaveProperty('cancelledBy');
 	const head = await landed(repository);
 	expect(head).toMatchObject({ message: 'chore(release): 1.0.1', authorId: botId });
-	expect((await executions(api)).find(entry => entry.id === id)?.state).toBe('succeeded');
+	expect((await stored())?.state).toBe('succeeded');
 	await publishedOnce(api, repository, 'cli');
+});
+
+test('a start that restarts a superseded preparation supersedes the pending one', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
+	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	configuration.streams.main.concurrency = 'supersede-pending';
+	const head = world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Supersede pending work',
+	);
+	passChecks(repository, head.sha);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const prepare = async (version: string, start: boolean) => {
+		const request = { repositoryId: repository.id, stream: 'main', version };
+		const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
+		const response = await api('/api/releases/prepare', { ...request, sourceSha, planId, start });
+		expect(response.status).toBe(200);
+		return decodeSync(execution, response.body);
+	};
+	const older = await prepare('1.0.1', false);
+	const newer = await prepare('1.1.0', false);
+	const state = async (id: string) => (await executions(api)).find(entry => entry.id === id)?.state;
+	expect([await state(older.id), await state(newer.id)]).toEqual(['cancelled', 'ready']);
+	expect(await prepare('1.0.1', true)).toMatchObject({ id: older.id, state: 'ready' });
+	expect([await state(older.id), await state(newer.id)]).toEqual(['ready', 'cancelled']);
 });
 
 test.each(['unopened', 'open', 'edited', 'refusing edits'] as const)(

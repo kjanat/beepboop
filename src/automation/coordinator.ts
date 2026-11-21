@@ -1197,17 +1197,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return upgraded;
 				}
 				if (prior) return prior;
-				if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
-					for (const old of yield* this.executions()) {
-						if (
-							old.stream === execution.stream
-							&& old.operation === execution.operation
-							&& ['pending', 'ready'].includes(old.state)
-						) {
-							yield* this.put({ ...old, state: 'cancelled', reason: 'Superseded before dispatch' });
-						}
-					}
-				}
+				yield* this.supersedePending(execution);
 				yield* this.put(execution);
 				return execution;
 			}),
@@ -1290,9 +1280,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
+	private supersedePending(execution: Execution): CoordinatorEffect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			if (execution.configuration.streams[execution.stream]?.concurrency !== 'supersede-pending') return;
+			for (const old of yield* this.executions()) {
+				if (
+					old.id !== execution.id && old.stream === execution.stream && old.operation === execution.operation
+					&& ['pending', 'ready'].includes(old.state)
+				) {
+					yield* this.put({ ...old, state: 'cancelled', reason: 'Superseded before dispatch' });
+				}
+			}
+		});
+	}
 	private restartPreparation(prior: Execution, started: ReleaseStarted): CoordinatorEffect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const upgraded = startedPreparation(prior, started);
+			const upgraded = startedPreparation(prior, prior.started?.force ? { ...started, force: true } : started);
+			yield* this.supersedePending(upgraded);
 			yield* this.redispatch(upgraded, reopened(upgraded.publications), 'Start requested');
 			yield* this.restatePreparation(prior, upgraded);
 			return yield* this.get(upgraded.id);
@@ -3181,6 +3185,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					...execution,
 					state: 'uncertain',
 					github: undefined,
+					cancelledBy: undefined,
 					runAttempt: run.run_attempt,
 					reason: `${requested}; re-running the failed jobs`,
 					publications,
@@ -3189,6 +3194,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				yield* this.put({
 					...execution,
 					state: 'ready',
+					cancelledBy: undefined,
 					supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
 					runId: undefined,
 					runAttempt: undefined,
