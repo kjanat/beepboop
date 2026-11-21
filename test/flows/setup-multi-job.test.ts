@@ -218,6 +218,12 @@ function integrated(
 	return result;
 }
 
+const tooling = [
+	'      - uses: kjanat/beepboop/actions/token@v1\n        id: token\n        with: { execution-id: "${{ inputs.beepboop_execution_id }}" }\n',
+	'      - uses: actions/create-github-app-token@v2\n        id: app\n',
+	'      - uses: step-security/harden-runner@v2\n        with: { egress-policy: audit }\n',
+];
+
 test('a single job counts only an unconditional planned checkout after its existing begin step', () => {
 	const single = [
 		'name: Publish',
@@ -259,6 +265,23 @@ test('a single job counts only an unconditional planned checkout after its exist
 		.replace('      - run: npm publish\n', '')
 		.replace('      - uses: actions/checkout@v7\n        with: { ref:', '      - run: npm publish\n$&');
 	expect(integration(early).blockers).toContain(order);
+	expect(
+		integration(single.replace('      - uses: actions/checkout@v7\n        with: { ref:', `${tooling[0]}$&`)).blockers,
+	).toContain(
+		'publish.yml: move the steps between the first checkout and the checkout of the execution sourceSha after that checkout',
+	);
+	for (const setup of tooling) {
+		const prepared = single
+			.replace('      - uses: actions/checkout@v7\n      - uses: ./actions/begin', '      - uses: ./actions/begin')
+			.replace('      - uses: actions/checkout@v7\n        with: { ref:', `${setup}$&`);
+		expect(integration(prepared).blockers).not.toContain(order);
+	}
+	expect(
+		integration(
+			single.replace('      - uses: actions/checkout@v7\n      - uses: ./actions/begin', '      - run: echo start\n$&'),
+		)
+			.blockers,
+	).not.toContain(order);
 	expect(
 		integration(
 			early.replace(
@@ -307,6 +330,17 @@ test('a workflow wired across jobs, or one wired job that depends on another, st
 		'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
 	);
 	expect(integrated(bootstrapped).blockers).toEqual([]);
+	for (const setup of tooling) {
+		const before = base.replace('      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n', `${setup}$&`);
+		expect(integrated(before).blockers).toEqual([]);
+		const after = base.replace('      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(', `${setup}$&`);
+		expect(integrated(after).blockers).toEqual([]);
+	}
+	const announced = base.replace(
+		'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+		'      - run: echo start\n$&',
+	);
+	expect(integrated(announced).blockers).toEqual([]);
 	const always = base.replace(
 		'      - uses: kjanat/beepboop/actions/report@v1\n',
 		'      - uses: kjanat/beepboop/actions/report@v1\n        if: always()\n',
@@ -459,6 +493,22 @@ for (
 				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(steps.start.outputs.context).sourceSha }}", path: tools }\n      - run: npm publish\n$&',
 			),
 			['job build: move the steps between the bootstrap checkout and the planned checkout after the planned checkout'],
+		],
+		[
+			'a token step between the bootstrap checkout and the planned checkout',
+			base.replace(
+				'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+				'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+			).replace('      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(', `${tooling[0]}$&`),
+			['job build: move the steps between the bootstrap checkout and the planned checkout after the planned checkout'],
+		],
+		[
+			'a publication action before begin and the planned checkout',
+			base.replace(
+				'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+				'      - uses: kjanat/beepboop/actions/publish-release@v1\n$&',
+			),
+			['job build: move the steps before the planned checkout after it'],
 		],
 		[
 			'a step before the planned checkout',

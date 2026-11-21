@@ -402,11 +402,15 @@ and leaves the file as it is. Every job with `begin` needs `id-token: write`,
 and its `begin` step runs without `if` or `continue-on-error`. Every checkout in
 such a job checks out the begin context `sourceSha`, or a job output that
 carries it, and at least one of them runs after `begin` without `if` or
-`continue-on-error`. Only `begin` and other checkouts may run before that
-planned checkout. A job without a checkout can publish artifacts that other
-jobs built. A checkout before `begin` may load a local `begin` action from the
-dispatch ref. A planned checkout at the same path and repository must follow
-it. Every other required dispatch input needs a default.
+`continue-on-error`. Before that planned checkout, a `run` step may only run
+ahead of `begin` and of every checkout, and `report`, `publish`,
+`publish-refs` and `publish-release` may not run. Other actions, such as a
+token, `harden-runner` or setup action, may run there. A job without a
+checkout can publish artifacts that other jobs built. A checkout before
+`begin` may load a local `begin` action from the dispatch ref. A planned
+checkout at the same path and repository must follow it, and only `begin` and
+other checkouts may run between them. A single-job workflow that setup
+integrates follows the same order rules. Every other required dispatch input needs a default.
 The `report` steps must cover every selected package, and `publish-refs` must
 tag the release when the stream pushes tags. A step or job whose `if` is the
 constant `false`, written with or without `${{ }}`, covers nothing. Setup

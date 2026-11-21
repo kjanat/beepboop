@@ -141,7 +141,7 @@ test('an identical build before the reviewed checkout does not satisfy distribut
 		'release.yml: move the steps before the checkout of the execution sourceSha after that checkout',
 	]);
 	steps.splice(steps.indexOf(build), 1);
-	steps.push(build);
+	steps.unshift(build);
 	files['.github/workflows/release.yml'] = stringify(workflow);
 	const plan = await preview(snapshot(files), first.choices);
 	expect(plan.blockers).toEqual([]);

@@ -216,6 +216,15 @@ function plannedCheckout(
 function stepsBetween(steps: Record<string, unknown>[], from: number, to: number): boolean {
 	return steps.slice(from + 1, to).some(step => !isCheckout(step) && actionRole(step.uses) !== 'begin');
 }
+const publicationActions = ['report', 'publish', 'publish-refs', 'publish-release'];
+function sourceBefore(steps: Record<string, unknown>[], planned: number): boolean {
+	const begin = steps.findIndex(step => actionRole(step.uses) === 'begin');
+	const checkout = steps.findIndex(isCheckout);
+	return steps.slice(0, planned).some((step, index) =>
+		publicationActions.includes(beepboopAction(step.uses) ?? '')
+		|| typeof step.run === 'string' && ((begin >= 0 && index > begin) || (checkout >= 0 && index > checkout))
+	);
+}
 function wiredJobs(jobs: Record<string, unknown>, stream: string, operation: string): string[] {
 	const generated = Object.entries(jobs).some(([name, job]) =>
 		name.startsWith('build-') && stepsOf(job).some(step => object(step.with).ref === begunSource)
@@ -293,7 +302,7 @@ function acrossJobs(
 					&& carriesSource(needed[1], needed[2]));
 		};
 		const first = plannedCheckout(steps, started, planned), unconditional = first >= 0;
-		const early = unconditional && stepsBetween(steps, -1, first);
+		const early = unconditional && sourceBefore(steps, first);
 		if (early) problems.push(`job ${name}: move the steps before the planned checkout after it`);
 		if (
 			!unconditional
@@ -797,9 +806,12 @@ function integrate(
 	}
 	const integratedBeginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
 	const approvedIndex = plannedCheckout(steps, integratedBeginIndex, ref => ref === sourceRef, rootCheckout);
+	const firstCheckout = steps.findIndex(isCheckout);
 	if (approvedIndex < 0) fail('checkout the execution sourceSha after begin');
-	else if (stepsBetween(steps, -1, approvedIndex)) {
+	else if (sourceBefore(steps, approvedIndex)) {
 		fail('move the steps before the checkout of the execution sourceSha after that checkout');
+	} else if (firstCheckout < integratedBeginIndex && stepsBetween(steps, firstCheckout, approvedIndex)) {
+		fail('move the steps between the first checkout and the checkout of the execution sourceSha after that checkout');
 	}
 	const credentials = choice.credentials ?? {}, aliases = [...new Set(Object.values(credentials))];
 	const mise =
