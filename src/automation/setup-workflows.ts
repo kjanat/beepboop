@@ -154,6 +154,19 @@ function guards(job: unknown, operation: string): boolean {
 function disabled(entry: unknown): boolean {
 	return condition(object(entry).if) === 'false';
 }
+function skippedJobs(jobs: Record<string, unknown>): Set<string> {
+	const skipped = new Set<string>(), visited = new Set<string>();
+	const visit = (name: string): boolean => {
+		if (visited.has(name)) return skipped.has(name);
+		visited.add(name);
+		const job = object(jobs[name]);
+		const resilient = /\b(?:always|cancelled|failure)\(\)/.test(condition(job.if));
+		if (disabled(job) || (!resilient && jobNeeds(job.needs).some(need => visit(String(need))))) skipped.add(name);
+		return skipped.has(name);
+	};
+	for (const name of Object.keys(jobs)) visit(name);
+	return skipped;
+}
 function runsOperation(job: unknown, operation: string): boolean {
 	const begin = stepsOf(job).find(step => actionRole(step.uses) === 'begin');
 	return begin ? object(begin.with).operation === operation : guards(job, operation);
@@ -269,7 +282,7 @@ function acrossJobs(
 		}
 	}
 	if (root['run-name'] !== runName) problems.push(`set run-name to ${runName}`);
-	const reported = new Set<string>(), used = new Set<string>();
+	const reported = new Set<string>(), used = new Set<string>(), skipped = skippedJobs(jobs);
 	for (const [name, job] of Object.entries(jobs)) {
 		const steps = stepsOf(job);
 		if (!wired.includes(name)) {
@@ -311,7 +324,7 @@ function acrossJobs(
 			problems.push(`job ${name}: check out the begin context sourceSha in a step without if or continue-on-error`);
 		}
 		for (const [index, step] of steps.entries()) {
-			const action = beepboopAction(step.uses), runs = !disabled(job) && !disabled(step);
+			const action = beepboopAction(step.uses), runs = !skipped.has(name) && !disabled(step);
 			if (action && runs) used.add(action);
 			const ref = object(step.with).ref;
 			if (isCheckout(step) && inner(ref) === sourceOf(job) && index < started) {

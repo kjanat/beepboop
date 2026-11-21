@@ -413,8 +413,10 @@ other checkouts may run between them. A single-job workflow that setup
 integrates follows the same order rules. Every other required dispatch input needs a default.
 The `report` steps must cover every selected package, and `publish-refs` must
 tag the release when the stream pushes tags. A step or job whose `if` is the
-constant `false`, written with or without `${{ }}`, covers nothing. Setup
-accepts every other condition, such as `if: always()`. A distribution release
+constant `false`, written with or without `${{ }}`, covers nothing. A job that
+needs such a job, directly or through other jobs, covers nothing either, unless
+its own `if` calls `always()`, `cancelled()` or `failure()`. Setup accepts
+every other condition, such as `if: always()`. A distribution release
 passes its files to each `publish-refs` step.
 
 Setup adds the aliases of each `actions/credentials` step, and the aliases in

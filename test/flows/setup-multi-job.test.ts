@@ -346,6 +346,16 @@ test('a workflow wired across jobs, or one wired job that depends on another, st
 		'      - uses: kjanat/beepboop/actions/report@v1\n        if: always()\n',
 	);
 	expect(integrated(always).blockers).toEqual([]);
+	const skippedBuild = base.replace(
+		'  build:\n    runs-on: ubuntu-latest\n',
+		'  build:\n    if: false\n    runs-on: ubuntu-latest\n',
+	);
+	for (const status of ['always()', '${{ !cancelled() }}']) {
+		const resilient = skippedBuild.replace('    needs: build\n', `    needs: build\n    if: ${status}\n`);
+		expect(integrated(resilient).blockers).toEqual([]);
+	}
+	const independent = skippedBuild.replace('    needs: build\n', '');
+	expect(integrated(independent).blockers).toEqual([]);
 	const writeAll = base.replace('permissions: { contents: read, id-token: write }', 'permissions: write-all');
 	expect(integrated(writeAll).blockers).toEqual([]);
 	const conditional = single.replace('    needs: build\n', "    if: ${{ github.ref == 'refs/heads/main' }}\n");
@@ -538,6 +548,21 @@ for (
 		[
 			'a publishing job with if: false',
 			base.replace('    needs: build\n', '    needs: build\n    if: false\n'),
+			['report a result for pkg:npm/widget from a job with a begin step'],
+		],
+		[
+			'a publishing job that needs a job with if: false',
+			base.replace('  build:\n    runs-on: ubuntu-latest\n', '  build:\n    if: false\n    runs-on: ubuntu-latest\n'),
+			['report a result for pkg:npm/widget from a job with a begin step'],
+		],
+		[
+			'a publishing job that needs a job with if: false through another job',
+			base
+				.replace('  build:\n    runs-on: ubuntu-latest\n', '  build:\n    if: false\n    runs-on: ubuntu-latest\n')
+				.replace(
+					'  publish:\n    needs: build\n',
+					'  gate:\n    needs: build\n    if: success()\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo gate\n  publish:\n    needs: gate\n',
+				),
 			['report a result for pkg:npm/widget from a job with a begin step'],
 		],
 		[
