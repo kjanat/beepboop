@@ -160,7 +160,7 @@ function skippedJobs(jobs: Record<string, unknown>): Set<string> {
 		if (visited.has(name)) return skipped.has(name);
 		visited.add(name);
 		const job = object(jobs[name]);
-		const resilient = /\b(?:always|cancelled|failure)\(\)/.test(condition(job.if));
+		const resilient = /\b(?:always|cancelled|failure)\(\)/.test(condition(job.if).replace(/'(?:[^']|'')*'/g, "''"));
 		if (disabled(job) || (!resilient && jobNeeds(job.needs).some(need => visit(String(need))))) skipped.add(name);
 		return skipped.has(name);
 	};
