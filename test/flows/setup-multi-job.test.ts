@@ -218,6 +218,12 @@ function integrated(
 	return result;
 }
 
+const tooling = [
+	'      - uses: kjanat/beepboop/actions/token@v1\n        id: token\n        with: { execution-id: "${{ inputs.beepboop_execution_id }}" }\n',
+	'      - uses: actions/create-github-app-token@v2\n        id: app\n',
+	'      - uses: step-security/harden-runner@v2\n        with: { egress-policy: audit }\n',
+];
+
 test('a single job counts only an unconditional planned checkout after its existing begin step', () => {
 	const single = [
 		'name: Publish',
@@ -253,13 +259,38 @@ test('a single job counts only an unconditional planned checkout after its exist
 		'        with: { ref: "${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}", path: release }',
 	);
 	expect(integration(elsewhere).blockers).toContain(blocker);
-	const order =
-		'publish.yml: move the steps between the first checkout and the checkout of the execution sourceSha after that checkout';
+	const order = 'publish.yml: move the steps before the checkout of the execution sourceSha after that checkout';
 	expect(integration(single).blockers).not.toContain(order);
 	const early = single
 		.replace('      - run: npm publish\n', '')
 		.replace('      - uses: actions/checkout@v7\n        with: { ref:', '      - run: npm publish\n$&');
 	expect(integration(early).blockers).toContain(order);
+	expect(
+		integration(single.replace('      - uses: actions/checkout@v7\n        with: { ref:', `${tooling[0]}$&`)).blockers,
+	).toContain(
+		'publish.yml: move the steps between the first checkout and the checkout of the execution sourceSha after that checkout',
+	);
+	for (const setup of tooling) {
+		const prepared = single
+			.replace('      - uses: actions/checkout@v7\n      - uses: ./actions/begin', '      - uses: ./actions/begin')
+			.replace('      - uses: actions/checkout@v7\n        with: { ref:', `${setup}$&`);
+		expect(integration(prepared).blockers).not.toContain(order);
+	}
+	expect(
+		integration(
+			single.replace('      - uses: actions/checkout@v7\n      - uses: ./actions/begin', '      - run: echo start\n$&'),
+		)
+			.blockers,
+	).not.toContain(order);
+	expect(
+		integration(
+			early.replace(
+				'      - uses: actions/checkout@v7\n      - uses: ./actions/begin',
+				'      - uses: ./actions/begin',
+			),
+		).blockers,
+	)
+		.toContain(order);
 });
 
 test('a workflow wired across jobs, or one wired job that depends on another, stays unchanged', () => {
@@ -299,6 +330,32 @@ test('a workflow wired across jobs, or one wired job that depends on another, st
 		'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
 	);
 	expect(integrated(bootstrapped).blockers).toEqual([]);
+	for (const setup of tooling) {
+		const before = base.replace('      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n', `${setup}$&`);
+		expect(integrated(before).blockers).toEqual([]);
+		const after = base.replace('      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(', `${setup}$&`);
+		expect(integrated(after).blockers).toEqual([]);
+	}
+	const announced = base.replace(
+		'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+		'      - run: echo start\n$&',
+	);
+	expect(integrated(announced).blockers).toEqual([]);
+	const always = base.replace(
+		'      - uses: kjanat/beepboop/actions/report@v1\n',
+		'      - uses: kjanat/beepboop/actions/report@v1\n        if: always()\n',
+	);
+	expect(integrated(always).blockers).toEqual([]);
+	const skippedBuild = base.replace(
+		'  build:\n    runs-on: ubuntu-latest\n',
+		'  build:\n    if: false\n    runs-on: ubuntu-latest\n',
+	);
+	for (const status of ['always()', '${{ !cancelled() }}']) {
+		const resilient = skippedBuild.replace('    needs: build\n', `    needs: build\n    if: ${status}\n`);
+		expect(integrated(resilient).blockers).toEqual([]);
+	}
+	const independent = skippedBuild.replace('    needs: build\n', '');
+	expect(integrated(independent).blockers).toEqual([]);
 	const writeAll = base.replace('permissions: { contents: read, id-token: write }', 'permissions: write-all');
 	expect(integrated(writeAll).blockers).toEqual([]);
 	const conditional = single.replace('    needs: build\n', "    if: ${{ github.ref == 'refs/heads/main' }}\n");
@@ -434,7 +491,85 @@ for (
 				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
 				'      - run: npm publish\n$&',
 			),
+			['job build: move the steps before the planned checkout after it'],
+		],
+		[
+			'a step between the bootstrap checkout and its planned replacement after another planned checkout',
+			base.replace(
+				'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+				'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+			).replace(
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(steps.start.outputs.context).sourceSha }}", path: tools }\n      - run: npm publish\n$&',
+			),
 			['job build: move the steps between the bootstrap checkout and the planned checkout after the planned checkout'],
+		],
+		[
+			'a token step between the bootstrap checkout and the planned checkout',
+			base.replace(
+				'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+				'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+			).replace('      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(', `${tooling[0]}$&`),
+			['job build: move the steps between the bootstrap checkout and the planned checkout after the planned checkout'],
+		],
+		[
+			'a publication action before begin and the planned checkout',
+			base.replace(
+				'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+				'      - uses: kjanat/beepboop/actions/publish-release@v1\n$&',
+			),
+			['job build: move the steps before the planned checkout after it'],
+		],
+		[
+			'a step before the planned checkout',
+			base.replace(
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
+				'      - run: npm publish\n$&',
+			),
+			['job build: move the steps before the planned checkout after it'],
+		],
+		...['if: false', 'continue-on-error: true'].map(guard =>
+			[
+				`a begin step with ${guard}`,
+				base.replace('        id: start\n', `        id: start\n        ${guard}\n`),
+				['job build: run begin without if or continue-on-error'],
+			] as const
+		),
+		...['if: false', 'if: ${{ false }}'].map(guard =>
+			[
+				`a report step with ${guard}`,
+				base.replace(
+					'      - uses: kjanat/beepboop/actions/report@v1\n',
+					`      - uses: kjanat/beepboop/actions/report@v1\n        ${guard}\n`,
+				),
+				['report a result for pkg:npm/widget from a job with a begin step'],
+			] as const
+		),
+		[
+			'a publishing job with if: false',
+			base.replace('    needs: build\n', '    needs: build\n    if: false\n'),
+			['report a result for pkg:npm/widget from a job with a begin step'],
+		],
+		[
+			'a publishing job that needs a job with if: false',
+			base.replace('  build:\n    runs-on: ubuntu-latest\n', '  build:\n    if: false\n    runs-on: ubuntu-latest\n'),
+			['report a result for pkg:npm/widget from a job with a begin step'],
+		],
+		[
+			'a publishing job that needs a job with if: false through another job',
+			base
+				.replace('  build:\n    runs-on: ubuntu-latest\n', '  build:\n    if: false\n    runs-on: ubuntu-latest\n')
+				.replace(
+					'  publish:\n    needs: build\n',
+					'  gate:\n    needs: build\n    if: success()\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo gate\n  publish:\n    needs: gate\n',
+				),
+			['report a result for pkg:npm/widget from a job with a begin step'],
+		],
+		[
+			'a publish-refs step with if: false',
+			`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n        if: false\n`,
+			['tag the release with publish-refs'],
+			{ tagPrefix: 'v' },
 		],
 		...['if: ${{ false }}', 'if: false', 'continue-on-error: true'].flatMap(guard => {
 			const guarded = base.replace(

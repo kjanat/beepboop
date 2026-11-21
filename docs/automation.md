@@ -398,16 +398,26 @@ job. The context holds the requested version and the source commit. Calls from
 the same observed run, stream and operation attach to the same execution.
 
 Setup adopts a dispatch workflow that already calls `begin` in several jobs
-and leaves the file as it is. Every job with `begin` needs `id-token: write`.
-Every checkout in such a job checks out the begin context `sourceSha`, or a job
-output that carries it, and at least one of them runs after `begin` without `if`
-or `continue-on-error`. A checkout before `begin` may load a local `begin`
-action from the dispatch ref. A planned checkout at the same path and
-repository must follow it, and only `begin` and other checkouts may run between
-them. Every other required dispatch input needs a default.
+and leaves the file as it is. Every job with `begin` needs `id-token: write`,
+and its `begin` step runs without `if` or `continue-on-error`. Every checkout in
+such a job checks out the begin context `sourceSha`, or a job output that
+carries it, and at least one of them runs after `begin` without `if` or
+`continue-on-error`. Setup blocks a `run` step that comes after `begin` or
+after a checkout and before that planned checkout, and a `report`, `publish`,
+`publish-refs` or `publish-release` step anywhere before it. Other actions,
+such as a token, `harden-runner` or setup action, may run there. A job without a
+checkout can publish artifacts that other jobs built. A checkout before
+`begin` may load a local `begin` action from the dispatch ref. A planned
+checkout at the same path and repository must follow it, and only `begin` and
+other checkouts may run between them. A single-job workflow that setup
+integrates follows the same order rules. Every other required dispatch input needs a default.
 The `report` steps must cover every selected package, and `publish-refs` must
-tag the release when the stream pushes tags. A distribution release passes its
-files to each `publish-refs` step.
+tag the release when the stream pushes tags. A step or job whose `if` is the
+constant `false`, written with or without `${{ }}`, covers nothing. A job that
+needs such a job, directly or through other jobs, covers nothing either, unless
+its own `if` calls `always()`, `cancelled()` or `failure()`. Setup accepts
+every other condition, such as `if: always()`. A distribution release
+passes its files to each `publish-refs` step.
 
 Setup adds the aliases of each `actions/credentials` step, and the aliases in
 the `credentials` input of `actions/publish`, to the stream's `credentials`.
