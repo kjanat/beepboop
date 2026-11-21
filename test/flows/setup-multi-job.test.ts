@@ -248,6 +248,18 @@ test('a single job counts only an unconditional planned checkout after its exist
 		'      - uses: actions/checkout@v7\n        if: false\n        with: { ref:',
 	);
 	expect(integration(conditional).blockers).toContain(blocker);
+	const elsewhere = single.replace(
+		'        with: { ref: "${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}" }',
+		'        with: { ref: "${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}", path: release }',
+	);
+	expect(integration(elsewhere).blockers).toContain(blocker);
+	const order =
+		'publish.yml: move the steps between the first checkout and the checkout of the execution sourceSha after that checkout';
+	expect(integration(single).blockers).not.toContain(order);
+	const early = single
+		.replace('      - run: npm publish\n', '')
+		.replace('      - uses: actions/checkout@v7\n        with: { ref:', '      - run: npm publish\n$&');
+	expect(integration(early).blockers).toContain(order);
 });
 
 test('a workflow wired across jobs, or one wired job that depends on another, stays unchanged', () => {
@@ -399,6 +411,30 @@ for (
 				'',
 			),
 			['job build: check out the begin context sourceSha, or a job output that carries it'],
+		],
+		...['path: release', 'repository: octo/other'].map(input =>
+			[
+				`a bootstrap checkout whose planned checkout sets ${input}`,
+				base.replace(
+					'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+					'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+				).replace(
+					'sourceSha }}" }\n',
+					`sourceSha }}", ${input} }\n`,
+				),
+				['job build: check out the begin context sourceSha at the path and repository of the bootstrap checkout'],
+			] as const
+		),
+		[
+			'a step that uses the bootstrap checkout before the planned checkout',
+			base.replace(
+				'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+				'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+			).replace(
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
+				'      - run: npm publish\n$&',
+			),
+			['job build: move the steps between the bootstrap checkout and the planned checkout after the planned checkout'],
 		],
 		...['if: ${{ false }}', 'if: false', 'continue-on-error: true'].flatMap(guard => {
 			const guarded = base.replace(
@@ -556,6 +592,13 @@ test('workflow credentials carry the environment of their job, belong to its ope
 	});
 	expect(workflowCredentials(source, 'prepare')).toEqual({ credentials: [{ alias: 'prepare-token' }], unresolved: [] });
 	expect(workflowCredentials(undefined, 'promote')).toEqual({ credentials: [], unresolved: [] });
+	expect(workflowCredentials(source, 'prepare', 'unguarded').credentials).toEqual([
+		{ alias: 'prepare-token' },
+		{ alias: 'stray-token' },
+	]);
+	const only =
+		'jobs:\n  only:\n    steps:\n      - uses: kjanat/beepboop/actions/credentials@v1\n        with: { aliases: \'["only-token"]\' }\n';
+	expect(workflowCredentials(only, 'promote').credentials).toEqual([{ alias: 'only-token' }]);
 	expect([...workflowActions(source)].sort()).toEqual(['begin', 'credentials', 'publish']);
 });
 
@@ -629,6 +672,56 @@ test('merging a shared workflow grants a publication credential to the publicati
 	expect(merged.notes.filter(note => note.includes('grants it the stored'))).toEqual([
 		'release-widget.yml: when the repository owner merges this PR, Beepboop grants it the stored npm-token secret for the promote operation.',
 	]);
+});
+
+test('setup reads the credential aliases of the job it adds begin to', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.github.push(repository, {
+		'.github/workflows/ship.yml': [
+			'name: Ship',
+			'on: { workflow_dispatch: {} }',
+			'jobs:',
+			'  ship:',
+			'    runs-on: ubuntu-latest',
+			'    steps:',
+			'      - uses: actions/checkout@v7',
+			'      - uses: kjanat/beepboop/actions/credentials@v1',
+			'        with: { aliases: \'["npm-token"]\' }',
+			'      - id: npm',
+			'        run: npm publish',
+			'  lint:',
+			'    runs-on: ubuntu-latest',
+			'    steps:',
+			'      - uses: kjanat/beepboop/actions/credentials@v1',
+			'        with: { aliases: \'["stray-token"]\' }',
+			'',
+		].join('\n'),
+	}, 'Add a ship workflow');
+	const api = bearer(world, await world.cliSession());
+	await discoverSetup(api, repository.name);
+	const choices: SetupChoices = {
+		streams: [{
+			name: 'main',
+			packages: ['pkg:npm/widget'],
+			required: ['pkg:npm/widget'],
+			versioning: 'workspace',
+			promote: {
+				file: 'ship.yml',
+				job: 'ship',
+				triggers: 'review',
+				commands: '',
+				publicationSteps: { 'pkg:npm/widget': 'npm' },
+			},
+		}],
+	};
+	const plan = await previewSetup(api, repository.name, choices);
+	expect(plan.blockers).toEqual([]);
+	expect(plan.notes.filter(note => note.includes('grants it the stored'))).toEqual([
+		'ship.yml: when the repository owner merges this PR, Beepboop grants it the stored npm-token secret for the promote operation.',
+	]);
+	expect((await applySetup(api, repository.name, plan, plan.choices)).status).toBe(200);
+	for (const alias of ['npm-token', 'stray-token']) await world.sealCredential(alias);
+	expect(await mergedGrants(repository)).toEqual([['npm-token', 'promote', 'ship.yml', undefined]]);
 });
 
 test('package tags follow a plain v tag and keep a configured list', async () => {

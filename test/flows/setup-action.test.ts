@@ -137,6 +137,12 @@ test('an identical build before the reviewed checkout does not satisfy distribut
 	const reviewed = steps.findIndex((step: { with?: { ref?: string } }) => step.with?.ref?.includes('sourceSha'));
 	steps.splice(reviewed, 0, build);
 	files['.github/workflows/release.yml'] = stringify(workflow);
+	expect((await preview(snapshot(files), first.choices)).blockers).toEqual([
+		'release.yml: move the steps between the first checkout and the checkout of the execution sourceSha after that checkout',
+	]);
+	steps.splice(steps.indexOf(build), 1);
+	steps.unshift(build);
+	files['.github/workflows/release.yml'] = stringify(workflow);
 	const plan = await preview(snapshot(files), first.choices);
 	expect(plan.blockers).toEqual([]);
 	const nextSteps =

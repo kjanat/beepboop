@@ -604,10 +604,12 @@ function drafted(
 			if (!selection.companionModules?.length) delete updated.companionModules;
 			if (!selection.versionSource) delete updated.versionSource;
 			if (!selection.needs) delete updated.needs;
-			const requested = (operation: string, file: string | undefined) => {
+			const requested = (operation: string, workflow: { file: string; job?: string } | undefined) => {
+				const file = workflow?.file;
 				const found = workflowCredentials(
 					file === undefined ? undefined : snapshot.files[`.github/workflows/${file}`],
 					operation,
+					workflow?.job,
 				);
 				for (const job of found.unresolved) {
 					blockers.push(
@@ -624,11 +626,11 @@ function drafted(
 						alias,
 					}))
 				),
-				...(['prepare', 'promote'] as const).flatMap(operation => requested(operation, selection[operation]?.file)),
+				...(['prepare', 'promote'] as const).flatMap(operation => requested(operation, selection[operation])),
 				...(selection.operations ?? []).flatMap(entry =>
 					Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, file: entry.file, alias }))
 				),
-				...(selection.operations ?? []).flatMap(entry => requested(entry.name, entry.file)),
+				...(selection.operations ?? []).flatMap(entry => requested(entry.name, entry)),
 			];
 			const credentials = [
 				...new Set([

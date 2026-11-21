@@ -155,9 +155,15 @@ function runsOperation(job: unknown, operation: string): boolean {
 	const begin = stepsOf(job).find(step => actionRole(step.uses) === 'begin');
 	return begin ? object(begin.with).operation === operation : guards(job, operation);
 }
-export function workflowCredentials(source: string | undefined, operation: string): WorkflowCredentials {
+export function workflowCredentials(
+	source: string | undefined,
+	operation: string,
+	selected?: string,
+): WorkflowCredentials {
 	const found = new Map<string, WorkflowCredential>(), unresolved = new Set<string>();
-	for (const [name, job] of Object.entries(jobsOf(source)).filter(([, job]) => runsOperation(job, operation))) {
+	const jobs = Object.entries(jobsOf(source));
+	const integrated = selected || (jobs.length === 1 ? jobs[0]?.[0] : undefined);
+	for (const [name, job] of jobs.filter(([name, job]) => name === integrated || runsOperation(job, operation))) {
 		const declared = object(job).environment;
 		const environment = typeof declared === 'string' ? declared : object(declared).name;
 		for (const step of stepsOf(job)) {
@@ -188,11 +194,24 @@ export function workflowCredentials(source: string | undefined, operation: strin
 function isCheckout(step: Record<string, unknown>): boolean {
 	return typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@');
 }
-function plannedCheckout(steps: Record<string, unknown>[], begin: number, planned: (ref: unknown) => boolean): number {
+function checkoutLocation(step: Record<string, unknown>): string {
+	const inputs = object(step.with);
+	return JSON.stringify([String(inputs.repository ?? ''), String(inputs.path ?? '')]);
+}
+const rootCheckout = checkoutLocation({});
+function plannedCheckout(
+	steps: Record<string, unknown>[],
+	begin: number,
+	planned: (ref: unknown) => boolean,
+	location?: string,
+): number {
 	return steps.findIndex((step, index) =>
 		index > begin && isCheckout(step) && step.if === undefined && !step['continue-on-error']
-		&& planned(object(step.with).ref)
+		&& (location === undefined || checkoutLocation(step) === location) && planned(object(step.with).ref)
 	);
+}
+function stepsBetween(steps: Record<string, unknown>[], from: number, to: number): boolean {
+	return steps.slice(from + 1, to).some(step => !isCheckout(step) && actionRole(step.uses) !== 'begin');
 }
 function wiredJobs(jobs: Record<string, unknown>, stream: string, operation: string): string[] {
 	const generated = Object.entries(jobs).some(([name, job]) =>
@@ -267,9 +286,9 @@ function acrossJobs(
 				|| !!(needed?.[1] && needed[2] && jobNeeds(object(job).needs).includes(needed[1])
 					&& carriesSource(needed[1], needed[2]));
 		};
-		const bootstrapped = plannedCheckout(steps, started, planned) >= 0;
+		const unconditional = plannedCheckout(steps, started, planned) >= 0;
 		if (
-			!bootstrapped
+			!unconditional
 			&& steps.some((step, index) => index > started && isCheckout(step) && planned(object(step.with).ref))
 		) {
 			problems.push(`job ${name}: check out the begin context sourceSha in a step without if or continue-on-error`);
@@ -277,11 +296,21 @@ function acrossJobs(
 		for (const [index, step] of steps.entries()) {
 			const action = beepboopAction(step.uses);
 			if (action) used.add(action);
-			if (isCheckout(step)) {
-				if (inner(object(step.with).ref) === sourceOf(job) && index < started) {
-					problems.push(`job ${name}: check out the begin context sourceSha after the begin step`);
-				} else if (!planned(object(step.with).ref) && !(bootstrapped && index < started)) {
+			const ref = object(step.with).ref;
+			if (isCheckout(step) && inner(ref) === sourceOf(job) && index < started) {
+				problems.push(`job ${name}: check out the begin context sourceSha after the begin step`);
+			} else if (isCheckout(step) && !planned(ref)) {
+				const replaced = plannedCheckout(steps, started, planned, checkoutLocation(step));
+				if (index > started || !unconditional) {
 					problems.push(`job ${name}: check out the begin context sourceSha, or a job output that carries it`);
+				} else if (replaced < 0) {
+					problems.push(
+						`job ${name}: check out the begin context sourceSha at the path and repository of the bootstrap checkout`,
+					);
+				} else if (stepsBetween(steps, index, replaced)) {
+					problems.push(
+						`job ${name}: move the steps between the bootstrap checkout and the planned checkout after the planned checkout`,
+					);
 				}
 			}
 			if (
@@ -725,7 +754,7 @@ function integrate(
 	}
 	const beginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
 	const sourceRef = expression(`fromJSON(steps.${id}.outputs.context).sourceSha`);
-	if (existingBegin && plannedCheckout(steps, beginIndex, ref => ref === sourceRef) < 0) {
+	if (existingBegin && plannedCheckout(steps, beginIndex, ref => ref === sourceRef, rootCheckout) < 0) {
 		const checkouts = steps.filter(isCheckout);
 		if (steps.slice(0, beginIndex).some(step => !checkouts.includes(step))) {
 			fail(
@@ -759,8 +788,12 @@ function integrate(
 		}
 	}
 	const integratedBeginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
-	const approvedIndex = plannedCheckout(steps, integratedBeginIndex, ref => ref === sourceRef);
+	const approvedIndex = plannedCheckout(steps, integratedBeginIndex, ref => ref === sourceRef, rootCheckout);
+	const firstCheckout = steps.findIndex(isCheckout);
 	if (approvedIndex < 0) fail('checkout the execution sourceSha after begin');
+	else if (firstCheckout < integratedBeginIndex && stepsBetween(steps, firstCheckout, approvedIndex)) {
+		fail('move the steps between the first checkout and the checkout of the execution sourceSha after that checkout');
+	}
 	const credentials = choice.credentials ?? {}, aliases = [...new Set(Object.values(credentials))];
 	const mise =
 		['mise.toml', '.mise.toml', '.config/mise.toml', '.tool-versions'].some(path => snapshot.files[path] !== undefined)
