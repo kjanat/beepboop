@@ -400,9 +400,9 @@ the same observed run, stream and operation attach to the same execution.
 Setup adopts a dispatch workflow that already calls `begin` in several jobs
 and leaves the file as it is. Every job with `begin` needs `id-token: write`.
 Every checkout in such a job checks out the begin context `sourceSha`, or a job
-output that carries it. A checkout before `begin` may load a local `begin`
-action from the dispatch ref when a later checkout selects that source and
-runs without `if` or `continue-on-error`. Every other required dispatch input
+output that carries it, and at least one of them runs after `begin` without `if`
+or `continue-on-error`. A checkout before `begin` may load a local `begin`
+action from the dispatch ref. Every other required dispatch input
 needs a default.
 The `report` steps must cover every selected package, and `publish-refs` must
 tag the release when the stream pushes tags. A distribution release passes its

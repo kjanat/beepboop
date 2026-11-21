@@ -268,6 +268,12 @@ function acrossJobs(
 					&& carriesSource(needed[1], needed[2]));
 		};
 		const bootstrapped = plannedCheckout(steps, started, planned) >= 0;
+		if (
+			!bootstrapped
+			&& steps.some((step, index) => index > started && isCheckout(step) && planned(object(step.with).ref))
+		) {
+			problems.push(`job ${name}: check out the begin context sourceSha in a step without if or continue-on-error`);
+		}
 		for (const [index, step] of steps.entries()) {
 			const action = beepboopAction(step.uses);
 			if (action) used.add(action);

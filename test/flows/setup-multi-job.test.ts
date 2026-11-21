@@ -400,19 +400,25 @@ for (
 			),
 			['job build: check out the begin context sourceSha, or a job output that carries it'],
 		],
-		...['if: ${{ false }}', 'if: false', 'continue-on-error: true'].map(guard =>
-			[
-				`a bootstrap checkout whose planned checkout has ${guard}`,
-				base.replace(
-					'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
-					'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
-				).replace(
-					'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
-					`      - uses: actions/checkout@v7\n        ${guard}\n        with: { ref: "\${{ fromJSON(`,
-				),
-				['job build: check out the begin context sourceSha, or a job output that carries it'],
-			] as const
-		),
+		...['if: ${{ false }}', 'if: false', 'continue-on-error: true'].flatMap(guard => {
+			const guarded = base.replace(
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
+				`      - uses: actions/checkout@v7\n        ${guard}\n        with: { ref: "\${{ fromJSON(`,
+			).replace('  publish:\n', '      - run: npm ci && npm run build\n$&');
+			const unconditional =
+				'job build: check out the begin context sourceSha in a step without if or continue-on-error';
+			return [
+				[`a planned checkout with ${guard}`, guarded, [unconditional]],
+				[
+					`a bootstrap checkout whose planned checkout has ${guard}`,
+					guarded.replace(
+						'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+						'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+					),
+					[unconditional, 'job build: check out the begin context sourceSha, or a job output that carries it'],
+				],
+			] as const;
+		}),
 		[
 			'a checkout of the dispatch commit',
 			base.replace('"${{ fromJSON(steps.start.outputs.context).sourceSha }}"', '"${{ github.sha }}"'),
