@@ -1003,6 +1003,41 @@ test('every tag family of a workflow is observed', async () => {
 	expect(execution?.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
 });
 
+test('each adopted tag family gets its own release starter', async () => {
+	const release = (name: string) =>
+		`name: ${name}\non: { push: { tags: ['${name}-v*'] } }\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish packages/${name}\n`;
+	const repository = world.github.create('octo/families', {
+		'packages/alpha/package.json': JSON.stringify({ name: 'alpha', version: '1.0.0' }),
+		'packages/beta/package.json': JSON.stringify({ name: 'beta', version: '2.0.0' }),
+		'package-lock.json': '{}\n',
+		'.github/workflows/alpha.yml': release('alpha'),
+		'.github/workflows/beta.yml': release('beta'),
+		'.github/workflows/release-alpha.yml': workflow('{ workflow_dispatch: {} }', 'echo taken'),
+	});
+	const api = bearer(world, await world.cliSession());
+	const plan = await discoverSetup(api, repository.name);
+	expect(plan.blockers).toEqual([]);
+	expect(plan.choices.streams.map(stream => ({
+		name: stream.name,
+		prepare: stream.prepare?.file,
+		promote: stream.promote && { file: stream.promote.file, tagPrefix: stream.promote.tagPrefix },
+		observe: stream.observe?.map(binding => ({ ref: binding.ref, needs: binding.needs })),
+	}))).toEqual([
+		{
+			name: 'alpha',
+			prepare: 'prepare-release.yml',
+			promote: { file: 'release-alpha-2.yml', tagPrefix: 'alpha-v' },
+			observe: [{ ref: 'refs/tags/alpha-v*', needs: ['promote'] }],
+		},
+		{
+			name: 'beta',
+			prepare: 'prepare-release-2.yml',
+			promote: { file: 'release-beta.yml', tagPrefix: 'beta-v' },
+			observe: [{ ref: 'refs/tags/beta-v*', needs: ['promote'] }],
+		},
+	]);
+});
+
 test('a workflow filename with dots is adopted', async () => {
 	const repository = world.github.create('octo/dotted', {
 		'Cargo.toml': '[package]\nname = "dotted"\nversion = "0.1.0"\npublish = false\n',

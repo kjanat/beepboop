@@ -37,8 +37,38 @@ export function completeTaggedStreams(
 	graph: ReleaseGraph,
 ): Stream[] {
 	const tagged = streams.filter(stream => stream.observe?.some(entry => entry.ref?.startsWith('refs/tags/')));
-	const [stream] = tagged;
-	if (tagged.length !== 1 || !stream || stream.prepare || stream.promote) return streams;
+	const taken = inventory.workflows.map(workflow => workflow.file);
+	const names = new Set(streams.map(entry => entry.name));
+	const completions = new Map(
+		tagged.flatMap(stream => {
+			const completion = completeTaggedStream(
+				stream,
+				tagged.length === 1,
+				{ streams, snapshot, inventory, graph },
+				taken,
+				names,
+			);
+			return completion ? [[stream, completion] as const] : [];
+		}),
+	);
+	return [
+		...streams.map(entry => completions.get(entry)?.completed ?? entry),
+		...[...completions.values()].flatMap(completion => completion.independent),
+	];
+}
+function completeTaggedStream(
+	stream: Stream,
+	absorbs: boolean,
+	{ streams, snapshot, inventory, graph }: {
+		streams: Stream[];
+		snapshot: Snapshot;
+		inventory: Inventory;
+		graph: ReleaseGraph;
+	},
+	taken: string[],
+	names: Set<string>,
+): { completed: Stream; independent: Stream[] } | undefined {
+	if (stream.prepare || stream.promote) return;
 	const refs = [
 		...new Set(
 			(stream.observe ?? []).flatMap(entry =>
@@ -47,7 +77,7 @@ export function completeTaggedStreams(
 		),
 	];
 	const [tagPrefix] = refs;
-	if (refs.length !== 1 || !tagPrefix) return streams;
+	if (refs.length !== 1 || !tagPrefix) return;
 	const targeted = new Set(graph.streams.flatMap(proposal => proposal.targets.flatMap(target => target.packages)));
 	const byId = new Map(inventory.packages.map(pkg => [packageId(pkg), pkg]));
 	const versions = new Set(
@@ -57,9 +87,10 @@ export function completeTaggedStreams(
 		}),
 	);
 	const [version] = versions;
-	if (versions.size > 1) return streams;
+	if (versions.size > 1) return;
 	const open = (pkg: Package) =>
-		publishable(pkg) && !targeted.has(packageId(pkg)) && !stream.packages.includes(packageId(pkg));
+		absorbs && publishable(pkg) && !targeted.has(packageId(pkg))
+		&& !streams.some(entry => entry.packages.includes(packageId(pkg)));
 	const order = inventory.publicationOrder;
 	const rank = (pkg: Package) => {
 		const index = order.indexOf(packageId(pkg));
@@ -74,7 +105,6 @@ export function completeTaggedStreams(
 		pkg.manager === 'go' && open(pkg) && pkg.versionSource.startsWith('tags:')
 	);
 	const added = [...crates, ...modules.filter(pkg => !released(pkg))].map(packageId);
-	const taken = inventory.workflows.map(workflow => workflow.file);
 	const lockfiles = snapshot.paths.filter(isLockfile);
 	const tests = Object.entries(snapshot.files).filter(([path]) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path))
 		.flatMap(([, source]) =>
@@ -183,7 +213,6 @@ export function completeTaggedStreams(
 			}
 			: { promote: { file: unusedFile('release-crates', taken), ...publish, tagPrefix } }),
 	};
-	const names = new Set(streams.map(entry => entry.name));
 	const independent = modules.filter(released).map((pkg): Stream => {
 		const prefix = modulePrefix(pkg);
 		const base = slug(prefix.replace(/\/?v$/, '')) || 'go';
@@ -214,5 +243,5 @@ export function completeTaggedStreams(
 			},
 		};
 	});
-	return [...streams.map(entry => entry === stream ? completed : entry), ...independent];
+	return { completed, independent };
 }
