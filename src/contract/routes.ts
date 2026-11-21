@@ -271,6 +271,7 @@ export const routes = {
 			sourceSha: sha,
 			planId: Schema.String,
 			versionPrMerge: Schema.optional(versionPrMerge),
+			start: Schema.optional(Schema.Boolean),
 			force: Schema.optional(Schema.Boolean),
 		}),
 		response: executionView,

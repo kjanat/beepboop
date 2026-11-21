@@ -296,7 +296,7 @@ export function releaseRepository(
 		);
 		const summary = yield* decode(summarySchema, plan);
 		if (summary.blockers?.length) return yield* Effect.fail(failure(summary.blockers.join('\n'), 'BLOCKED_PLAN'));
-		const started = plan.starts === true;
+		const started = plan.starts;
 		const committing = stream.prepare.bump === 'commit';
 		const pending = plan.edits.length > 0 || plan.requiresPreparation === true;
 		const publishes = direct || !pending;
@@ -399,6 +399,7 @@ export function releaseRepository(
 				sourceSha: summary.sourceSha,
 				planId: summary.planId,
 				...(merging ? { versionPrMerge: merging } : {}),
+				start: started,
 				...(options.force ? { force: true } : {}),
 			}),
 			created =>

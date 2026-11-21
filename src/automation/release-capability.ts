@@ -42,7 +42,9 @@ export function releaseCapability(stream: Stream, inventory: Inventory): Release
 	if (workflow && stream.prepare.strategy === 'workflow') {
 		return { kind: 'prepares', through: { kind: 'workflow', file: workflow.file }, lands };
 	}
-	if (versionsInFiles(inventory)) return { kind: 'prepares', through: { kind: 'manifests' }, lands };
+	if (versionsInFiles({ ...inventory, packages: publishablePackages(inventory.packages, stream.packages) })) {
+		return { kind: 'prepares', through: { kind: 'manifests' }, lands };
+	}
 	if (stream.versionFiles?.length) {
 		return { kind: 'prepares', through: { kind: 'files', paths: stream.versionFiles.map(rule => rule.path) }, lands };
 	}
@@ -62,19 +64,33 @@ function streamStartRefusal(name: string, stream: Stream): string | undefined {
 	return undefined;
 }
 
-function preparationRefusal(name: string, stream: Stream, inventory: Inventory): string | undefined {
+function preparationRefusal(
+	name: string,
+	stream: Stream,
+	inventory: Inventory,
+	selected: string[] | undefined,
+): string | undefined {
 	const delegated = stream.prepare.strategy === 'workflow' ? stream.prepare.workflow : undefined;
 	if (delegated) {
 		return `${name} prepares its version in ${delegated.file}, and Beepboop cannot follow that preparation to its merge`;
 	}
+	const chosen = publishablePackages(inventory.packages, selected);
+	if (chosen.length < publishablePackages(inventory.packages, stream.packages).length) {
+		return `${name} shares one version across its packages, and a release of only some of them does not start publication`;
+	}
 	if (stream.versionSource?.kind === 'tags') return undefined;
-	return versionsInFiles({ ...inventory, packages: publishablePackages(inventory.packages, stream.packages) })
+	return versionsInFiles({ ...inventory, packages: chosen })
 		? undefined
 		: `${name} keeps its version outside package manifests, and merging a version bump there does not start publication`;
 }
 
-export function newVersionStartRefusal(name: string, stream: Stream, inventory: Inventory): string | undefined {
-	return streamStartRefusal(name, stream) ?? preparationRefusal(name, stream, inventory);
+export function newVersionStartRefusal(
+	name: string,
+	stream: Stream,
+	inventory: Inventory,
+	selected = stream.packages,
+): string | undefined {
+	return streamStartRefusal(name, stream) ?? preparationRefusal(name, stream, inventory, selected);
 }
 
 export function startRefusal(
@@ -82,9 +98,10 @@ export function startRefusal(
 	stream: Stream,
 	plan: ReleasePlan,
 	inventory: Inventory,
+	selected: string[] | undefined,
 ): string | undefined {
 	return plan.edits.length || plan.requiresPreparation
-		? newVersionStartRefusal(name, stream, inventory)
+		? newVersionStartRefusal(name, stream, inventory, selected)
 		: streamStartRefusal(name, stream);
 }
 

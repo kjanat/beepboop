@@ -185,6 +185,7 @@ test('release resolves this checkout, previews server changes and hands the exac
 			version: { bump: 'patch' },
 			sourceSha: plans.at(-1)?.sourceSha,
 			planId: plans.at(-1)?.planId,
+			start: true,
 		});
 		expect(repository.pulls).toHaveLength(1);
 		expect(world.github.dispatches).toHaveLength(0);
@@ -366,6 +367,7 @@ for (const [bump, version] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major',
 			version: { bump },
 			sourceSha: plan.sourceSha,
 			planId: plan.planId,
+			start: false,
 		});
 		const executions = await Effect.runPromise(client.call(routes.executionsList, {}));
 		expect(executions.map(execution => ({ operation: execution.operation, version: execution.version }))).toEqual([{

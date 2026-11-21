@@ -133,6 +133,7 @@ import type {
 	Publication,
 	PublishKind,
 	ReleaseReference,
+	ReleaseStarted,
 } from '@/automation/types';
 import { parseGrant, runtimeGrant } from '@/automation/vault';
 import { identifiedManagers, isManagerName, managerSpec } from '@/contract/catalog';
@@ -808,14 +809,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ repositoryId, deliveryId: id },
 		);
 	}
-	startedPreparationVersions(stream: string): Promise<string[]> {
+	preparationVersions(stream: string): Promise<string[]> {
 		return this.run(
 			this.executions().pipe(
 				Effect.map(
 					executions => [
 						...new Set(
 							executions.flatMap(execution =>
-								execution.stream === stream && execution.state === 'succeeded' && execution.started && execution.version
+								execution.stream === stream && execution.state === 'succeeded' && execution.version
 									&& (execution.prepared?.result || execution.managed?.result)
 									? [execution.version]
 									: []
@@ -824,7 +825,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					],
 				),
 			),
-			'coordinator.startedPreparationVersions',
+			'coordinator.preparationVersions',
 			{ stream },
 		);
 	}
@@ -1173,10 +1174,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (prior?.operation === 'promote' && execution.approvedBy === 'start') {
 					return yield* this.restartRelease(prior, execution);
 				}
-				if (prior?.operation === 'prepare' && execution.started?.force && !prior.started?.force) {
-					const forced: Execution = { ...prior, started: execution.started };
-					yield* this.put(forced);
-					return forced;
+				if (
+					prior?.operation === 'prepare' && execution.started
+					&& (!prior.started || (execution.started.force && !prior.started.force))
+				) {
+					return yield* this.startPreparation(prior, execution.started);
 				}
 				if (prior) return prior;
 				if (execution.configuration.streams[execution.stream]?.concurrency === 'supersede-pending') {
@@ -1271,6 +1273,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			'coordinator.prepared',
 			{ executionId: id },
 		);
+	}
+	private startPreparation(prior: Execution, started: ReleaseStarted): CoordinatorEffect<Execution, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const upgraded: Execution = { ...prior, started };
+			const previous = preparationBody(prior);
+			const next = preparationBody(upgraded);
+			if (upgraded.managed) {
+				upgraded.managed = { ...upgraded.managed, body: upgraded.managed.body.replace(previous, next) };
+			}
+			yield* this.put(upgraded);
+			const result = upgraded.prepared?.result ?? upgraded.managed?.result;
+			if (result && result.kind !== 'commit' && previous !== next) {
+				const work = (yield* this.gateway).restatePreparation(
+					upgraded.repository,
+					upgraded.repositoryId,
+					result.url,
+					previous,
+					next,
+				).pipe(logRecovered('preparation.restate-failed', { executionId: upgraded.id, url: result.url }));
+				this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Automation>())(work));
+			}
+			return upgraded;
+		});
 	}
 	private autoMerged(execution: Execution, result: PreparationResult): CoordinatorEffect<PreparationResult> {
 		const method = execution.versionPrMerge

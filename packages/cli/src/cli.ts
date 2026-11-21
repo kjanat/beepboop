@@ -540,7 +540,7 @@ for (const operation of ['plan', 'prepare'] as const) {
 					input: releaseVersion(flags.releaseVersion).pipe(Effect.map(version => ({ version }))),
 					selection: `--releaseVersion ${flags.releaseVersion}`,
 					plan: (client, request) => client.call(routes.releasesPlan, request),
-					prepare: (client, request) => client.call(routes.releasesPrepare, request),
+					prepare: (client, request) => client.call(routes.releasesPrepare, { ...request, start: false }),
 				}, out)
 			),
 	);

@@ -136,6 +136,7 @@ test('releases plan prints the plan and the exact prepare command, and keeps JSO
 			+ `Prepare it with: beepboop releases prepare octo/widget --stream main --releaseVersion patch --sourceSha ${head} --planId ${planId}\n`,
 	);
 	expect(planned.parsed).toHaveProperty('planId', planId);
+	expect(planned.parsed).toHaveProperty('starts', true);
 	const prepared = await runCli([
 		'releases',
 		'prepare',
@@ -153,6 +154,8 @@ test('releases plan prints the plan and the exact prepare command, and keeps JSO
 	expect(prepared.stdout.join('')).toMatch(
 		/^◷ (ready|running|succeeded|pending) [0-9a-f]{12} octo\/widget \/ main prepare 1\.0\.1 at /,
 	);
+	const listed = await Effect.runPromise(client.call(routes.executionsList, {}));
+	expect(listed.map(execution => [execution.operation, execution.started])).toEqual([['prepare', undefined]]);
 });
 
 test('secrets and notifications list as tables, and adding and subscribing report the result', async () => {

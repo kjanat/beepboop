@@ -36,7 +36,7 @@ jobs:
         with: { mode: apply, context: &ctx "${{ steps.release.outputs.context }}" }
 
       - run: bun install
-      - run: run gate
+      - run: run ${{ case(fromJSON(steps.release.outputs.context).force == true, 'build:cli', 'gate') }}
 
       - uses: $/actions/prepare
         with: { mode: submit, context: *ctx }

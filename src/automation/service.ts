@@ -383,6 +383,27 @@ export class AutomationService {
 			return undefined;
 		});
 	}
+	private landedCommit(
+		repository: RepositoryRecord,
+		stream: string,
+		version: string,
+		target: string,
+	): Effect.Effect<string | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const results = yield* fromPromise(() => this.coordinator(repository.id).preparationResults(stream, version));
+			for (const result of results) {
+				if (result.kind !== 'commit') continue;
+				if (yield* this.gateway.contains(repository.name, repository.id, result.head, target)) return result.head;
+			}
+			return undefined;
+		}).pipe(
+			recover(error =>
+				logFailure('landed-commit.failed', error, { repository: repository.name, stream }).pipe(
+					Effect.as(undefined),
+				)
+			),
+		);
+	}
 	private releaseHeld(
 		repository: ReadyRepository,
 		stream: Stream,
@@ -468,7 +489,7 @@ export class AutomationService {
 			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
 				if (!stream.promote.workflow) continue;
 				if (stream.versionSource?.kind === 'tags') {
-					yield* this.releaseStartedTags(repository, name, stream, stream.versionSource.prefix);
+					yield* this.releasePreparedTags(repository, name, stream, stream.versionSource.prefix);
 					continue;
 				}
 				const packages = publishablePackages(repository.inventory.packages, stream.packages);
@@ -559,7 +580,7 @@ export class AutomationService {
 			}
 		});
 	}
-	private releaseStartedTags(
+	private releasePreparedTags(
 		repository: ReadyRepository,
 		name: string,
 		stream: Stream,
@@ -568,7 +589,7 @@ export class AutomationService {
 		return Effect.gen({ self: this }, function*() {
 			if (!hasTagPromotion(stream, prefix)) return;
 			const coordinator = this.coordinator(repository.id);
-			const versions = yield* fromPromise(() => coordinator.startedPreparationVersions(name));
+			const versions = yield* fromPromise(() => coordinator.preparationVersions(name));
 			if (!versions.length) return;
 			const tags = yield* this.gateway.tagRefs(repository.name, repository.id);
 			const latest = latestTag(tags.map(ref => ref.name), prefix);
@@ -576,8 +597,11 @@ export class AutomationService {
 			for (const version of versions.sort(compareVersions)) {
 				if (latest && compareVersions(version, latest) <= 0) continue;
 				const started = yield* this.startedPreparation(repository, name, version, repository.sha);
-				if (!started) continue;
-				const snapshot = yield* this.releaseHeld(repository, stream, packages, started.sha);
+				const merged = started ? undefined : yield* this.mergedPreparation(repository, name, version, repository.sha);
+				const prepared = started?.sha ?? merged
+					?? (yield* this.landedCommit(repository, name, version, repository.sha));
+				if (!prepared) continue;
+				const snapshot = yield* this.releaseHeld(repository, stream, packages, prepared);
 				if (!snapshot) continue;
 				const plan = versionsInFiles(repository.inventory)
 					? yield* planRelease(snapshot, repository.inventory, version, stream.packages, undefined, stream.versionFiles)
@@ -596,9 +620,11 @@ export class AutomationService {
 				const claim = yield* this.tagClaims(repository, name, stream, version, snapshot.sha, tags);
 				if (claim.conflict) continue;
 				promotion.reclaims = claim.reclaims;
-				promotion.approvedBy = 'start';
-				promotion.started = started.started;
-				promotion.initiatedBy = started.started.actor;
+				if (started) {
+					promotion.approvedBy = 'start';
+					promotion.started = started.started;
+					promotion.initiatedBy = started.started.actor;
+				} else if (merged && stream.promote.approval === 'merge') promotion.approvedBy = 'merge';
 				yield* this.store.audit('beepboop', 'release.push', promotion.id);
 				yield* this.enqueue(repository, promotion);
 			}

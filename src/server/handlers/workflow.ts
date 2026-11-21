@@ -149,13 +149,13 @@ export const workflowEndpoints = {
 				return yield* forbidden(`${file ?? identity.workflowRef} cannot start releases of ${input.stream}`);
 			}
 			const bump = (['patch', 'minor', 'major'] as const).find(kind => kind === input.version);
-			const { selection, plan, planId } = yield* releasePlan({
+			const planned = yield* releasePlan({
 				repositoryId: repository.id,
 				stream: input.stream,
 				version: bump ? { bump } : input.version,
 			}, context);
 			const actor = `github-actions:${identity.repository}#${identity.runId}`;
-			return yield* beginRelease(service, selection, input.stream, plan, planId, actor, { via: 'action', actor });
+			return yield* beginRelease(service, planned, input.stream, actor, { via: 'action', actor });
 		})),
 	workflowBegin: workflow(routes.workflowBegin, (input, context) =>
 		Effect.gen(function*() {

@@ -32,7 +32,7 @@ jobs:
       - name: Checkout approved source
         uses: actions/checkout@v7
         with: { ref: "${{ fromJSON(steps.release.outputs.context).sourceSha }}", persist-credentials: false }
-      - run: runner i -f gate
+      - run: runner i -f ${{ case(fromJSON(steps.release.outputs.context).force == true, 'build:cli', 'gate') }}
       - name: Validate release version
         id: metadata
         run: bun src/tooling/cli/release.ts metadata

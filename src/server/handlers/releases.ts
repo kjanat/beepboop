@@ -30,6 +30,13 @@ export interface Selected {
 	stream: Stream;
 }
 
+export interface PlannedRelease {
+	selection: Selected;
+	selected: string[] | undefined;
+	plan: ReleasePlan;
+	planId: string;
+}
+
 function ready(service: AutomationService, repositoryId: number): Effect.Effect<ReadyRepository, DomainError> {
 	return readyRepository(service, repositoryId, 'Repository not configured');
 }
@@ -130,7 +137,10 @@ function carriedPlan(
 	});
 }
 
-export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext, 'service'>) {
+export function releasePlan(
+	input: ReleaseInput,
+	{ service }: Pick<AdminContext, 'service'>,
+): Effect.Effect<PlannedRelease, DomainError> {
 	return Effect.gen(function*() {
 		const selection = yield* configured(service, input.repositoryId, input.stream);
 		const { repository, stream } = selection;
@@ -181,7 +191,7 @@ export function releasePlan(input: ReleaseInput, { service }: Pick<AdminContext,
 			? head
 			: yield* carriedPlan(service, selection, input.stream, head, selected, planAt);
 		const planId = yield* planIdentity(plan, repository);
-		return { selection, plan, planId };
+		return { selection, selected, plan, planId };
 	});
 }
 
@@ -210,17 +220,15 @@ function opensVersionPr(stream: Stream, plan: ReleasePlan): boolean {
 
 export function beginRelease(
 	service: AutomationService,
-	selection: Selected,
+	{ selection, selected, plan, planId }: PlannedRelease,
 	name: string,
-	plan: ReleasePlan,
-	planId: string,
 	actor: string,
 	started?: ReleaseStarted,
 	versionPrMerge?: VersionPrMerge,
 ): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
 		const { repository, stream } = selection;
-		const refusal = started && startRefusal(name, stream, plan, repository.inventory);
+		const refusal = started && startRefusal(name, stream, plan, repository.inventory, selected);
 		if (refusal) return yield* precondition(refusal);
 		if (versionPrMerge && !opensVersionPr(stream, plan)) {
 			return yield* precondition(`${plan.version} of ${name} opens no version PR to merge`);
@@ -274,38 +282,32 @@ export const releaseEndpoints = {
 		routes.releasesPlan,
 		(input, context) =>
 			releasePlan(input, context).pipe(
-				Effect.map(({ selection, plan, planId }) => ({
+				Effect.map(({ selection, selected, plan, planId }) => ({
 					...reviewed({ plan, planId }),
-					starts: startRefusal(input.stream, selection.stream, plan, selection.repository.inventory) === undefined,
+					starts: startRefusal(input.stream, selection.stream, plan, selection.repository.inventory, selected)
+						=== undefined,
 				})),
 			),
 	),
 	releasesPrepare: admin(routes.releasesPrepare, (input, context) =>
 		Effect.gen(function*() {
-			const { selection, plan, planId } = yield* releasePlan(input, context);
+			const planned = yield* releasePlan(input, context);
+			const { selection, selected, plan, planId } = planned;
 			const { service, actor, request } = context;
 			if (input.sourceSha !== plan.sourceSha || input.planId !== planId) {
 				return yield* conflict('stale-plan', 'Release plan changed; preview it again');
 			}
-			const refusal = startRefusal(input.stream, selection.stream, plan, selection.repository.inventory);
-			if (input.force && refusal) return yield* precondition(refusal);
-			const started: ReleaseStarted | undefined = refusal
+			const refusal = startRefusal(input.stream, selection.stream, plan, selection.repository.inventory, selected);
+			const asked = input.force === true || input.start === true;
+			if (refusal && asked) return yield* precondition(refusal);
+			const started: ReleaseStarted | undefined = refusal || (input.start === false && !input.force)
 				? undefined
 				: { via: channel(request), actor, ...(input.force ? { force: true } : {}) };
-			return yield* beginRelease(
-				service,
-				selection,
-				input.stream,
-				plan,
-				planId,
-				actor,
-				started,
-				input.versionPrMerge,
-			);
+			return yield* beginRelease(service, planned, input.stream, actor, started, input.versionPrMerge);
 		})),
 	releasesPlanSet: admin(
 		routes.releasesPlanSet,
-		(input, context) => setPlan(input, context).pipe(Effect.map(reviewed)),
+		(input, context) => setPlan(input, context).pipe(Effect.map(set => ({ ...reviewed(set), starts: false }))),
 	),
 	releasesPrepareSet: admin(routes.releasesPrepareSet, (input, context) =>
 		Effect.gen(function*() {

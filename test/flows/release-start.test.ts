@@ -1,11 +1,17 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { botId } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { executions, promotions } from '@root/test/support/releases.ts';
-import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
+import {
+	editableConfiguration,
+	licenseText,
+	npmManifest,
+	passChecks,
+	widget,
+} from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
@@ -92,8 +98,8 @@ async function prepared(
 	const request = { repositoryId: id, stream: 'main', version };
 	const planned = await send('/api/releases/plan', request);
 	expect(planned.status).toBe(200);
-	const { sourceSha, planId } = decodeSync(plan, planned.body);
-	return send('/api/releases/prepare', { ...request, sourceSha, planId, ...(force ? { force } : {}) });
+	const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
+	return send('/api/releases/prepare', { ...request, sourceSha, planId, start: starts, ...(force ? { force } : {}) });
 }
 
 async function fromDashboard(path: string, body: unknown) {
@@ -219,7 +225,7 @@ test('merging a version PR promotes a mixed manifest and already-tagged Go strea
 	const planned = await api('/api/releases/plan', request);
 	expect(planned.status).toBe(200);
 	const { sourceSha, planId } = decodeSync(plan, planned.body);
-	expect((await api('/api/releases/prepare', { ...request, sourceSha, planId })).status).toBe(200);
+	expect((await api('/api/releases/prepare', { ...request, sourceSha, planId, start: true })).status).toBe(200);
 	await world.wait(16_000);
 	const [pull] = repository.pulls;
 	if (!pull) throw new Error('No version PR');
@@ -241,6 +247,177 @@ test('merging a version PR promotes a mixed manifest and already-tagged Go strea
 	await world.wait(16_000);
 	expect(await promotions(api)).toHaveLength(1);
 	expect(repository.runs).toHaveLength(1);
+});
+
+const dashboardRelease: {
+	submitRelease(request: { repositoryId: number; stream: string; version: unknown }): Effect.Effect<unknown, unknown>;
+} = await import(new URL('../../src/ui/browser/release.ts', import.meta.url).href);
+
+test.each(
+	[
+		['workspace', { via: 'dashboard' }],
+		['independent', undefined],
+	] as const,
+)('the dashboard asks a %s stream for a start only when its plan offers one', async (versioning, started) => {
+	const { repository } = await configured([], 'pr', 'required', versioning);
+	const cookie = await world.adminCookie();
+	const fetched = spyOn(globalThis, 'fetch').mockImplementation(
+		Object.assign((input: string | URL | Request, init?: RequestInit) =>
+			world.handle(
+				new Request(new URL(String(input), origin), {
+					...init,
+					headers: { ...init?.headers, Cookie: cookie, Origin: origin },
+				}),
+			), { preconnect: fetch.preconnect }),
+	);
+	const run = await Effect.runPromise(
+		dashboardRelease.submitRelease({ repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } }),
+	).finally(() => fetched.mockRestore());
+	if (started) expect(run).toMatchObject({ operation: 'prepare', started });
+	else expect(run).not.toHaveProperty('started');
+});
+
+test('a request with start false prepares a startable stream, and its merged version PR waits for approval', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'pr');
+	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
+	const planned = await api('/api/releases/plan', request);
+	const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
+	expect(starts).toBe(true);
+	const prepared = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: false });
+	expect(prepared.status).toBe(200);
+	expect(prepared.body).not.toHaveProperty('started');
+	await world.wait(16_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No version PR');
+	expect(pull.body).not.toContain('Started from');
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const [promotion, ...more] = await promotions(api);
+	expect(more).toEqual([]);
+	expect(promotion).toMatchObject({ sourceSha: merged.sha, state: 'awaiting-approval' });
+	expect(promotion).not.toHaveProperty('started');
+});
+
+test.each(
+	[
+		['workspace', { via: 'cli' }],
+		['independent', undefined],
+	] as const,
+)(
+	'a request without start, as an older CLI sends it, starts a %s stream only when it can',
+	async (versioning, started) => {
+		const { repository, api } = await configured([], 'pr', 'required', versioning);
+		const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
+		const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
+		const prepared = await api('/api/releases/prepare', { ...request, sourceSha, planId });
+		expect(prepared.status).toBe(200);
+		if (started) expect(prepared.body).toMatchObject({ started });
+		else expect(prepared.body).not.toHaveProperty('started');
+	},
+);
+
+test('force with start false still starts the release', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
+	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
+	const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
+	const forced = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: false, force: true });
+	expect(forced.status).toBe(200);
+	expect(forced.body).toMatchObject({ started: { via: 'cli', force: true } });
+});
+
+test('a request for one of two manifest packages in a shared-version stream cannot start', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.npm.publish('widget', '1.0.0');
+	world.npm.publish('gadget', '1.0.0');
+	const packages = ['pkg:npm/widget', 'pkg:npm/gadget'];
+	world.github.push(repository, {
+		'packages/gadget/package.json': npmManifest('gadget', '1.0.0'),
+		'packages/gadget/README.md': '# gadget\n',
+		'packages/gadget/LICENSE': licenseText,
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['npm', 'workflow'],
+			streams: {
+				main: {
+					packages,
+					mustPublish: packages,
+					credentials: [],
+					prepare: { strategy: 'managed' },
+					promote: { workflow: { file: 'publish.yml', publications: packages } },
+				},
+			},
+		}),
+	}, 'Release two packages together');
+	passChecks(repository, world.github.head(repository));
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const request = { repositoryId: repository.id, stream: 'main', version: '1.1.0', packages: ['pkg:npm/widget'] };
+	const planned = await api('/api/releases/plan', request);
+	expect(planned.status).toBe(200);
+	const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
+	expect(starts).toBe(false);
+	const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: true });
+	expect(refused.status).toBe(422);
+	expect(text(refused.body, 'error')).toBe(
+		'main shares one version across its packages, and a release of only some of them does not start publication',
+	);
+	expect(await executions(api)).toEqual([]);
+});
+
+test('a request for only some packages of a shared-version stream cannot start and its merge publishes nothing', async () => {
+	const repository = widget(world.github, { configured: false });
+	world.npm.publish('widget', '1.0.0');
+	world.network.serve('proxy.golang.org', () => Response.json({ Version: 'v1.0.0' }));
+	world.github.recordTag(repository, 'go/v1.0.0', 'd'.repeat(40), world.github.head(repository), true);
+	const packages = ['pkg:npm/widget', 'pkg:golang/github.com/octo/widget/go'];
+	world.github.push(repository, {
+		'go/go.mod': 'module github.com/octo/widget/go\n\ngo 1.26\n',
+		'version.json': '{"version":"1.0.0"}\n',
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['npm', 'go', 'workflow'],
+			streams: {
+				main: {
+					packages,
+					mustPublish: packages,
+					versionFiles: [{ path: 'version.json', format: 'json', key: ['version'] }],
+					prepare: { strategy: 'managed' },
+					promote: { publishWhen: 'version-pr-merged', workflow: { file: 'publish.yml', publications: packages } },
+				},
+			},
+		}),
+	}, 'Configure mixed release');
+	passChecks(repository, world.github.head(repository));
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const request = {
+		repositoryId: repository.id,
+		stream: 'main',
+		version: '1.1.0',
+		packages: ['pkg:golang/github.com/octo/widget/go'],
+	};
+	const planned = await api('/api/releases/plan', request);
+	expect(planned.status).toBe(200);
+	const { sourceSha, planId, starts } = decodeSync(plan, planned.body);
+	expect(starts).toBe(false);
+	const refusal =
+		'main shares one version across its packages, and a release of only some of them does not start publication';
+	for (const consent of [{ start: true }, { force: true }]) {
+		const refused = await api('/api/releases/prepare', { ...request, sourceSha, planId, ...consent });
+		expect(refused.status).toBe(422);
+		expect(text(refused.body, 'error')).toBe(refusal);
+	}
+	const prepared = await api('/api/releases/prepare', { ...request, sourceSha, planId });
+	expect(prepared.status).toBe(200);
+	expect(prepared.body).not.toHaveProperty('started');
+	await world.wait(16_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No version PR');
+	const merged = world.github.merge(repository, pull.number);
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	expect(await promotions(api)).toEqual([]);
 });
 
 test('the release action starts a release from its workflow_dispatch run and refuses any other run', async () => {
@@ -593,6 +770,139 @@ test('a tag-based dashboard start promotes the reviewed version after its versio
 		}),
 	]);
 });
+
+async function taggedWithPolicy(approval: string, bump: VersionBump) {
+	const { repository, api } = await configured([], bump, approval);
+	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	configuration.managers = ['workflow'];
+	const stream = configuration.streams.main;
+	stream.packages = [];
+	stream.required = [];
+	stream.versionSource = { kind: 'tags', prefix: 'v' };
+	stream.versionFiles = [{ path: 'package.json', format: 'json', key: ['version'] }];
+	stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
+	stream.promote.workflow.publications = [];
+	repository.refs.set('tags/v2.3.4', world.github.head(repository));
+	const head = world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Configure a tag-based release',
+	);
+	passChecks(repository, head.sha);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
+	const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
+	const prepared = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: false });
+	expect(prepared.status).toBe(200);
+	expect(prepared.body).not.toHaveProperty('started');
+	return { repository, api };
+}
+
+for (const approval of ['required', 'merge'] as const) {
+	test(`a tag-based version PR prepared without a start follows ${approval} when merged`, async () => {
+		const { repository, api } = await taggedWithPolicy(approval, 'pr');
+		await world.wait(16_000);
+		const [pull] = repository.pulls;
+		if (!pull) throw new Error('No version PR');
+		const merged = world.github.merge(repository, pull.number);
+		passChecks(repository, merged.sha);
+		expect((await world.push(repository)).status).toBe(202);
+		await world.wait(16_000);
+		const [promotion, ...more] = await promotions(api);
+		expect(more).toEqual([]);
+		expect(promotion).toMatchObject({ version: '2.3.5', sourceSha: merged.sha });
+		expect(promotion).not.toHaveProperty('started');
+		if (approval === 'required') expect(promotion).toMatchObject({ state: 'awaiting-approval' });
+		else {
+			expect(promotion?.approvedBy).toBe('merge');
+			expect(promotion?.state).not.toBe('awaiting-approval');
+		}
+	});
+}
+
+test.each([false, true])(
+	'a tag-based version commit prepared without a start waits for approval, compare failing first: %p',
+	async failing => {
+		const { repository, api } = await taggedWithPolicy('merge', 'commit');
+		const refused: string[] = [];
+		let refusing = failing;
+		world.network.serve('api.github.com', request => {
+			const path = new URL(request.url).pathname;
+			const head = world.github.resolve(repository, repository.defaultBranch).sha;
+			if (!refusing || path !== `/repos/${repository.name}/compare/${head}...${head}`) {
+				return world.github.handle(request);
+			}
+			refused.push(path);
+			return Response.json({ message: 'Comparison unavailable' }, { status: 503 });
+		});
+		const head = await landed(repository);
+		if (failing) {
+			expect(refused).not.toEqual([]);
+			expect(await promotions(api)).toEqual([]);
+			refusing = false;
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+		}
+		const [promotion, ...more] = await promotions(api);
+		expect(more).toEqual([]);
+		expect(promotion).toMatchObject({ version: '2.3.5', sourceSha: head.sha, state: 'awaiting-approval' });
+		expect(promotion).not.toHaveProperty('approvedBy');
+	},
+);
+
+test.each(['unopened', 'open', 'edited', 'refusing edits'] as const)(
+	'a start for a version prepared without one starts it, its PR %s',
+	async pr => {
+		const { repository, api } = await configured([{ via: 'cli' }], 'pr');
+		const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
+		const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
+		const first = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: false });
+		expect(first.body).not.toHaveProperty('started');
+		if (pr === 'unopened') expect(repository.pulls).toEqual([]);
+		else {
+			await world.wait(16_000);
+			expect(repository.pulls.map(entry => entry.body)).toEqual([
+				expect.stringContaining('`publishWhen: approved-in-beepboop`'),
+			]);
+		}
+		const edited = 'Release notes written by hand';
+		if (pr === 'edited' && repository.pulls[0]) repository.pulls[0].body = edited;
+		const refused: string[] = [];
+		if (pr === 'refusing edits') {
+			world.network.serve('api.github.com', request => {
+				const path = new URL(request.url).pathname;
+				if (request.method !== 'PATCH' || path !== `/repos/${repository.name}/pulls/1`) {
+					return world.github.handle(request);
+				}
+				refused.push(path);
+				return Response.json({ message: 'Pull request edits are unavailable' }, { status: 503 });
+			});
+		}
+		const second = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: true });
+		expect(second.status).toBe(200);
+		expect(decodeSync(execution, second.body).id).toBe(decodeSync(execution, first.body).id);
+		expect(second.body).toMatchObject({ started: { via: 'cli' } });
+		await world.wait(16_000);
+		const [pull, ...others] = repository.pulls;
+		if (!pull) throw new Error('No version PR');
+		expect(others).toEqual([]);
+		if (pr === 'edited') expect(pull.body).toBe(edited);
+		else if (pr === 'refusing edits') {
+			expect(refused).not.toEqual([]);
+			expect(pull.body).toContain('`publishWhen: approved-in-beepboop`');
+		} else {
+			expect(pull.body).toContain(
+				'Started from the CLI. Merging this PR publishes the release, and nothing asks again.',
+			);
+			expect(pull.body).not.toContain('publishWhen');
+		}
+		const merged = world.github.merge(repository, pull.number);
+		passChecks(repository, merged.sha);
+		expect((await world.push(repository)).status).toBe(202);
+		await world.wait(16_000);
+		await publishedOnce(api, repository, 'cli');
+	},
+);
 
 test.each(['tag-based', 'manifest'])(
 	'a %s stream with delegated preparation cannot start and refuses force before dispatching',

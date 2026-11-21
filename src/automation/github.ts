@@ -1319,6 +1319,23 @@ export class RepositoryGateway {
 			return { method, state: 'refused' as const, note };
 		});
 	}
+	restatePreparation(
+		repository: string,
+		repositoryId: number,
+		url: string,
+		previous: string,
+		next: string,
+	): Effect.Effect<void, DomainError> {
+		const self = this;
+		return Effect.gen(function*() {
+			const token = yield* self.token(repository, repositoryId, { pull_requests: 'write' });
+			const number = yield* preparationPullNumber(repository, url);
+			const pull = yield* self.read(pullSchema, `/repos/${repository}/pulls/${number}`, token);
+			const body = typeof pull.body === 'string' ? pull.body : '';
+			if (pull.state !== 'open' || !body.includes(previous)) return;
+			yield* self.call(`/repos/${repository}/pulls/${number}`, token, 'PATCH', { body: body.replace(previous, next) });
+		});
+	}
 	private finishPullRequest(
 		snapshot: Snapshot,
 		branch: string,
