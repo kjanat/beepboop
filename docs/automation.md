@@ -402,10 +402,10 @@ and leaves the file as it is. Every job with `begin` needs `id-token: write`,
 and its `begin` step runs without `if` or `continue-on-error`. Every checkout in
 such a job checks out the begin context `sourceSha`, or a job output that
 carries it, and at least one of them runs after `begin` without `if` or
-`continue-on-error`. Before that planned checkout, a `run` step may only run
-ahead of `begin` and of every checkout, and `report`, `publish`,
-`publish-refs` and `publish-release` may not run. Other actions, such as a
-token, `harden-runner` or setup action, may run there. A job without a
+`continue-on-error`. Setup blocks a `run` step that comes after `begin` or
+after a checkout and before that planned checkout, and a `report`, `publish`,
+`publish-refs` or `publish-release` step anywhere before it. Other actions,
+such as a token, `harden-runner` or setup action, may run there. A job without a
 checkout can publish artifacts that other jobs built. A checkout before
 `begin` may load a local `begin` action from the dispatch ref. A planned
 checkout at the same path and repository must follow it, and only `begin` and
