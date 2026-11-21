@@ -253,13 +253,21 @@ test('a single job counts only an unconditional planned checkout after its exist
 		'        with: { ref: "${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}", path: release }',
 	);
 	expect(integration(elsewhere).blockers).toContain(blocker);
-	const order =
-		'publish.yml: move the steps between the first checkout and the checkout of the execution sourceSha after that checkout';
+	const order = 'publish.yml: move the steps before the checkout of the execution sourceSha after that checkout';
 	expect(integration(single).blockers).not.toContain(order);
 	const early = single
 		.replace('      - run: npm publish\n', '')
 		.replace('      - uses: actions/checkout@v7\n        with: { ref:', '      - run: npm publish\n$&');
 	expect(integration(early).blockers).toContain(order);
+	expect(
+		integration(
+			early.replace(
+				'      - uses: actions/checkout@v7\n      - uses: ./actions/begin',
+				'      - uses: ./actions/begin',
+			),
+		).blockers,
+	)
+		.toContain(order);
 });
 
 test('a workflow wired across jobs, or one wired job that depends on another, stays unchanged', () => {
@@ -299,6 +307,11 @@ test('a workflow wired across jobs, or one wired job that depends on another, st
 		'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
 	);
 	expect(integrated(bootstrapped).blockers).toEqual([]);
+	const always = base.replace(
+		'      - uses: kjanat/beepboop/actions/report@v1\n',
+		'      - uses: kjanat/beepboop/actions/report@v1\n        if: always()\n',
+	);
+	expect(integrated(always).blockers).toEqual([]);
 	const writeAll = base.replace('permissions: { contents: read, id-token: write }', 'permissions: write-all');
 	expect(integrated(writeAll).blockers).toEqual([]);
 	const conditional = single.replace('    needs: build\n', "    if: ${{ github.ref == 'refs/heads/main' }}\n");
@@ -434,7 +447,54 @@ for (
 				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
 				'      - run: npm publish\n$&',
 			),
+			['job build: move the steps before the planned checkout after it'],
+		],
+		[
+			'a step between the bootstrap checkout and its planned replacement after another planned checkout',
+			base.replace(
+				'      - uses: kjanat/beepboop/actions/begin@v1\n        id: start\n',
+				'      - uses: actions/checkout@v7\n      - uses: ./actions/begin\n        id: start\n',
+			).replace(
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(steps.start.outputs.context).sourceSha }}", path: tools }\n      - run: npm publish\n$&',
+			),
 			['job build: move the steps between the bootstrap checkout and the planned checkout after the planned checkout'],
+		],
+		[
+			'a step before the planned checkout',
+			base.replace(
+				'      - uses: actions/checkout@v7\n        with: { ref: "${{ fromJSON(',
+				'      - run: npm publish\n$&',
+			),
+			['job build: move the steps before the planned checkout after it'],
+		],
+		...['if: false', 'continue-on-error: true'].map(guard =>
+			[
+				`a begin step with ${guard}`,
+				base.replace('        id: start\n', `        id: start\n        ${guard}\n`),
+				['job build: run begin without if or continue-on-error'],
+			] as const
+		),
+		...['if: false', 'if: ${{ false }}'].map(guard =>
+			[
+				`a report step with ${guard}`,
+				base.replace(
+					'      - uses: kjanat/beepboop/actions/report@v1\n',
+					`      - uses: kjanat/beepboop/actions/report@v1\n        ${guard}\n`,
+				),
+				['report a result for pkg:npm/widget from a job with a begin step'],
+			] as const
+		),
+		[
+			'a publishing job with if: false',
+			base.replace('    needs: build\n', '    needs: build\n    if: false\n'),
+			['report a result for pkg:npm/widget from a job with a begin step'],
+		],
+		[
+			'a publish-refs step with if: false',
+			`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n        if: false\n`,
+			['tag the release with publish-refs'],
+			{ tagPrefix: 'v' },
 		],
 		...['if: ${{ false }}', 'if: false', 'continue-on-error: true'].flatMap(guard => {
 			const guarded = base.replace(

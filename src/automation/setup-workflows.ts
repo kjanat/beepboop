@@ -144,12 +144,15 @@ export interface WorkflowCredentials {
 function operationGate(operation: string): string {
 	return expression(`inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}'`);
 }
+function condition(value: unknown): string {
+	const source = String(value ?? '').trim();
+	return (/^\$\{\{([\s\S]*)\}\}$/.exec(source)?.[1] ?? source).replace(/\s+/g, '');
+}
 function guards(job: unknown, operation: string): boolean {
-	const condition = (value: unknown) => {
-		const source = String(value ?? '').trim();
-		return (/^\$\{\{([\s\S]*)\}\}$/.exec(source)?.[1] ?? source).replace(/\s+/g, '');
-	};
 	return condition(object(job).if) === condition(operationGate(operation));
+}
+function disabled(entry: unknown): boolean {
+	return condition(object(entry).if) === 'false';
 }
 function runsOperation(job: unknown, operation: string): boolean {
 	const begin = stepsOf(job).find(step => actionRole(step.uses) === 'begin');
@@ -275,6 +278,9 @@ function acrossJobs(
 		if (object(begins[0]?.with)['execution-id'] !== executionInput) {
 			problems.push(`job ${name}: begin must take inputs.beepboop_execution_id`);
 		}
+		if (begins[0]?.if !== undefined || begins[0]?.['continue-on-error']) {
+			problems.push(`job ${name}: run begin without if or continue-on-error`);
+		}
 		const permissions = object(job).permissions ?? root.permissions;
 		if (permissions !== 'write-all' && object(permissions)['id-token'] !== 'write') {
 			problems.push(`job ${name} needs id-token: write`);
@@ -286,7 +292,9 @@ function acrossJobs(
 				|| !!(needed?.[1] && needed[2] && jobNeeds(object(job).needs).includes(needed[1])
 					&& carriesSource(needed[1], needed[2]));
 		};
-		const unconditional = plannedCheckout(steps, started, planned) >= 0;
+		const first = plannedCheckout(steps, started, planned), unconditional = first >= 0;
+		const early = unconditional && stepsBetween(steps, -1, first);
+		if (early) problems.push(`job ${name}: move the steps before the planned checkout after it`);
 		if (
 			!unconditional
 			&& steps.some((step, index) => index > started && isCheckout(step) && planned(object(step.with).ref))
@@ -294,8 +302,8 @@ function acrossJobs(
 			problems.push(`job ${name}: check out the begin context sourceSha in a step without if or continue-on-error`);
 		}
 		for (const [index, step] of steps.entries()) {
-			const action = beepboopAction(step.uses);
-			if (action) used.add(action);
+			const action = beepboopAction(step.uses), runs = !disabled(job) && !disabled(step);
+			if (action && runs) used.add(action);
 			const ref = object(step.with).ref;
 			if (isCheckout(step) && inner(ref) === sourceOf(job) && index < started) {
 				problems.push(`job ${name}: check out the begin context sourceSha after the begin step`);
@@ -307,7 +315,7 @@ function acrossJobs(
 					problems.push(
 						`job ${name}: check out the begin context sourceSha at the path and repository of the bootstrap checkout`,
 					);
-				} else if (stepsBetween(steps, index, replaced)) {
+				} else if (!early && stepsBetween(steps, index, replaced)) {
 					problems.push(
 						`job ${name}: move the steps between the bootstrap checkout and the planned checkout after the planned checkout`,
 					);
@@ -331,7 +339,7 @@ function acrossJobs(
 			}
 			const entries = publicationEntries(object(step.with).publications);
 			if (!entries) problems.push(`job ${name}: report publications must be a JSON array`);
-			for (const entry of entries ?? []) if (typeof entry.id === 'string') reported.add(entry.id);
+			for (const entry of runs ? entries ?? [] : []) if (typeof entry.id === 'string') reported.add(entry.id);
 		}
 	}
 	for (const pkg of packages) {
@@ -789,10 +797,9 @@ function integrate(
 	}
 	const integratedBeginIndex = steps.findIndex(step => actionRole(step.uses) === 'begin');
 	const approvedIndex = plannedCheckout(steps, integratedBeginIndex, ref => ref === sourceRef, rootCheckout);
-	const firstCheckout = steps.findIndex(isCheckout);
 	if (approvedIndex < 0) fail('checkout the execution sourceSha after begin');
-	else if (firstCheckout < integratedBeginIndex && stepsBetween(steps, firstCheckout, approvedIndex)) {
-		fail('move the steps between the first checkout and the checkout of the execution sourceSha after that checkout');
+	else if (stepsBetween(steps, -1, approvedIndex)) {
+		fail('move the steps before the checkout of the execution sourceSha after that checkout');
 	}
 	const credentials = choice.credentials ?? {}, aliases = [...new Set(Object.values(credentials))];
 	const mise =

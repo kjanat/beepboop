@@ -398,16 +398,20 @@ job. The context holds the requested version and the source commit. Calls from
 the same observed run, stream and operation attach to the same execution.
 
 Setup adopts a dispatch workflow that already calls `begin` in several jobs
-and leaves the file as it is. Every job with `begin` needs `id-token: write`.
-Every checkout in such a job checks out the begin context `sourceSha`, or a job
-output that carries it, and at least one of them runs after `begin` without `if`
-or `continue-on-error`. A checkout before `begin` may load a local `begin`
-action from the dispatch ref. A planned checkout at the same path and
-repository must follow it, and only `begin` and other checkouts may run between
-them. Every other required dispatch input needs a default.
+and leaves the file as it is. Every job with `begin` needs `id-token: write`,
+and its `begin` step runs without `if` or `continue-on-error`. Every checkout in
+such a job checks out the begin context `sourceSha`, or a job output that
+carries it, and at least one of them runs after `begin` without `if` or
+`continue-on-error`. Only `begin` and other checkouts may run before that
+planned checkout. A job without a checkout can publish artifacts that other
+jobs built. A checkout before `begin` may load a local `begin` action from the
+dispatch ref. A planned checkout at the same path and repository must follow
+it. Every other required dispatch input needs a default.
 The `report` steps must cover every selected package, and `publish-refs` must
-tag the release when the stream pushes tags. A distribution release passes its
-files to each `publish-refs` step.
+tag the release when the stream pushes tags. A step or job whose `if` is the
+constant `false`, written with or without `${{ }}`, covers nothing. Setup
+accepts every other condition, such as `if: always()`. A distribution release
+passes its files to each `publish-refs` step.
 
 Setup adds the aliases of each `actions/credentials` step, and the aliases in
 the `credentials` input of `actions/publish`, to the stream's `credentials`.
