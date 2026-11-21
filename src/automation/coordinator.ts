@@ -1296,8 +1296,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private restartPreparation(prior: Execution, started: ReleaseStarted): CoordinatorEffect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const upgraded = startedPreparation(prior, prior.started?.force ? { ...started, force: true } : started);
-			yield* this.supersedePending(upgraded);
 			yield* this.redispatch(upgraded, reopened(upgraded.publications), 'Start requested');
+			yield* this.supersedePending(upgraded);
 			yield* this.restatePreparation(prior, upgraded);
 			return yield* this.get(upgraded.id);
 		});

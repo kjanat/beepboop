@@ -914,6 +914,45 @@ test('a start that restarts a superseded preparation supersedes the pending one'
 	expect([await state(older.id), await state(newer.id)]).toEqual(['ready', 'cancelled']);
 });
 
+test('a refused restart of a superseded preparation leaves the pending one ready', async () => {
+	const { repository, api } = await configured([{ via: 'cli' }], 'commit');
+	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
+	configuration.streams.main.concurrency = 'supersede-pending';
+	const head = world.github.push(
+		repository,
+		{ '.github/beepboop.json': JSON.stringify(configuration) },
+		'Supersede pending work',
+	);
+	passChecks(repository, head.sha);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const planned = async (version: string) => {
+		const request = { repositoryId: repository.id, stream: 'main', version };
+		const { sourceSha, planId } = decodeSync(plan, (await api('/api/releases/plan', request)).body);
+		return { ...request, sourceSha, planId };
+	};
+	const older = decodeSync(
+		execution,
+		(await api('/api/releases/prepare', { ...await planned('1.0.1'), start: false })).body,
+	);
+	const newer = decodeSync(
+		execution,
+		(await api('/api/releases/prepare', { ...await planned('1.1.0'), start: false })).body,
+	);
+	const restart = await planned('1.0.1');
+	const refused: string[] = [];
+	world.network.serve('api.github.com', async request => {
+		const path = new URL(request.url).pathname;
+		const body = path.endsWith('/access_tokens') ? await request.clone().text() : '';
+		if (!body.includes('"actions":"write"')) return world.github.handle(request);
+		refused.push(path);
+		return Response.json({ message: 'Installation tokens are unavailable' }, { status: 503 });
+	});
+	expect((await api('/api/releases/prepare', { ...restart, start: true })).status).not.toBe(200);
+	expect(refused).not.toEqual([]);
+	const state = async (id: string) => (await executions(api)).find(entry => entry.id === id)?.state;
+	expect([await state(older.id), await state(newer.id)]).toEqual(['cancelled', 'ready']);
+});
+
 test.each(['unopened', 'open', 'edited', 'refusing edits'] as const)(
 	'a start for a version prepared without one starts it, its PR %s',
 	async pr => {
