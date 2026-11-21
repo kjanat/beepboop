@@ -350,7 +350,7 @@ test('a workflow wired across jobs, or one wired job that depends on another, st
 		'  build:\n    runs-on: ubuntu-latest\n',
 		'  build:\n    if: false\n    runs-on: ubuntu-latest\n',
 	);
-	for (const status of ['always()', '${{ !cancelled() }}']) {
+	for (const status of ['always()', '${{ !cancelled() }}', "${{ always() && contains('it''s', 's') }}"]) {
 		const resilient = skippedBuild.replace('    needs: build\n', `    needs: build\n    if: ${status}\n`);
 		expect(integrated(resilient).blockers).toEqual([]);
 	}
@@ -565,6 +565,15 @@ for (
 				),
 			['report a result for pkg:npm/widget from a job with a begin step'],
 		],
+		...["contains('always()', 'always')", "${{ format('it'' cancelled()') == 'x' }}"].map(status =>
+			[
+				`a publishing job that needs a job with if: false and quotes a status function in if: ${status}`,
+				base
+					.replace('  build:\n    runs-on: ubuntu-latest\n', '  build:\n    if: false\n    runs-on: ubuntu-latest\n')
+					.replace('    needs: build\n', `    needs: build\n    if: ${status}\n`),
+				['report a result for pkg:npm/widget from a job with a begin step'],
+			] as const
+		),
 		[
 			'a publish-refs step with if: false',
 			`${base}      - uses: kjanat/beepboop/actions/publish-refs@v1\n        if: false\n`,
