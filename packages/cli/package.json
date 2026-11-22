@@ -30,7 +30,7 @@
 	"devDependencies": {
 		"@beepboopbot/host": "workspace:*",
 		"@beepboopbot/kernel": "workspace:*",
-		"effect": "4.1.4"
+		"effect": "4.1.5"
 	},
 	"engines": {
 		"bun": ">=1.4.4"
