@@ -26,9 +26,15 @@ export const generatedJsr = Effect.fnUntraced(
 	},
 );
 
-const workspaceSpecifier =
-	/(?:\bfrom|\bimport|require(?:\.resolve)?)\s*\(?\s*(['"`])((?:@\/|@beepboop(?:bot)?\/)[^'"`]*)\1/g;
+const workspaceSpecifier = /^(?:@\/|@beepboop(?:bot)?\/)/;
+const transpiler = new Bun.Transpiler({ loader: 'js' });
 
 export function leakedSpecifiers(bundle: string): string[] {
-	return [...new Set([...bundle.matchAll(workspaceSpecifier)].flatMap(([, , specifier]) => specifier ?? []))];
+	return [
+		...new Set(
+			transpiler.scanImports(bundle.replace(/^#![^\n]*/, '')).map(({ path }) => path).filter(path =>
+				workspaceSpecifier.test(path)
+			),
+		),
+	];
 }

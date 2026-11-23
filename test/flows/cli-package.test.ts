@@ -4,6 +4,7 @@ import { generatedJsr, leakedSpecifiers } from '@/tooling/cli/manifest';
 
 test('the CLI bundle check finds workspace specifiers in every import form', () => {
 	const bundle = [
+		'#!/usr/bin/env bun',
 		"import { Effect } from 'effect';",
 		"import { routes } from '@/contract/routes';",
 		'export * from "@beepboop/kernel";',
@@ -11,8 +12,7 @@ test('the CLI bundle check finds workspace specifiers in every import form', () 
 		"require('@/cli/main');",
 		"import '@/contract/views';",
 		'import x from"@/a";export{y}from"@/b";',
-		'__require("@/c");require.resolve("@/d");',
-		"const help = 'Run beepboop auth login, see @/docs';",
+		'import(/* keep */ "@/c"); import /* keep */ "@/d";',
 		"import { cli } from '@kjanat/dreamcli';",
 	].join('\n');
 	expect(leakedSpecifiers(bundle)).toEqual([
@@ -26,7 +26,17 @@ test('the CLI bundle check finds workspace specifiers in every import form', () 
 		'@/c',
 		'@/d',
 	]);
-	expect(leakedSpecifiers("import { cli } from '@kjanat/dreamcli';\nimport { Effect } from 'effect';")).toEqual([]);
+});
+
+test('the CLI bundle check ignores import-like text in strings and comments', () => {
+	const bundle = [
+		"import { cli } from '@kjanat/dreamcli';",
+		"const help = 'Run beepboop auth login, see @/docs';",
+		'const example = `import "@/example";`;',
+		"// import { routes } from '@/contract/routes';",
+		'/* require("@beepboop/kernel") */',
+	].join('\n');
+	expect(leakedSpecifiers(bundle)).toEqual([]);
 });
 
 const npm = { name: '@kjanat/beepboop', version: '0.8.0' };

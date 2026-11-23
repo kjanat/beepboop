@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path';
 import { Effect } from 'effect';
 import { leakedSpecifiers, packageManifest } from '@/tooling/cli/manifest';
 import type { ToolFailure } from '@/tooling/runtime';
-import { attemptPromise, capture, main, parse, readJson, refuse, temporaryDirectory } from '@/tooling/runtime';
+import { attempt, attemptPromise, capture, main, parse, readJson, refuse, temporaryDirectory } from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = resolve(root, 'packages/cli');
@@ -16,7 +16,8 @@ await main(Effect.scoped(Effect.gen(function*() {
 		packageManifest,
 		yield* readJson(`${directory}/package.json`),
 	);
-	const leaked = leakedSpecifiers(yield* attemptPromise(() => Bun.file(`${directory}/cli.js`).text()));
+	const bundle = yield* attemptPromise(() => Bun.file(`${directory}/cli.js`).text());
+	const leaked = yield* attempt(() => leakedSpecifiers(bundle));
 	yield* expect(!leaked.length, `cli.js imports workspace modules: ${leaked.join(', ')}`);
 	const temporary = yield* temporaryDirectory('beepboop-package-');
 	const tarball = join(temporary, 'cli.tgz');
