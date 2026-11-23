@@ -8,9 +8,10 @@ import { Effect, Schema, Struct } from 'effect';
 import { parse } from 'yaml';
 import { optionId } from '@/automation/setup';
 import type { SetupChoices } from '@/automation/setup-types';
-import { binaries, defaultBinaryTargets, workflowSetup } from '@/contract/setup';
+import { binaries, defaultBinaryTargets } from '@/contract/binary-platforms';
 import type { VersionPrMerge } from '@/contract/setup-terms';
 import { alwaysStarted, startFromEffect, startFromQuestion, versionPrMergeSentences } from '@/contract/setup-terms';
+import { workflowSetup } from '@/contract/workflow-setup';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

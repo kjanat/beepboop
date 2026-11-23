@@ -37,6 +37,8 @@ import {
 	workflowEvidence,
 } from '@/automation/setup-workflows';
 import type { Configuration, Inventory, Package, Snapshot } from '@/automation/types';
+import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/contract/binary-platforms';
+import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/contract/binary-platforms';
 import { isLockfile } from '@/contract/catalog';
 import {
 	configurableStarts,
@@ -45,17 +47,7 @@ import {
 	versionBump,
 	versionBumps,
 } from '@/contract/release-start';
-import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget, WorkflowSetupInput } from '@/contract/setup';
-import {
-	binaryTargets,
-	bumpable,
-	defaultBinaryTargets,
-	leftOut,
-	setupChoicesSchema,
-	startable,
-	unbuildable,
-	workflowSetup,
-} from '@/contract/setup';
+import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
 import {
 	alwaysStarted,
 	existingTriggersNames,
@@ -78,6 +70,8 @@ import {
 	versionScopeSentences,
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
+import type { WorkflowSetupInput } from '@/contract/workflow-setup';
+import { workflowSetup } from '@/contract/workflow-setup';
 import { configurationDrift } from '@/domain/configuration';
 import { packageMarkdown } from '@/domain/package-label';
 import { publicationStages } from '@/domain/publication-stages';

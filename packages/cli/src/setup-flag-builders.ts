@@ -3,8 +3,9 @@ import { flag } from '@kjanat/dreamcli';
 import { binaryCandidates, packageCandidates } from '@/cli/setup-complete';
 import type { SetupFlagPath } from '@/cli/setup-flags';
 import { setupFlagPaths } from '@/cli/setup-flags';
+import { binaryTargets } from '@/contract/binary-platforms';
 import { approvalPolicies, configurableStarts, versionBumps } from '@/contract/release-start';
-import { binaryTargets, streamVersionings, workflowTriggers } from '@/contract/setup';
+import { streamVersionings } from '@/contract/setup';
 import {
 	companionModulesSentence,
 	existingTriggerChoices,
@@ -20,6 +21,7 @@ import {
 	versionScopeQuestion,
 	versionScopes,
 } from '@/contract/setup-terms';
+import { workflowTriggers } from '@/contract/workflow-setup';
 
 export const describedSetupFlags = {
 	stream: flag.string().describe('Release group the setup flags change; needed when the proposal has several'),

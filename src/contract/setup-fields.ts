@@ -1,5 +1,6 @@
 import type { Schema } from 'effect';
-import { setupChoicesSchema, setupStream, setupWorkflow } from '@/contract/setup';
+import { setupChoicesSchema, setupStream } from '@/contract/setup';
+import { setupWorkflow } from '@/contract/workflow-setup';
 
 export type ChoicesField = keyof typeof setupChoicesSchema.fields;
 export type StreamField = keyof typeof setupStream.fields;

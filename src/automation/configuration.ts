@@ -16,7 +16,6 @@ import {
 	workflowFilePattern,
 } from '@/contract/catalog';
 import { releaseStarts, versionBumps } from '@/contract/release-start';
-import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
 import {
 	approvalOfPublishWhen,
 	bumpOfVersionLands,
@@ -27,6 +26,7 @@ import {
 	versionScopes,
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
+import { actionsRevisionPattern, workflowSetup } from '@/contract/workflow-setup';
 import {
 	configurationDrift,
 	configurationSchema,

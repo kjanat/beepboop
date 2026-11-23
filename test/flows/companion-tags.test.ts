@@ -10,7 +10,7 @@ import type { RefPolicy } from '@/automation/refs';
 import { planRefs, refsLanded, streamModuleTagPrefixes } from '@/automation/refs';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Package, RepositoryRecord, Snapshot } from '@/automation/types';
-import { binaries } from '@/contract/setup';
+import { binaries } from '@/contract/binary-platforms';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
 import { requireReady } from '@/domain/repository';
 import { validateAgainst } from '@/domain/validate';

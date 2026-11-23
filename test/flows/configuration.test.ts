@@ -19,7 +19,7 @@ import {
 	releaseIdentity,
 } from '@/automation/package-identity';
 import type { ManagerName } from '@/contract/catalog';
-import { workflowSetup } from '@/contract/setup';
+import { workflowSetup } from '@/contract/workflow-setup';
 import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
 import { refPolicyValue } from '@/domain/configuration-value';
 import { validateAgainst } from '@/domain/validate';

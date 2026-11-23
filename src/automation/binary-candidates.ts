@@ -3,8 +3,8 @@ import { parse as parseToml } from 'smol-toml';
 import { object } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
 import type { Inventory, Package, Snapshot } from '@/automation/types';
+import type { BinaryCandidate } from '@/contract/binary-platforms';
 import { supportedTargets } from '@/contract/binary-platforms';
-import type { BinaryCandidate } from '@/contract/setup';
 import { parentDirectory, walkRelative } from '@/kernel/path/relative-path.ts';
 
 const unixCrates = new Set(['nix', 'uzers', 'users', 'termios', 'daemonize', 'fork', 'pty-process']);
