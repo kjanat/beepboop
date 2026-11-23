@@ -6,6 +6,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { Automation } from '@/automation/service';
+import { isolateGitHubApp } from '@/github/app.ts';
 
 let world: World;
 let repository: Repository;
@@ -119,4 +120,139 @@ test('tokens minted for a workflow run are never reused', async () => {
 		);
 	expect(await mint()).not.toBe(await mint());
 	expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(2);
+});
+
+test('a cached token that GitHub rejects is replaced by the next request', async () => {
+	const first = await token();
+	world.network.serve('api.github.com', request =>
+		request.headers.get('authorization') === `Bearer ${first}`
+			? Response.json({ message: 'Bad credentials' }, { status: 401 })
+			: world.github.handle(request));
+	const refused = await world.run(
+		Automation.use(service => service.gateway.call(`/repos/${repository.name}`, first)).pipe(Effect.flip),
+	);
+	expect(refused.message).toContain('HTTP 401');
+	const mark = world.network.mark();
+	const renewed = await token();
+	expect(renewed).not.toBe(first);
+	expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(1);
+	expect(await token()).toBe(renewed);
+});
+
+test('permission order does not split the token cache', async () => {
+	const mark = world.network.mark();
+	const issue = (permissions: Record<string, 'read' | 'write'>) =>
+		world.run(Automation.use(service => service.gateway.token(repository.name, repository.id, permissions)));
+	const first = await issue({ contents: 'read', actions: 'read' });
+	expect(await issue({ actions: 'read', contents: 'read' })).toBe(first);
+	expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(1);
+});
+
+test('a failed mint is not cached', async () => {
+	let refuse = true;
+	world.network.serve('api.github.com', request => {
+		if (refuse && request.method === 'POST' && new URL(request.url).pathname.endsWith('/access_tokens')) {
+			refuse = false;
+			return Response.json({ message: 'Server Error' }, { status: 422 });
+		}
+		return world.github.handle(request);
+	});
+	await expect(token()).rejects.toThrow();
+	expect(await token()).toStartWith('ghs_');
+});
+
+test('replacing the private key replaces the isolate app', () => {
+	const fetcher = world.network.fetch;
+	const credentials = {
+		GITHUB_APP_ID: world.env.GITHUB_APP_ID,
+		GITHUB_APP_PRIVATE_KEY: world.env.GITHUB_APP_PRIVATE_KEY,
+	};
+	const first = isolateGitHubApp(fetcher, credentials, ownerId);
+	expect(isolateGitHubApp(fetcher, { ...credentials }, ownerId)).toBe(first);
+	expect(isolateGitHubApp(fetcher, { ...credentials, GITHUB_APP_PRIVATE_KEY: 'replacement' }, ownerId)).not.toBe(first);
+});
+
+test('unsuspending an installation does not bring back a token cached before the suspension', async () => {
+	const first = await token();
+	world.github.suspend();
+	await world.run(
+		Automation.use(service => service.gateway.token(repository.name, repository.id, { contents: 'read' })).pipe(
+			Effect.flip,
+		),
+	);
+	world.github.unsuspend();
+	const mark = world.network.mark();
+	const renewed = await token();
+	expect(renewed).not.toBe(first);
+	expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(1);
+});
+
+test('tokens without an expiry GitHub states in ISO 8601 are never reused', async () => {
+	for (const expiresAt of [undefined, 'soon', '3600', '2999-01-01']) {
+		world.network.serve('api.github.com', async request => {
+			const response = await world.github.handle(request);
+			if (request.method !== 'POST' || !new URL(request.url).pathname.endsWith('/access_tokens')) return response;
+			const issued: Record<string, unknown> = await response.json();
+			if (expiresAt === undefined) delete issued['expires_at'];
+			else issued['expires_at'] = expiresAt;
+			return Response.json(issued, { status: 201 });
+		});
+		const mark = world.network.mark();
+		expect(await token()).not.toBe(await token());
+		expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(2);
+	}
+});
+
+test('a token lasts at most an hour whatever expiry GitHub states', async () => {
+	world.network.serve('api.github.com', async request => {
+		const response = await world.github.handle(request);
+		if (request.method !== 'POST' || !new URL(request.url).pathname.endsWith('/access_tokens')) return response;
+		const issued: Record<string, unknown> = await response.json();
+		issued['expires_at'] = new Date(Date.now() + 24 * 60 * minutes).toISOString();
+		return Response.json(issued, { status: 201 });
+	});
+	const first = await token();
+	world.advance(56 * minutes);
+	expect(await token()).not.toBe(first);
+});
+
+test('a repository recreated under the same name gets its own token', async () => {
+	const identify = () => world.run(Automation.use(service => service.gateway.token(repository.name, undefined)));
+	const first = await identify();
+	expect(await identify()).not.toBe(first);
+	const old = repository;
+	world.github.repositories.delete(old.name);
+	const recreated = world.github.create(old.name, { 'README.md': '# widget\n' });
+	expect(recreated.id).not.toBe(old.id);
+	const mint = (id: number) =>
+		world.run(Automation.use(service => service.gateway.token(old.name, id, { contents: 'read' })));
+	expect(await mint(recreated.id)).not.toBe(first);
+});
+
+test('the owner login is looked up again after an hour', async () => {
+	const lookup = () => world.run(Automation.use(service => service.gateway.ownerLogin()));
+	const mark = world.network.mark();
+	await lookup();
+	world.advance(59 * minutes);
+	await lookup();
+	expect(calls(mark, 'GET', /^\/app\/installations$/)).toBe(1);
+	world.advance(2 * minutes);
+	await lookup();
+	expect(calls(mark, 'GET', /^\/app\/installations$/)).toBe(2);
+});
+
+test('the installation of the owner is found past the first page', async () => {
+	world.network.serve('api.github.com', request => {
+		const url = new URL(request.url);
+		if (url.pathname !== '/app/installations' || url.searchParams.get('page') !== '1') {
+			return world.github.handle(request);
+		}
+		return Response.json(
+			Array.from({ length: 100 }, (_, index) => ({
+				id: 50_000 + index,
+				account: { id: 90_000 + index, login: `other${index}` },
+			})),
+		);
+	});
+	expect(await world.run(Automation.use(service => service.gateway.ownerLogin()))).toBe(ownerLogin);
 });
