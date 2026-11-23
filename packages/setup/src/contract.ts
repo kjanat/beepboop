@@ -12,8 +12,10 @@ import { versionPrMerge } from '@/domain/setup-terms.ts';
 import { versionFileSchema } from '@/domain/version-files.ts';
 import { actionsRevisionPattern, setupWorkflow } from '@/domain/workflow-setup.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
+import { textSchema as text } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import {
+	looseStruct,
 	matchesPattern,
 	mutableArray,
 	mutableRecord,
@@ -108,3 +110,13 @@ export const setupChoicesSchema = strictStruct(
 	}).fields,
 );
 export type SetupChoices = Decoded<typeof setupChoicesSchema>;
+export const setupPreviewRequest = mutableStruct({ repository: text, choices: Schema.optional(Schema.Unknown) });
+export const setupApplyRequest = mutableStruct({
+	repository: text,
+	choices: Schema.optional(Schema.Unknown),
+	planId: Schema.String,
+	sourceSha: Schema.String,
+	setupHead: Schema.NullOr(Schema.String),
+	takeOver: Schema.optional(Schema.Boolean),
+});
+export const setupApplyResponse = looseStruct({ url: Schema.String });

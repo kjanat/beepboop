@@ -36,6 +36,7 @@ import {
 	publishReportRequest,
 	reportStep,
 } from '@/publication/contract.ts';
+import { setupApplyRequest, setupApplyResponse, setupPreviewRequest } from '@/setup/contract.ts';
 
 export type Method = 'GET' | 'POST';
 export type Auth = 'admin' | 'elevated' | 'workflow' | 'workflow-token';
@@ -206,7 +207,7 @@ export const routes = {
 		path: '/api/repositories/setup/preview',
 		auth: 'admin',
 		idempotent: true,
-		request: mutableStruct({ repository: text, choices: Schema.optional(Schema.Unknown) }),
+		request: setupPreviewRequest,
 		response: Schema.Unknown,
 	}),
 	setupApply: route({
@@ -214,15 +215,8 @@ export const routes = {
 		path: '/api/repositories/setup/apply',
 		auth: 'admin',
 		idempotent: false,
-		request: mutableStruct({
-			repository: text,
-			choices: Schema.optional(Schema.Unknown),
-			planId: Schema.String,
-			sourceSha: Schema.String,
-			setupHead: Schema.NullOr(Schema.String),
-			takeOver: Schema.optional(Schema.Boolean),
-		}),
-		response: looseStruct({ url: Schema.String }),
+		request: setupApplyRequest,
+		response: setupApplyResponse,
 	}),
 	hooksUpdate: route({
 		method: 'POST',
