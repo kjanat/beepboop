@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from 'bun:test';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 import { ReleaseHistory } from '@/release/domain/history.ts';
 
 function execution(id: string, version = '1.0.0') {

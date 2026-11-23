@@ -7,25 +7,6 @@ import { createDistribution, readDistributionFile, readDistributionMode } from '
 import type { DistributionArtifact } from '@/automation/distribution-artifact';
 import { readDistributionArtifact } from '@/automation/distribution-artifact';
 import { observedDistribution } from '@/automation/distribution-observation';
-import {
-	createExecution,
-	dependenciesReady,
-	deriveExecution,
-	expectedRunTitle,
-	mergePublications,
-	publishedAfterFailure,
-	recheckable,
-	rechecked,
-	recheckedPublication,
-	recoverable,
-	runTitle,
-	settle,
-	settleRun,
-	unreported,
-	validatePublicationIdentity,
-	verifiableCancellation,
-} from '@/automation/execution';
-import { mergeArtifacts, resolveInputs } from '@/automation/execution-outputs';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
@@ -39,19 +20,9 @@ import {
 } from '@/automation/preparation-pull-requests';
 import type { PublishBudget } from '@/automation/publish-budget';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
-import { githubFailureReason } from '@/automation/run-labels';
 import type { AutomationBindings } from '@/automation/service';
 import { Automation, applicationLayer, withAutomation } from '@/automation/service';
 import { repositorySnapshot } from '@/automation/snapshot';
-import type {
-	Artifact,
-	AutomationEvent,
-	Execution,
-	PreparationResult,
-	PreparedRelease,
-	ReleaseReference,
-	ReleaseStarted,
-} from '@/automation/types';
 import { unchangedSince } from '@/automation/unchanged-paths';
 import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
 import { coversBinding } from '@/credentials/grant.ts';
@@ -112,12 +83,8 @@ import { approvalShaPattern, sha256DigestPattern } from '@/kernel/schema/ids.ts'
 import { matches, sha } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
-import { identifyExecution } from '@/persistence/codecs/stored';
-import { decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { projectionRules } from '@/persistence/d1/completions';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
-import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import type { Committed } from '@/persistence/journal';
 import { earliest, Journal } from '@/persistence/journal';
 import type { ClaimStep, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
@@ -148,7 +115,39 @@ import {
 	verifyPublication,
 	verifySecondaryPublications,
 } from '@/publication/registries/verify.ts';
+import { projectionRules } from '@/release/adapters/d1/completions.ts';
+import { decodeEventV1, decodeExecutionV1, identifyExecution } from '@/release/domain/execution/codec-v1.ts';
+import {
+	createExecution,
+	dependenciesReady,
+	deriveExecution,
+	expectedRunTitle,
+	mergePublications,
+	publishedAfterFailure,
+	recheckable,
+	rechecked,
+	recheckedPublication,
+	recoverable,
+	runTitle,
+	settle,
+	settleRun,
+	unreported,
+	validatePublicationIdentity,
+	verifiableCancellation,
+} from '@/release/domain/execution/execution.ts';
+import { mergeArtifacts, resolveInputs } from '@/release/domain/execution/outputs.ts';
+import { githubFailureReason } from '@/release/domain/execution/run-labels.ts';
+import type {
+	Artifact,
+	AutomationEvent,
+	Execution,
+	PreparationResult,
+	PreparedRelease,
+	ReleaseReference,
+	ReleaseStarted,
+} from '@/release/domain/execution/types.ts';
 import { ReleaseHistory } from '@/release/domain/history.ts';
+import { executionId, releaseEventId } from '@/release/domain/identity-keys.ts';
 import { preparationBody } from '@/release/domain/managed.ts';
 import type { PackageTagResult, PackageTagRow, Release } from '@/release/domain/package-tags.ts';
 import {

@@ -1,13 +1,13 @@
 import { Clock, Effect, Schema } from 'effect';
-import type { AutomationEvent, SubscriptionDelivery } from '@/automation/types';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { decodeDeliveryV1 } from '@/notifications/codecs.ts';
-import { decodeEventV1 } from '@/persistence/codecs/v1';
 import type { Sql } from '@/persistence/d1/database';
 import { parse } from '@/persistence/d1/database';
 import { documentRow, rowDocument } from '@/persistence/d1/document-row';
+import { decodeEventV1 } from '@/release/domain/execution/codec-v1.ts';
+import type { AutomationEvent, SubscriptionDelivery } from '@/release/domain/execution/types.ts';
 
 export class ReleaseEvents {
 	constructor(private readonly sql: Sql) {}

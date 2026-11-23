@@ -1,8 +1,6 @@
 import { expect, test } from 'bun:test';
 import { jsonFile, publishWorkflow } from '@root/test/support/repositories.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { planReleaseSet } from '@/automation/planning';
-import type { Execution } from '@/automation/types';
 import { discover } from '@/discovery/discover.ts';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
 import type { Package, Snapshot } from '@/domain/inventory.ts';
@@ -20,6 +18,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { planReleaseSet } from '@/release/domain/planning/plan.ts';
 import { compileReleaseSet } from '@/release/domain/release-set.ts';
 
 function npm(

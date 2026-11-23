@@ -1,9 +1,9 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
-import type { Execution } from '@/automation/types';
 import type { RefPlan, RefState } from '@/domain/refs.ts';
 import { gitCommitSchema, gitRefSchema, repositorySchema, workflowRunSchema } from '@/github/resources.ts';
 import { shaSchema } from '@/kernel/schema/result.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 
 const tree = Schema.Struct({
 	truncated: Schema.Boolean,

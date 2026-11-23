@@ -1,6 +1,4 @@
 ---
-import { runFailedNote } from '@/automation/execution';
-import type { Execution } from '@/automation/types.ts';
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Commit from '@/components/Commit.astro';
@@ -9,6 +7,8 @@ import RecoverForm from '@/components/RecoverForm.astro';
 import Time from '@/components/Time.astro';
 import { packageLabel } from '@/domain/package-label';
 import { githubHref } from '@/publication/links.ts';
+import { runFailedNote } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 import { runStateLabel } from '@/server/releases';
 import { runCard } from '@/server/views/runs.ts';
 import { executionTone, publicationTone } from '@/server/views/tone.ts';

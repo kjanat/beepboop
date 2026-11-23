@@ -1,5 +1,5 @@
-import type { Execution } from '@/automation/types';
 import { matchesPublication } from '@/domain/package-identity.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 
 function groupKey(execution: Execution): string {
 	return JSON.stringify([

@@ -3,10 +3,10 @@ import type { Repository } from '@root/test/support/github.ts';
 import { editableConfiguration, publishWorkflow } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { createExecution } from '@/automation/execution';
 import { Automation } from '@/automation/service';
 import { requireReady } from '@/domain/repository';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { createExecution } from '@/release/domain/execution/execution.ts';
 import { ReleaseHistory } from '@/release/domain/history.ts';
 
 let world: World;

@@ -36,7 +36,7 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 import { ledgerCommand } from '@/setup/editing/commands.ts';
 import { setupOptions } from '@/setup/options.ts';
 import { streamSummary } from '@/setup/summary.ts';

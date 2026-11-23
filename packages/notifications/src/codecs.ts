@@ -1,8 +1,7 @@
 import { Schema } from 'effect';
-import type { SubscriptionDelivery } from '@/automation/types';
 import { decodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
-import { identifyExecution } from '@/persistence/codecs/stored';
-import { currentState, executionSchema } from '@/persistence/codecs/v1';
+import { currentState, executionSchema, identifyExecution } from '@/release/domain/execution/codec-v1.ts';
+import type { SubscriptionDelivery } from '@/release/domain/execution/types.ts';
 
 const deliveryFields = {
 	id: Schema.String,

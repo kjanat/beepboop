@@ -21,7 +21,6 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { strip } from 'ansispeck';
 import { Effect, Schema, Struct } from 'effect';
-import { runFailedNote } from '@/automation/execution';
 import type { Client } from '@/cli/client/api';
 import { checkoutRepository } from '@/cli/git-checkout';
 import { app } from '@/cli/main';
@@ -42,6 +41,7 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { runFailedNote } from '@/release/domain/execution/execution.ts';
 
 let world: World, directory: string, client: Client, token: string;
 const requests: { path: string; body: unknown }[] = [];

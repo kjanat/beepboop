@@ -3,7 +3,6 @@ import type { CLISessionRow } from '@/auth/adapters/d1/cli-sessions.ts';
 import type { Automation, AutomationBindings, AutomationService } from '@/automation/service.ts';
 import { withAutomation } from '@/automation/service.ts';
 import type { UnreadableExecution } from '@/automation/store.ts';
-import type { Execution } from '@/automation/types.ts';
 import type { ActiveCredential } from '@/credentials/adapters/d1/credentials.ts';
 import type { CredentialDeliveryRow } from '@/credentials/adapters/d1/secret-deliveries.ts';
 import { grantRow } from '@/credentials/grant.ts';
@@ -15,6 +14,7 @@ import { readableValues } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { packageWatches } from '@/notifications/package-watch.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 import type { Section } from '@/server/sections.ts';
 
 export interface LoaderContext {

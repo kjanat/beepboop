@@ -112,80 +112,16 @@
 		"specifier": "@/contract/views"
 	},
 	{
-		"file": "packages/notifications/src/adapters/d1/events.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/notifications/src/codecs.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/notifications/src/event-delivery.ts",
-		"specifier": "@/automation/execution"
-	},
-	{
-		"file": "packages/notifications/src/event-delivery.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/notifications/src/package-watch.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/notifications/src/subscriptions.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/persistence/src/codecs/stored.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/persistence/src/codecs/v1.ts",
-		"specifier": "@/automation/execution"
-	},
-	{
-		"file": "packages/persistence/src/codecs/v1.ts",
-		"specifier": "@/automation/execution-outputs"
-	},
-	{
-		"file": "packages/persistence/src/codecs/v1.ts",
-		"specifier": "@/automation/planning"
-	},
-	{
-		"file": "packages/persistence/src/codecs/v1.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/persistence/src/codecs/v1.ts",
-		"specifier": "@/contract/views"
-	},
-	{
 		"file": "packages/persistence/src/d1/changes.ts",
 		"specifier": "@/contract/changes"
-	},
-	{
-		"file": "packages/persistence/src/d1/completions.ts",
-		"specifier": "@/automation/types"
 	},
 	{
 		"file": "packages/persistence/src/d1/projection.ts",
 		"specifier": "@/contract/changes"
 	},
 	{
-		"file": "packages/persistence/src/identity-keys.ts",
-		"specifier": "@/automation/planning"
-	},
-	{
-		"file": "packages/persistence/src/identity-keys.ts",
-		"specifier": "@/automation/types"
-	},
-	{
 		"file": "packages/persistence/src/journal.ts",
 		"specifier": "@/contract/changes"
-	},
-	{
-		"file": "packages/publication/src/ledger-plan.ts",
-		"specifier": "@/automation/types"
 	},
 	{
 		"file": "packages/publication/src/winget/service.ts",
@@ -196,52 +132,16 @@
 		"specifier": "@/automation/snapshot"
 	},
 	{
-		"file": "packages/release/src/domain/capability.ts",
-		"specifier": "@/automation/types"
+		"file": "packages/release/src/domain/execution/codec-v1.ts",
+		"specifier": "@/contract/views"
 	},
 	{
-		"file": "packages/release/src/domain/execution-order.ts",
-		"specifier": "@/automation/types.ts"
-	},
-	{
-		"file": "packages/release/src/domain/history.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/release/src/domain/managed.ts",
-		"specifier": "@/automation/execution"
-	},
-	{
-		"file": "packages/release/src/domain/managed.ts",
-		"specifier": "@/automation/planning"
-	},
-	{
-		"file": "packages/release/src/domain/managed.ts",
-		"specifier": "@/automation/types"
+		"file": "packages/release/src/domain/execution/types.ts",
+		"specifier": "@/contract/views"
 	},
 	{
 		"file": "packages/release/src/domain/package-tags.ts",
 		"specifier": "@/contract/views"
-	},
-	{
-		"file": "packages/release/src/domain/planning/editors.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/release/src/domain/planning/managers.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/release/src/domain/release-set.ts",
-		"specifier": "@/automation/execution"
-	},
-	{
-		"file": "packages/release/src/domain/release-set.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/release/src/domain/version.ts",
-		"specifier": "@/automation/types"
 	},
 	{
 		"file": "packages/setup/src/server/maintenance.ts",

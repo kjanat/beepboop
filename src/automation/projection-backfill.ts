@@ -1,8 +1,8 @@
 import { Effect } from 'effect';
 import { Store } from '@/automation/store';
-import { CompletionStore } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { sql } from '@/persistence/d1/database';
+import { CompletionStore } from '@/release/adapters/d1/completions.ts';
 
 export class ProjectionBackfill {
 	constructor(private readonly db: SqlDatabase | Sql) {}

@@ -3,11 +3,11 @@ import { call, cliTransport } from '@root/test/support/client.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import type { AutomationEvent } from '@/automation/types';
 import { routes } from '@/contract/routes';
 import { Notifications } from '@/notifications/delivery.ts';
 import { versionChanged } from '@/notifications/notification.ts';
 import { addWatch, packageWatches, pollPackages } from '@/notifications/package-watch.ts';
+import type { AutomationEvent } from '@/release/domain/execution/types.ts';
 
 let world: World;
 eachWorld(created => {

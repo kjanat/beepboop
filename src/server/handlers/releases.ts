@@ -1,10 +1,7 @@
 import { Effect } from 'effect';
-import { createExecution } from '@/automation/execution';
-import { planReleaseSet } from '@/automation/planning';
 import { pullRequest } from '@/automation/preparation-pull-requests';
 import type { AutomationService } from '@/automation/service';
 import { repositorySnapshot } from '@/automation/snapshot';
-import type { Execution, ReleasePlan, ReleaseStarted, Stream } from '@/automation/types';
 import { routes } from '@/contract/routes';
 import { planHookUpdates } from '@/discovery/managers/precommit.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
@@ -18,11 +15,14 @@ import { latestTag, tagPrefix, versionsInFiles } from '@/domain/version-tags.ts'
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';
-import { planIdentity } from '@/persistence/identity-keys';
 import { capabilitySentence, releasable, releaseCapability, startRefusal } from '@/release/domain/capability.ts';
+import { createExecution } from '@/release/domain/execution/execution.ts';
+import type { Execution, ReleasePlan, ReleaseStarted, Stream } from '@/release/domain/execution/types.ts';
+import { planIdentity } from '@/release/domain/identity-keys.ts';
 import { createReleasePreparation } from '@/release/domain/managed.ts';
 import { planVersionFiles } from '@/release/domain/planning/editors.ts';
 import { planRelease, selectedReleasePackages } from '@/release/domain/planning/managers.ts';
+import { planReleaseSet } from '@/release/domain/planning/plan.ts';
 import { conflictMessage } from '@/release/domain/refs.ts';
 import { resolvePackageVersion } from '@/release/domain/version.ts';
 import type { AdminContext } from '@/server/handlers/kit';

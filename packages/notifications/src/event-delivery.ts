@@ -1,6 +1,4 @@
 import { Effect } from 'effect';
-import { createExecution } from '@/automation/execution';
-import type { AutomationEvent, Execution, SubscriptionDelivery } from '@/automation/types';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
@@ -8,7 +6,9 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { ReleaseEvents } from '@/notifications/adapters/d1/events.ts';
 import { matchesSubscription } from '@/notifications/subscriptions.ts';
-import { executionId } from '@/persistence/identity-keys';
+import { createExecution } from '@/release/domain/execution/execution.ts';
+import type { AutomationEvent, Execution, SubscriptionDelivery } from '@/release/domain/execution/types.ts';
+import { executionId } from '@/release/domain/identity-keys.ts';
 
 export interface EventDelivery {
 	readonly events: ReleaseEvents;

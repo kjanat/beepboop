@@ -1,9 +1,9 @@
 import type { Api, Reply } from '@root/test/support/http.ts';
 import { field, text } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
-import type { Execution } from '@/automation/types';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 
 export interface ReleaseRequest {
 	repositoryId: number;

@@ -4,12 +4,12 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { Automation } from '@/automation/service';
-import type { AutomationEvent, Execution } from '@/automation/types';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { ReleaseEvents } from '@/notifications/adapters/d1/events.ts';
 import type { EventDelivery } from '@/notifications/event-delivery.ts';
 import { deliverEvent, deliverPending } from '@/notifications/event-delivery.ts';
 import { sql } from '@/persistence/d1/database';
+import type { AutomationEvent, Execution } from '@/release/domain/execution/types.ts';
 
 let world: World;
 eachWorld(created => {

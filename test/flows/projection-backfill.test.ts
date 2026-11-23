@@ -3,9 +3,9 @@ import { TestD1 } from '@root/test/support/d1';
 import { Effect } from 'effect';
 import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Store } from '@/automation/store';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { projectionRules } from '@/persistence/d1/completions';
 import { ProjectionStore } from '@/persistence/d1/projection';
+import { projectionRules } from '@/release/adapters/d1/completions.ts';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 
 function execution(id: string, verifying = false) {
 	return {

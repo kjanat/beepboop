@@ -1,5 +1,4 @@
 import { Effect } from 'effect';
-import type { ReleasePlan } from '@/automation/types';
 import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { isLockfile } from '@/domain/catalog.ts';
 import type { Edit, Snapshot } from '@/domain/inventory.ts';
@@ -7,6 +6,7 @@ import { semver } from '@/domain/semver.ts';
 import type { VersionFile } from '@/domain/version-files.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { ReleasePlan } from '@/release/domain/execution/types.ts';
 
 export function fileEdits(
 	original: Readonly<Record<string, string>>,

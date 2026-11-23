@@ -1,9 +1,9 @@
 import { Effect } from 'effect';
-import type { Artifact, Execution } from '@/automation/types';
 import type { InputDeclaration, OutputDeclaration, Platform } from '@/domain/outputs.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { sha256DigestPattern } from '@/kernel/schema/ids.ts';
+import type { Artifact, Execution } from '@/release/domain/execution/types.ts';
 
 export interface ResolvedInput extends InputDeclaration {
 	executionId: string;

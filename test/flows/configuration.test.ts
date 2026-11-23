@@ -39,7 +39,7 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
-import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
+import { executionId, planIdentity, releaseEventId } from '@/release/domain/identity-keys.ts';
 import { assertCurrent, schemaPath } from '@/tooling/schema/render';
 
 let world: World;

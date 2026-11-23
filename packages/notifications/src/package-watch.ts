@@ -1,5 +1,4 @@
 import { Clock, Effect } from 'effect';
-import type { AutomationEvent } from '@/automation/types';
 import type { WatchedRegistry } from '@/domain/catalog.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { recover } from '@/kernel/errors/classify.ts';
@@ -17,6 +16,7 @@ import { jsrLatest } from '@/publication/registries/jsr.ts';
 import { npmLatest } from '@/publication/registries/npm.ts';
 import type { LookupOutcome } from '@/publication/registries/outcome.ts';
 import { VerificationOutcome } from '@/publication/registries/outcome.ts';
+import type { AutomationEvent } from '@/release/domain/execution/types.ts';
 
 export interface PackageWatch extends WatchedPackage {
 	manual: boolean;
