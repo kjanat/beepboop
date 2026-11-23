@@ -1305,3 +1305,67 @@ test.each(
 	const forced = await api('/api/executions/approve', { id: promotion?.id, sourceSha: raised.sha, force: true });
 	expect([forced.status, field(forced.body, 'state'), field(forced.body, 'reason')]).toEqual([200, 'ready', undefined]);
 }, 60_000);
+
+test.each([
+	['succeeds once the registry lists the unreported package', true, 'succeeded', undefined],
+	[
+		'stays blocked and names the package the run left unreported',
+		false,
+		'blocked',
+		'The workflow run reported no outcome for pkg:npm/gadget.',
+	],
+])('a promotion whose run reports one of two required packages %s', async (_case, listed, state, reason) => {
+	const repository = widget(world.github, { configured: false });
+	world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['npm', 'workflow'],
+			streams: {
+				main: {
+					packages: ['pkg:npm/widget', 'pkg:npm/gadget'],
+					required: ['pkg:npm/widget', 'pkg:npm/gadget'],
+					prepare: { strategy: 'managed' },
+					promote: {
+						approval: 'push',
+						workflow: { file: 'publish.yml', publications: ['pkg:npm/widget', 'pkg:npm/gadget'] },
+					},
+				},
+			},
+		}),
+		'packages/gadget/package.json': manifest('gadget', '1.0.0'),
+		'packages/gadget/README.md': '# gadget\n',
+		'packages/gadget/LICENSE': licenseText,
+	}, 'Release the gadget with the widget');
+	passChecks(repository, world.github.head(repository));
+	world.npm.publish('widget', '1.0.0');
+	world.npm.publish('gadget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const raised = world.github.push(repository, {
+		'package.json': manifest('widget', '1.1.0'),
+		'packages/gadget/package.json': manifest('gadget', '1.1.0'),
+	}, 'Release 1.1.0');
+	passChecks(repository, raised.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const [promotion] = await promotions(api);
+	if (!promotion) throw new Error('Expected a promotion');
+	const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === promotion.id);
+	if (!run) throw new Error('Expected a dispatched run');
+	run.status = 'in_progress';
+	const identity = runIdentity(repository, run, 'publish.yml');
+	await begin(world, identity, promotion.id, promotion.stream, 'promote');
+	world.npm.publish('widget', '1.1.0');
+	if (listed) world.npm.publish('gadget', '1.1.0');
+	await runAction(world, 'report', identity, {
+		EXECUTION_ID: promotion.id,
+		PUBLICATIONS: JSON.stringify([
+			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome: 'succeeded' },
+		]),
+	});
+	run.status = 'completed';
+	run.conclusion = 'success';
+	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+	await world.wait(2_000);
+	const [settled] = await promotions(api);
+	expect([settled?.state, settled?.reason]).toEqual([state, reason]);
+}, 60_000);

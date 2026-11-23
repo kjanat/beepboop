@@ -168,6 +168,9 @@ function requiredIds(execution: Execution): readonly string[] {
 			? (execution.configuration.streams[execution.stream]?.required ?? [])
 			: []);
 }
+export function unreported(execution: Execution): string[] {
+	return requiredIds(execution).filter(id => !execution.publications.some(p => matchesPublication(id, p)));
+}
 function requiredPublications(execution: Execution): Publication[] {
 	const required = requiredIds(execution);
 	return execution.publications.filter((p) => p.required || required.some(id => matchesPublication(id, p)));
@@ -185,9 +188,7 @@ export function completion(execution: Execution, runSucceeded: boolean): Executi
 		execution.workflow?.refs
 		&& !execution.publications.some(p => p.id === `refs:${execution.operation}` && p.outcome === 'succeeded')
 	) return 'blocked';
-	if (requiredIds(execution).some((id) => !execution.publications.some((p) => matchesPublication(id, p)))) {
-		return 'blocked';
-	}
+	if (unreported(execution).length) return 'blocked';
 	const publications = requiredPublications(execution);
 	if (publications.some((p) => p.outcome === 'failed')) return 'failed';
 	if (publications.some((p) => p.outcome === 'uncertain')) return 'uncertain';
@@ -215,7 +216,10 @@ export function settleRun(execution: Execution, result: GitHubRunResult): Execut
 	}
 	const succeeded = result.observation.kind === 'succeeded';
 	const settled = settle(next, succeeded);
-	if (settled.state === 'succeeded') {
+	const missing = unreported(settled);
+	if (settled.state === 'blocked' && succeeded && missing.length) {
+		settled.reason = `The workflow run reported no outcome for ${missing.join(', ')}.`;
+	} else if (settled.state === 'succeeded') {
 		if (succeeded) delete settled.reason;
 		else if (result.observation.kind !== 'failed') {
 			settled.reason = `${githubRunLabel(result.observation)} after every required publication succeeded.`;
