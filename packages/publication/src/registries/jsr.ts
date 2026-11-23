@@ -6,11 +6,18 @@ import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
 import { responseBytes, responseJson, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
+import type { LookupOutcome } from '@/publication/registries/outcome.ts';
 import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';
-import { latestVersion, publicationResult, unconfirmed, unpublished } from '@/publication/registries/verification.ts';
+import {
+	checkOutcomes,
+	latestVersion,
+	unconfirmed,
+	unpublished,
+	verificationFailure,
+} from '@/publication/registries/verification.ts';
 
-export function jsrLatest(name: string, request: Fetcher): Effect.Effect<VerificationOutcome> {
+export function jsrLatest(name: string, request: Fetcher): Effect.Effect<LookupOutcome> {
 	if (!jsrPackageNamePattern.test(name)) {
 		return Effect.succeed(
 			VerificationOutcome.LookupFailed({ url: 'https://jsr.io', reason: 'Invalid JSR package name' }),
@@ -36,7 +43,7 @@ export const jsrManager: Adapter<'jsr'> = {
 	latest: (pkg, request) => jsrLatest(pkg.name, request),
 	verifyPublication(publication, request) {
 		if (!jsrPackageNamePattern.test(publication.name) || !/^[0-9A-Za-z.+-]+$/.test(publication.version)) {
-			return Effect.succeed({ ...publication, outcome: 'failed' });
+			return Effect.succeed(VerificationOutcome.Rejected({}));
 		}
 		const url = `https://jsr.io/${publication.name}/${publication.version}_meta.json`;
 		const options = {
@@ -44,7 +51,7 @@ export const jsrManager: Adapter<'jsr'> = {
 			signal: AbortSignal.timeout(15_000),
 			headers: { Accept: 'application/json' },
 		};
-		const result = publicationResult(publication, url);
+		const result = checkOutcomes(publication, url);
 		return Effect.gen(function*() {
 			const metadata = yield* scopedResponse(
 				fromPromise(signal =>
@@ -54,18 +61,18 @@ export const jsrManager: Adapter<'jsr'> = {
 					})
 				),
 			);
-			const absent = unconfirmed(metadata);
-			if (absent) return result(absent);
+			const absent = unconfirmed(metadata, url);
+			if (absent) return absent;
 			const body = object(yield* responseJson(metadata));
 			const [scope, name] = publication.name.slice(1).split('/');
-			if (body.scope !== scope || body.name !== name) return result('failed');
-			if (!Object.hasOwn(object(body.versions), publication.version)) return result('pending');
-			if (object(object(body.versions)[publication.version]).yanked === true) return result('failed');
+			if (body.scope !== scope || body.name !== name) return result.rejected();
+			if (!Object.hasOwn(object(body.versions), publication.version)) return result.pending();
+			if (object(object(body.versions)[publication.version]).yanked === true) return result.rejected();
 			const response = yield* scopedResponse(
 				fromPromise(signal => request(url, { ...options, signal: AbortSignal.any([signal, options.signal]) })),
 			);
-			const missing = unconfirmed(response);
-			if (missing) return result(missing);
+			const missing = unconfirmed(response, url);
+			if (missing) return missing;
 			const bytes = yield* responseBytes(response);
 			const version = object(yield* fromJson(new TextDecoder().decode(bytes)));
 			const files = Object.values(object(version.manifest));
@@ -73,10 +80,10 @@ export const jsrManager: Adapter<'jsr'> = {
 				!files.length || !Object.keys(object(version.exports)).length
 				|| files.some(file => !/^sha256-[a-f0-9]{64}$/.test(String(object(file).checksum)))
 			) {
-				return result('failed');
+				return result.rejected();
 			}
 			const digest = `sha256-${yield* fromPromise(() => sha256Hex(bytes.buffer))}`;
-			return result(publication.digest && publication.digest !== digest ? 'failed' : 'succeeded', digest);
-		}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
+			return publication.digest && publication.digest !== digest ? result.rejected() : result.published(digest);
+		}).pipe(Effect.scoped, Effect.orElseSucceed(() => result.failed(verificationFailure)));
 	},
 };

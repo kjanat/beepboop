@@ -16,25 +16,26 @@ import { ioConcurrency } from '@/kernel/http/retry.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { checkChannel } from '@/publication/registries/channels.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
-import { publicationStatus, VerificationOutcome } from '@/publication/registries/outcome.ts';
+import type { CheckOutcome } from '@/publication/registries/outcome.ts';
+import { LookupOutcome, publicationStatus, VerificationOutcome } from '@/publication/registries/outcome.ts';
 
 export interface Manager extends Discoverer {
 	verifyPublication?(
 		publication: Publication,
 		request: Fetcher,
 		context?: VerificationContext,
-	): Effect.Effect<Publication>;
-	latest?(pkg: Package, request: Fetcher, context?: VerificationContext): Effect.Effect<VerificationOutcome>;
+	): Effect.Effect<CheckOutcome>;
+	latest?(pkg: Package, request: Fetcher, context?: VerificationContext): Effect.Effect<LookupOutcome>;
 	secondaryLatest?: Partial<Record<ManagerDestinationId, RegistryLookup>>;
 	secondaryPublication?: Partial<Record<ManagerDestinationId, PublicationCheck>>;
 }
-export type PublicationCheck = (publication: Publication, request: Fetcher) => Effect.Effect<Publication>;
+export type PublicationCheck = (publication: Publication, request: Fetcher) => Effect.Effect<CheckOutcome>;
 export type Adapter<M extends ManagerName> = Manager & { readonly name: M };
 export type RegistryLookup = (
 	pkg: Package,
 	request: Fetcher,
 	context?: VerificationContext,
-) => Effect.Effect<VerificationOutcome>;
+) => Effect.Effect<LookupOutcome>;
 export type Adapters = { readonly [M in ManagerName]: Adapter<M> };
 export class ManagerRegistry extends DiscoveryRegistry {
 	private readonly managers: ReadonlyMap<ManagerName, Manager>;
@@ -46,13 +47,13 @@ export class ManagerRegistry extends DiscoveryRegistry {
 		publication: Publication,
 		request: Fetcher,
 		context?: VerificationContext,
-	): Effect.Effect<Publication> {
+	): Effect.Effect<CheckOutcome> {
 		const manager = this.managers.get(publication.manager);
 		return manager?.verifyPublication
 			? manager.verifyPublication(publication, request, context)
-			: Effect.succeed({ ...publication, outcome: 'uncertain' });
+			: Effect.succeed(VerificationOutcome.Unverifiable());
 	}
-	verifySecondaryPublications(publication: Publication, request: Fetcher): Effect.Effect<Publication[]> {
+	verifySecondaryPublications(publication: Publication, request: Fetcher): Effect.Effect<CheckOutcome[]> {
 		const checks = Object.values(this.managers.get(publication.manager)?.secondaryPublication ?? {})
 			.filter(check => check !== undefined);
 		return Effect.forEach(checks, check => check(publication, request), { concurrency: ioConcurrency });
@@ -154,8 +155,8 @@ export class ManagerRegistry extends DiscoveryRegistry {
 function unchecked<T extends object>(target: T): T & { state: 'unchecked' } {
 	return { ...target, state: 'unchecked' };
 }
-function registryOutcome(destination: ManagerDestinationId, result: VerificationOutcome): RegistryOutcome {
-	return VerificationOutcome.$match(result, {
+function registryOutcome(destination: ManagerDestinationId, result: LookupOutcome): RegistryOutcome {
+	return LookupOutcome.$match(result, {
 		Published: ({ version }): RegistryOutcome => ({ destination, state: 'published', version }),
 		Missing: (): RegistryOutcome => ({ destination, state: 'missing' }),
 		LookupFailed: ({ reason }): RegistryOutcome => ({ destination, state: 'failed', reason }),

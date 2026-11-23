@@ -7,6 +7,7 @@ import { platformFetch } from '@/kernel/http/fetcher.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { managerRegistry } from '@/publication/registries/builtins.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
+import type { CheckOutcome } from '@/publication/registries/outcome.ts';
 
 export function canVerifyPublication(manager: ManagerName): boolean {
 	return managerSpec(manager).verifiable;
@@ -15,13 +16,13 @@ export function verifyPublication(
 	publication: Publication,
 	request: Fetcher = platformFetch,
 	context?: VerificationContext,
-): Effect.Effect<Publication> {
+): Effect.Effect<CheckOutcome> {
 	return managerRegistry.verifyPublication(publication, request, context);
 }
 export function verifySecondaryPublications(
 	publication: Publication,
 	request: Fetcher = platformFetch,
-): Effect.Effect<Publication[]> {
+): Effect.Effect<CheckOutcome[]> {
 	return managerRegistry.verifySecondaryPublications(publication, request);
 }
 export function resolvePublished(

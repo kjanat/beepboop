@@ -3,7 +3,7 @@ import type { Channel, ChannelOutcome } from '@/domain/destinations.ts';
 import { tracksBranch } from '@/domain/destinations.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
-import type { VerificationOutcome } from '@/publication/registries/outcome.ts';
+import type { LookupOutcome } from '@/publication/registries/outcome.ts';
 import { LookupFailure, latestText, latestVersion, unpublished } from '@/publication/registries/verification.ts';
 
 const aurInfo = mutableStruct({
@@ -37,7 +37,7 @@ function formulaVersion(source: string): unknown {
 	return (url && /\/v?(\d+\.\d+\.\d+)(?:\/|\.tar|\.tgz|\.zip)/.exec(url)?.[1])
 		?? new LookupFailure('no literal version or versioned url');
 }
-function latest(channel: Channel, request: Fetcher): Effect.Effect<VerificationOutcome> {
+function latest(channel: Channel, request: Fetcher): Effect.Effect<LookupOutcome> {
 	if (channel.destination === 'aur') {
 		return latestVersion(
 			request,

@@ -142,6 +142,7 @@ import {
 import { dependencyBlocker, planLedger, publicationDeadlock } from '@/publication/ledger-plan.ts';
 import type { Publication } from '@/publication/publication.ts';
 import type { PublishKind } from '@/publication/publish-pace.ts';
+import { verifiedPublication } from '@/publication/registries/verification.ts';
 import {
 	canVerifyPublication,
 	verifyPublication,
@@ -726,7 +727,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					let published = false;
 					const unanswered: string[] = [];
 					for (const { reference, publication } of row.probes) {
-						const verified = yield* verifyPublication(publication, transport, context);
+						const verified = verifiedPublication(
+							publication,
+							yield* verifyPublication(publication, transport, context),
+						);
 						if (verified.outcome === 'succeeded') {
 							published = true;
 							break;
@@ -1871,7 +1875,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 									publication,
 									transport,
 									gateway.verification(execution.repository, execution.repositoryId),
-								).pipe(Effect.map(checked => recheckedPublication(publication, checked)))
+								).pipe(
+									Effect.map(checked => recheckedPublication(publication, verifiedPublication(publication, checked))),
+								)
 								: Effect.succeed(publication),
 					);
 					const next = rechecked({ ...execution, publications });
@@ -2307,22 +2313,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const service = yield* Automation;
 			return yield* Effect.fromResult(parseReleaseIdentity(record.purl)).pipe(
 				Effect.mapError(toDomainError),
-				Effect.flatMap(identity =>
-					verifyPublication(
-						{
-							identity,
-							id: record.id,
-							manager: record.manager,
-							name: record.name,
-							version: record.version,
-							required: record.required,
-							...(record.digest ? { digest: record.digest } : {}),
-							outcome: 'succeeded',
-						},
+				Effect.flatMap(identity => {
+					const publication: Publication = {
+						identity,
+						id: record.id,
+						manager: record.manager,
+						name: record.name,
+						version: record.version,
+						required: record.required,
+						...(record.digest ? { digest: record.digest } : {}),
+						outcome: 'succeeded',
+					};
+					return verifyPublication(
+						publication,
 						service.dependencies.transport,
 						service.gateway.verification(execution.repository, execution.repositoryId),
-					)
-				),
+					).pipe(Effect.map(outcome => verifiedPublication(publication, outcome)));
+				}),
 			);
 		});
 	}
@@ -3007,10 +3014,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					Effect.all([
 						verifyPublication(publication, transport, context),
 						verifySecondaryPublications(publication, transport),
-					]).pipe(Effect.map(([primary, secondary]) => [primary, ...secondary].map(verified => verified.outcome))),
+					]).pipe(Effect.map(([primary, secondary]) => [primary, ...secondary])),
 				{ concurrency: 8 },
 			);
-			return outcomes.flat().every(outcome => outcome === 'pending') ? owned : [];
+			return outcomes.flat().every(outcome => outcome._tag === 'Pending') ? owned : [];
 		});
 	}
 	private versionTagged(execution: Execution): CoordinatorEffect<boolean, DomainError> {
@@ -3900,7 +3907,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						};
 						const context = (yield* this.gateway).verification(repository.name, repository.id);
 						const transport = (yield* Automation).dependencies.transport;
-						execution.publications.push(yield* verifyPublication(publication, transport, context));
+						execution.publications.push(
+							verifiedPublication(publication, yield* verifyPublication(publication, transport, context)),
+						);
 					}
 					const releaseId = `github-release:${repository.name}`;
 					if (tagged && binding.publications?.some(id => selectorKey(id) === selectorKey(releaseId))) {
@@ -4163,7 +4172,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							const transport = (yield* Automation).dependencies.transport;
 							execution.publications[i] = recheckedPublication(
 								publication,
-								yield* verifyPublication(publication, transport, context),
+								verifiedPublication(publication, yield* verifyPublication(publication, transport, context)),
 							);
 						}
 					}
@@ -4173,7 +4182,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						const context = (yield* this.gateway).verification(execution.repository, execution.repositoryId);
 						const transport = (yield* Automation).dependencies.transport;
 						const checked = yield* verifyPublication(probe, transport, context);
-						if (checked.outcome === 'succeeded') execution.publications.push(checked);
+						if (checked._tag === 'Published') execution.publications.push(verifiedPublication(probe, checked));
 					}
 					const limited = execution.publications.flatMap(publication =>
 						publication.outcome === 'rate-limited' ? [Date.parse(publication.retryAfter)] : []
@@ -4383,7 +4392,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.publications,
 					publication =>
 						recheckable(publication)
-							? verifyPublication(publication, transport, context)
+							? verifyPublication(publication, transport, context).pipe(
+								Effect.map(outcome => verifiedPublication(publication, outcome)),
+							)
 							: Effect.succeed(publication),
 					{ concurrency: 'unbounded' },
 				);

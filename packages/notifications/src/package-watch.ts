@@ -15,6 +15,7 @@ import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { sql } from '@/persistence/d1/database';
 import { jsrLatest } from '@/publication/registries/jsr.ts';
 import { npmLatest } from '@/publication/registries/npm.ts';
+import type { LookupOutcome } from '@/publication/registries/outcome.ts';
 import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 
 export interface PackageWatch extends WatchedPackage {
@@ -26,7 +27,7 @@ export interface PackageWatch extends WatchedPackage {
 	awaitingRelease: boolean;
 }
 
-const lookups: Record<WatchedRegistry, (name: string, request: Fetcher) => Effect.Effect<VerificationOutcome>> = {
+const lookups: Record<WatchedRegistry, (name: string, request: Fetcher) => Effect.Effect<LookupOutcome>> = {
 	npm: npmLatest,
 	jsr: jsrLatest,
 };

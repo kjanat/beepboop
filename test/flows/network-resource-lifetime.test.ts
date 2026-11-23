@@ -13,6 +13,7 @@ import type { Publication } from '@/publication/publication.ts';
 import { goManager } from '@/publication/registries/go.ts';
 import { jsrManager } from '@/publication/registries/jsr.ts';
 import { npmLatest } from '@/publication/registries/npm.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import { pypiManager } from '@/publication/registries/pypi.ts';
 import type { Manager } from '@/publication/registries/registry.ts';
 import { registryLayer } from '@/publication/registries/registry.ts';
@@ -75,7 +76,7 @@ test('channel verification releases rejected response after consuming version me
 		},
 		'https://registry.test/widget/tags',
 	));
-	expect(result.outcome).toBe('pending');
+	expect(result).toEqual(VerificationOutcome.Pending({ url: 'https://registry.test/widget/1.0.0' }));
 	expect(calls).toBe(2);
 	expect(cancelled).toBe(true);
 });

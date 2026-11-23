@@ -3,30 +3,31 @@ import { goreleaserDiscoverer } from '@/discovery/managers/goreleaser.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { Publication } from '@/publication/publication.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
+import type { CheckOutcome, LookupOutcome } from '@/publication/registries/outcome.ts';
 import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';
-import { publicationResult } from '@/publication/registries/verification.ts';
+import { checkOutcomes, verificationFailure } from '@/publication/registries/verification.ts';
 
 function verifyRelease(
 	publication: Publication,
 	context: VerificationContext | undefined,
-): Effect.Effect<Publication> {
-	if (!context) return Effect.succeed({ ...publication, outcome: 'uncertain' });
+): Effect.Effect<CheckOutcome> {
+	if (!context) return Effect.succeed(VerificationOutcome.Unverifiable());
 	const tag = `v${publication.version.replace(/^v/, '')}`;
 	const url = `https://github.com/${context.repository}/releases/tag/${encodeURIComponent(tag)}`;
-	const result = publicationResult(publication, url);
+	const result = checkOutcomes(publication, url);
 	return context.github(`/repos/${context.repository}/releases/tags/${encodeURIComponent(tag)}`).pipe(
 		Effect.map(found => {
-			if (found === null) return result('pending');
+			if (found === null) return result.pending();
 			const release = object(found);
-			if (release.tag_name !== tag) return result('failed');
+			if (release.tag_name !== tag) return result.rejected();
 			const assets = Array.isArray(release.assets) ? release.assets.map(object) : [];
 			if (release.draft !== false || !assets.length || assets.some(asset => asset.state !== 'uploaded')) {
-				return result('pending');
+				return result.pending();
 			}
-			return result('succeeded');
+			return result.published();
 		}),
-		Effect.orElseSucceed(() => result('uncertain')),
+		Effect.orElseSucceed(() => result.failed(verificationFailure)),
 	);
 }
 
@@ -41,7 +42,7 @@ export const goreleaserManager: Adapter<'goreleaser'> = {
 		}
 		const url = `https://github.com/${context.repository}/releases/latest`;
 		return context.github(`/repos/${context.repository}/releases/latest`).pipe(
-			Effect.map((found): VerificationOutcome => {
+			Effect.map((found): LookupOutcome => {
 				if (found === null) return VerificationOutcome.Missing({ url });
 				const tag = object(found).tag_name;
 				return typeof tag === 'string' && /^v?\d+\.\d+\.\d+/.test(tag)
