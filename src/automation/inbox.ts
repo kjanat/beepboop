@@ -1,43 +1,7 @@
 import { Schema } from 'effect';
-import { onboardingBranch, updateBranch } from '@/automation/setup-changes';
+import { setupPullEdit, setupPullMerge } from '@/github/webhooks.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
-import { matchesPattern, mutableStruct } from '@/kernel/schema/structs.ts';
-
-export const setupPullEdit = mutableStruct({
-	action: Schema.Literal('edited'),
-	changes: mutableStruct({ body: mutableStruct({ from: Schema.NullOr(Schema.String) }) }),
-	sender: mutableStruct({ id: Schema.Finite }),
-	pull_request: mutableStruct({
-		number: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-		state: Schema.Literal('open'),
-		body: Schema.NullOr(Schema.String),
-		user: mutableStruct({ id: Schema.Finite }),
-		head: mutableStruct({
-			ref: Schema.Literals([onboardingBranch, updateBranch]),
-			sha: Schema.String.check(matchesPattern(/^[a-f0-9]{40}$/)),
-			repo: mutableStruct({ id: Schema.Finite }),
-		}),
-		base: mutableStruct({ repo: mutableStruct({ id: Schema.Finite }) }),
-	}),
-});
-export type SetupPullEdit = Decoded<typeof setupPullEdit>;
-
-export const setupPullMerge = mutableStruct({
-	action: Schema.Literal('closed'),
-	pull_request: mutableStruct({
-		number: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-		merged: Schema.Literal(true),
-		merge_commit_sha: Schema.String.check(matchesPattern(/^[a-f0-9]{40}$/)),
-		user: mutableStruct({ id: Schema.Finite }),
-		merged_by: mutableStruct({ id: Schema.Finite, login: Schema.String }),
-		head: mutableStruct({
-			ref: Schema.Literals([onboardingBranch, updateBranch]),
-			repo: mutableStruct({ id: Schema.Finite }),
-		}),
-		base: mutableStruct({ repo: mutableStruct({ id: Schema.Finite }) }),
-	}),
-});
-export type SetupPullMerge = Decoded<typeof setupPullMerge>;
+import { mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const inboxEvent = Schema.Union([
 	mutableStruct({ kind: Schema.Literal('push'), ref: Schema.String }),

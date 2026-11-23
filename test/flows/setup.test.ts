@@ -16,14 +16,7 @@ import { parse, parseDocument } from 'yaml';
 import { discover } from '@/automation/managers';
 import { bodyChoices, releaseAfterMerge, setupBody, setupOptions } from '@/automation/setup';
 import { pinned } from '@/automation/setup-actions';
-import {
-	behaviourChanges,
-	changeDetails,
-	describeEdits,
-	onboardingBranch,
-	setupTitle,
-	updateBranch,
-} from '@/automation/setup-changes';
+import { behaviourChanges, changeDetails, describeEdits, setupTitle } from '@/automation/setup-changes';
 import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/automation/setup-defaults';
 import { rebuildingStatus } from '@/automation/setup-maintenance';
 import { parseSetupPlan } from '@/automation/setup-plan';
@@ -32,6 +25,7 @@ import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { integrateWorkflow, publishMinutes } from '@/automation/setup-workflows';
 import { setupChoicesSchema } from '@/contract/setup';
 import { mergeConfiguration } from '@/domain/configuration/presets.ts';
+import { onboardingBranch, updateBranch } from '@/domain/setup-branches.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

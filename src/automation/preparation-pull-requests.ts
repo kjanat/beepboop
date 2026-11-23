@@ -1,11 +1,11 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
 import { placeBlock, setupBlock } from '@/automation/setup-body';
-import { setupBranches } from '@/automation/setup-changes';
 import { previousRender } from '@/automation/setup-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { AutoMerge, PreparationResult } from '@/automation/types';
 import type { Edit, Snapshot } from '@/domain/inventory.ts';
+import { setupBranches } from '@/domain/setup-branches.ts';
 import type { AutoMergeMethod } from '@/domain/setup-terms.ts';
 import {
 	comparisonSchema,

@@ -8,7 +8,7 @@ import { adoptionChoices, startCommand } from '@/automation/release-graph/adopti
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
 import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { actionReleaseOffer } from '@/automation/setup-action';
-import { behaviourChanges, changeDetails, onboardingBranch } from '@/automation/setup-changes';
+import { behaviourChanges, changeDetails } from '@/automation/setup-changes';
 import { completeTaggedStreams } from '@/automation/setup-completion';
 import { crateScript, defaultTagPrefix, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
 import type { PublishingAccess } from '@/automation/setup-publishing';
@@ -52,6 +52,7 @@ import {
 	versionBump,
 	versionBumps,
 } from '@/domain/release-start.ts';
+import { onboardingBranch } from '@/domain/setup-branches.ts';
 import {
 	alwaysStarted,
 	existingTriggersNames,
