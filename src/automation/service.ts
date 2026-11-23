@@ -30,7 +30,6 @@ import { matchesPackage, packageId, publishablePackages } from '@/domain/package
 import { publishable } from '@/domain/package-publication.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
 import type { RefState } from '@/domain/refs.ts';
-import { conflictMessage, streamModuleTagPrefixes, tagConflicts } from '@/domain/refs.ts';
 import type { Access, ReadyRepository } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { compareVersions } from '@/domain/semver.ts';
@@ -76,6 +75,7 @@ import type { WinGetBindings } from '@/publication/winget/service.ts';
 import { WinGetService } from '@/publication/winget/service.ts';
 import { planVersionFiles } from '@/release/domain/planning/editors.ts';
 import { planRelease } from '@/release/domain/planning/managers.ts';
+import { conflictMessage, streamModuleTagPrefixes, tagConflicts } from '@/release/domain/refs.ts';
 import {
 	hasTagPromotion,
 	manifestProblems,

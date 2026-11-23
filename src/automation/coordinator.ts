@@ -76,18 +76,7 @@ import {
 } from '@/domain/package-identity.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
 import type { RefChange, RefPlan, RefState, TagSigner } from '@/domain/refs.ts';
-import {
-	conflictMessage,
-	planRefs,
-	refsLanded,
-	streamModuleTagPrefixes,
-	tagConflict,
-	tagObject,
-	tagObjectId,
-	tagPayload,
-	tagPrefixes,
-	versionTagged,
-} from '@/domain/refs.ts';
+import { tagObject, tagObjectId, tagPayload } from '@/domain/refs.ts';
 import type { CheckChoice, GateSkip, ReleaseGate } from '@/domain/release-gates.ts';
 import { gatedRelease, gateLabel, gateReasons, sameGate } from '@/domain/release-gates.ts';
 import type { ReadyRepository } from '@/domain/repository';
@@ -170,6 +159,15 @@ import {
 	taggedReleases,
 } from '@/release/domain/package-tags.ts';
 import { observedVersion, placeholderVersion } from '@/release/domain/planning/managers.ts';
+import {
+	conflictMessage,
+	planRefs,
+	refsLanded,
+	streamModuleTagPrefixes,
+	tagConflict,
+	tagPrefixes,
+	versionTagged,
+} from '@/release/domain/refs.ts';
 import { compileReleaseSet } from '@/release/domain/release-set.ts';
 import { manifestProblems, releasePaths } from '@/release/domain/version.ts';
 import { decodeSetupEditV1 } from '@/setup/edit.ts';
