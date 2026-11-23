@@ -86,14 +86,17 @@ It reads Codex state only from comments by `chatgpt-codex-connector[bot]`. When
 `code_review` for the head commit, it prints the check conclusions and the Codex
 state. It exits 0 when `code_review.has_any_findings` is `false` and 3
 otherwise. It exits 1 when a check failed before Codex finished, and 2 after an
-hour without a result.
+hour without a result. It exits 4 and prints `conflicting` as soon as GitHub
+reports `mergeable` as `CONFLICTING`, because GitHub runs no CI on a
+conflicting PR. `UNKNOWN` keeps polling.
 
 ## 7. Merge gate
 
 Merge only when all hold on the head commit:
 
 - `verify`, `CodeQL` and `browser` concluded `SUCCESS`.
-- `wait.ts` exited 0. On exit 3, read the inline review comments
+- `wait.ts` exited 0. On exit 4, `git fetch origin master`, rebase onto
+  `origin/master`, rerun the gate, force-push with lease, and wait again. On exit 3, read the inline review comments
   (`gh api repos/kjanat/beepboop/pulls/<pr>/comments`), fix each real finding
   with a failing test, push, and wait again. Reply to each finding, prefixed by
   `> [!NOTE]\n> 🤖 **<model> responding on behalf of kjanat**`, naming the

@@ -15,7 +15,7 @@ const poll = Effect.fn('poll')(function*(pr: string) {
 		yield* capture(['gh', 'api', '--paginate', '--slurp', `repos/${repo}/issues/${pr}/comments`]),
 	);
 	const states = checkStates(view.statusCheckRollup, required);
-	return { view, states, result: outcome(states, completedReviews(pages, view.headRefOid)) };
+	return { view, states, result: outcome(states, completedReviews(pages, view.headRefOid), view.mergeable) };
 });
 
 await main(Effect.gen(function*() {
@@ -31,6 +31,8 @@ await main(Effect.gen(function*() {
 		yield* Console.log(JSON.stringify({ head, mergeable: view.mergeable, states, codex: result.codex }, null, 2));
 	} else if (result._tag === 'Failed') {
 		yield* Console.log(JSON.stringify({ head, failed: states }, null, 2));
+	} else if (result._tag === 'Conflicting') {
+		yield* Console.log('conflicting');
 	} else {
 		yield* Console.log('timeout');
 	}
