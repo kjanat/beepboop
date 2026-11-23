@@ -15,7 +15,6 @@ import { discover, planRelease, resolvePublished } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import { registryLayer } from '@/automation/managers/registry';
 import { metadataProblems } from '@/automation/package-metadata';
-import { pollPackages } from '@/automation/package-watch';
 import { preparationMerge } from '@/automation/preparation-pull-requests';
 import {
 	hasTagPromotion,
@@ -82,6 +81,7 @@ import {
 	safeDecode,
 } from '@/kernel/schema/structs.ts';
 import { Notifications } from '@/notifications/delivery.ts';
+import { pollPackages } from '@/notifications/package-watch.ts';
 import { AuditStore } from '@/persistence/d1/audit';
 import { ChangeLog } from '@/persistence/d1/changes';
 import { Database, databaseLayer } from '@/persistence/d1/database';
@@ -1181,7 +1181,13 @@ export class AutomationService {
 		}
 		const notifications = this.notifications();
 		const readable = yield* this.store.readableRepositories();
-		yield* pollPackages(this.store, readable, this.dependencies.transport, event => this.event(event), notifications);
+		yield* pollPackages(
+			this.store.db,
+			readable,
+			this.dependencies.transport,
+			event => this.event(event),
+			notifications,
+		);
 		yield* notifications.deliver();
 	});
 }
