@@ -32,11 +32,11 @@ import {
 } from '@/automation/package-tags';
 import type { PackageTagView } from '@/contract/views';
 import { packageTagPage as pageSchema } from '@/contract/views';
+import { validateAgainst } from '@/discovery/validation/validate.ts';
 import { parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
 import type { Inventory, Package } from '@/domain/inventory.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
-import { validateAgainst } from '@/domain/validate';
 import { decodeSync } from '@/kernel/schema/structs.ts';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
 

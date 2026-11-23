@@ -7,7 +7,6 @@ import { adminSubject, eachWorld, issuer, origin } from '@root/test/support/worl
 import { experimental_AstroContainer } from 'astro/container';
 import { createContext } from 'astro/middleware';
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
-import { applyVersionFiles } from '@/automation/editors';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { goManager } from '@/automation/managers/go';
 import { jsrManager, setUpJsrPackage } from '@/automation/managers/jsr';
@@ -19,6 +18,7 @@ import { vscodeManager } from '@/automation/managers/vscode';
 import { verifyImage } from '@/automation/oci';
 import type { Publication } from '@/automation/types';
 import { Client } from '@/cli/client';
+import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { fromSync, recover } from '@/kernel/errors/classify.ts';
 import { responseBytes } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';

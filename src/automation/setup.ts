@@ -1,5 +1,4 @@
 import { Effect, Result, Schema } from 'effect';
-import { companionProposals } from '@/automation/companion-detection';
 import { canVerifyPublication } from '@/automation/managers';
 import { newVersionStartRefusal } from '@/automation/release-capability';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
@@ -22,10 +21,12 @@ import {
 import type { Configuration } from '@/automation/types';
 import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
 import { binaryCandidates } from '@/discovery/analysis/binary-candidates.ts';
+import { companionProposals } from '@/discovery/analysis/companions.ts';
 import { discover } from '@/discovery/discover.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { ReleaseGraph } from '@/discovery/release-graph/graph.ts';
 import { inferReleaseGraph } from '@/discovery/release-graph/graph.ts';
+import { validateAgainst } from '@/discovery/validation/validate.ts';
 import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import { workflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
@@ -71,7 +72,6 @@ import {
 	versionScopeNames,
 	versionScopeSentences,
 } from '@/domain/setup-terms.ts';
-import { validateAgainst } from '@/domain/validate';
 import { versionFileSchema } from '@/domain/version-files.ts';
 import { tagPrefix, versionsInFiles } from '@/domain/version-tags.ts';
 import type { WorkflowSetupInput } from '@/domain/workflow-setup.ts';

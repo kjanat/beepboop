@@ -1,10 +1,11 @@
 import { Effect } from 'effect';
-import { alreadyPrepared, applyVersionFiles, fileEdits } from '@/automation/editors';
+import { alreadyPrepared, fileEdits } from '@/automation/editors';
 import type { VerificationContext } from '@/automation/gateway.ts';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { ManagerRegistry } from '@/automation/managers/registry';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { Publication, ReleasePlan } from '@/automation/types';
+import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import type { ManagerName } from '@/domain/catalog.ts';
 import { isLockfile, managerSpec } from '@/domain/catalog.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';

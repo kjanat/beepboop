@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect';
 import { TestClock } from 'effect/testing';
 import { SessionStore } from '@/auth/adapters/d1/sessions.ts';
-import { applyVersionFiles } from '@/automation/editors';
 import { latestVersion, registryRequest } from '@/automation/managers/verification';
 import {
 	ApplicationConfiguration,
@@ -22,6 +21,7 @@ import { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
 import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
 import { SecretDeliveryStore } from '@/credentials/adapters/d1/secret-deliveries.ts';
 import { Vault } from '@/credentials/vault.ts';
+import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { https } from '@/distribution/assets';
 import { GitHubApp, makeGitHubApp } from '@/github/app.ts';
 import { GitHubTransport, gitHubRequest } from '@/github/transport.ts';

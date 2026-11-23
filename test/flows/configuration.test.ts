@@ -10,6 +10,7 @@ import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/su
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
+import { validateAgainst } from '@/discovery/validation/validate.ts';
 import type { ManagerName } from '@/domain/catalog.ts';
 import { parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationSchema, issueMessage, refPolicyValue } from '@/domain/configuration/schema.ts';
@@ -20,7 +21,6 @@ import {
 	parseReleaseIdentity,
 	releaseIdentity,
 } from '@/domain/package-identity.ts';
-import { validateAgainst } from '@/domain/validate';
 import { workflowSetup } from '@/domain/workflow-setup.ts';
 import { record } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';

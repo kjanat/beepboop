@@ -1,6 +1,7 @@
 import { Effect, Result, Schema } from 'effect';
-import { applyVersionFiles, fileEdits } from '@/automation/editors';
+import { fileEdits } from '@/automation/editors';
 import { planRelease, publicationOrder } from '@/automation/managers';
+import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { isLockfile } from '@/domain/catalog.ts';
 import type { Edit, Inventory, Snapshot } from '@/domain/inventory.ts';
 import { inputSchema, nameSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';

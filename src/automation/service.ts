@@ -43,6 +43,7 @@ import { isRuntimeGrant, secretAliases } from '@/credentials/grant.ts';
 import { Secrets, secretsLayer, Vault } from '@/credentials/vault.ts';
 import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
 import { discover } from '@/discovery/discover.ts';
+import { validateAgainst } from '@/discovery/validation/validate.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration/schema.ts';
 import type { Package, RepositoryRecord, Snapshot } from '@/domain/inventory.ts';
@@ -54,7 +55,6 @@ import { conflictMessage, streamModuleTagPrefixes, tagConflicts } from '@/domain
 import type { Access, ReadyRepository, RepositoryDiscovery } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { compareVersions } from '@/domain/semver.ts';
-import { validateAgainst } from '@/domain/validate';
 import { semVer } from '@/domain/version.ts';
 import { latestTag, versionsInFiles } from '@/domain/version-tags.ts';
 import { GitHubApp, isolateGitHubApp } from '@/github/app.ts';
