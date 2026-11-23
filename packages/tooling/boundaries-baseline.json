@@ -270,5 +270,9 @@
 	{
 		"file": "packages/persistence/src/journal.ts",
 		"specifier": "@/contract/changes"
+	},
+	{
+		"file": "packages/publication/src/ledger.ts",
+		"specifier": "@/automation/types"
 	}
 ]

@@ -1,4 +1,4 @@
-import type { PublishKind } from '@/automation/types';
+export type PublishKind = 'new' | 'update';
 
 export const publishBudgets: Record<PublishKind, { burst: number; interval: number }> = {
 	new: { burst: 5, interval: 600_000 },

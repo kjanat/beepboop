@@ -160,6 +160,15 @@
         "effect": "^4.1.2",
       },
     },
+    "packages/publication": {
+      "name": "@beepboopbot/publication",
+      "version": "0.0.0",
+      "dependencies": {
+        "@beepboopbot/domain": "workspace:*",
+        "@beepboopbot/kernel": "workspace:*",
+        "effect": "^4.1.2",
+      },
+    },
   },
   "trustedDependencies": [
     "esbuild",
@@ -241,6 +250,8 @@
     "@beepboopbot/notifications": ["@beepboopbot/notifications@workspace:packages/notifications"],
 
     "@beepboopbot/persistence": ["@beepboopbot/persistence@workspace:packages/persistence"],
+
+    "@beepboopbot/publication": ["@beepboopbot/publication@workspace:packages/publication"],
 
     "@biomejs/biome": ["@biomejs/biome@2.6.8", "", { "optionalDependencies": { "@biomejs/cli-android-arm64": "2.6.8", "@biomejs/cli-android-x64": "2.6.8", "@biomejs/cli-darwin-arm64": "2.6.8", "@biomejs/cli-darwin-x64": "2.6.8", "@biomejs/cli-linux-arm64": "2.6.8", "@biomejs/cli-linux-arm64-musl": "2.6.8", "@biomejs/cli-linux-x64": "2.6.8", "@biomejs/cli-linux-x64-musl": "2.6.8", "@biomejs/cli-win32-arm64": "2.6.8", "@biomejs/cli-win32-x64": "2.6.8" }, "bin": { "biome": "bin/biome" } }, "sha512-kqZUFvX6/aYQOmzfRN5ANcfNS9wLH4aHLWWP/dQKyhRZVoA6rdWszA7DGugFcxPbMiznUyVYyukVl+ExZN4PQA=="],
 

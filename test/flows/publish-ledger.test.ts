@@ -46,10 +46,8 @@ import {
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { ledgerSchema } from '@/automation/ledger';
 import { publishMinutes } from '@/automation/setup-workflows';
 import type { Execution } from '@/automation/types';
-import { publishWaitMinutes } from '@/contract/ledger';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -63,6 +61,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { publishWaitMinutes } from '@/publication/contract.ts';
+import { ledgerSchema } from '@/publication/ledger.ts';
 
 let world: World;
 let target = '';

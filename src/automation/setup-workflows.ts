@@ -15,7 +15,6 @@ import {
 } from '@/automation/setup-binaries';
 import { crateOutcome, ledgerCommand, plainCrateNames } from '@/automation/setup-defaults';
 import type { SetupWorkflow } from '@/automation/setup-types';
-import { ledgerManagers, publishWaitMinutes } from '@/contract/ledger';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { workflowEvents } from '@/discovery/release-graph/calls.ts';
 import { jobNeeds } from '@/discovery/workflow-analysis/job-gate.ts';
@@ -29,6 +28,7 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { yaml, yamlData } from '@/kernel/parse/yaml.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';
+import { ledgerManagers, publishWaitMinutes } from '@/publication/contract.ts';
 
 const prepareMinutes = 120;
 export function publishMinutes(packages: number): number {

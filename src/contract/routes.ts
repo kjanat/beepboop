@@ -1,14 +1,6 @@
 import { Schema } from 'effect';
 import { changesResponse } from '@/contract/changes';
 import {
-	claimStep,
-	nextStep,
-	publishClaimRequest,
-	publishNextRequest,
-	publishReportRequest,
-	reportStep,
-} from '@/contract/ledger';
-import {
 	acknowledged,
 	approvalReadiness,
 	binaryProgress,
@@ -36,6 +28,14 @@ import {
 	refined,
 } from '@/kernel/schema/structs.ts';
 import { destinationInput, notificationsView, subscriptionInput, watchInput } from '@/notifications/contract.ts';
+import {
+	claimStep,
+	nextStep,
+	publishClaimRequest,
+	publishNextRequest,
+	publishReportRequest,
+	reportStep,
+} from '@/publication/contract.ts';
 
 export type Method = 'GET' | 'POST';
 export type Auth = 'admin' | 'elevated' | 'workflow' | 'workflow-token';

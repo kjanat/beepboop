@@ -1,10 +1,10 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Schema } from 'effect';
-import { deferSlot, reserveSlot } from '@/automation/publish-pace';
-import type { PublishKind } from '@/automation/types';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { decodeSync } from '@/kernel/schema/structs.ts';
+import type { PublishKind } from '@/publication/publish-pace.ts';
+import { deferSlot, reserveSlot } from '@/publication/publish-pace.ts';
 
 const arrival = Schema.optional(Schema.Finite);
 
