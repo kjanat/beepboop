@@ -751,21 +751,6 @@ test('an inferred stream keeps its workflow until observation is cleared', async
 	await expect(act(form, 'preview')).rejects.toThrow('Select at least one package to release.');
 });
 
-const editorModules: [
-	{ choicesEditors: Record<string, string>; streamEditors: Record<string, string> },
-	{ workflowEditors: Record<string, string> },
-] = await Promise.all([
-	import(browserModule),
-	import(new URL('../../src/ui/browser/setup-fields.ts', import.meta.url).href),
-]);
-
-test('the dashboard declares an editor for every setup choice field', () => {
-	const [{ choicesEditors, streamEditors }, { workflowEditors }] = editorModules;
-	expect(Object.keys(choicesEditors).sort()).toEqual([...choicesFields].sort());
-	expect(Object.keys(streamEditors).sort()).toEqual([...streamFields].sort());
-	expect(Object.keys(workflowEditors).sort()).toEqual([...workflowFields].sort());
-});
-
 function toolRepository() {
 	return world.github.create('octo/tool', {
 		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n\n[dependencies]\nnix = "0.30"\n',

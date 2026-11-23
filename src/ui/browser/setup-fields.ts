@@ -1,26 +1,29 @@
 import type { Schema } from 'effect';
 import { Result } from 'effect';
-import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
-import { binaryTargets, defaultBinaryTargets, leftOut } from '@/domain/binary-platforms.ts';
+import type { BinaryBuild, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
+import { binaryTargets, leftOut } from '@/domain/binary-platforms.ts';
 import { existingTriggersNames, existingTriggersQuestion, existingTriggersSentences } from '@/domain/setup-terms.ts';
 import { setupWorkflow } from '@/domain/workflow-setup.ts';
 import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
-import type { Selection } from '@/setup/defaults.ts';
-import { ledgerCommand, preparationReasons, suggestedCommands, suggestedWorkflowFile } from '@/setup/defaults.ts';
-import type { Editors, WorkflowField } from '@/setup/editing/fields.ts';
+import type { Selection } from '@/setup/editing/commands.ts';
+import { preparationReasons, suggestedCommands, suggestedWorkflowFile } from '@/setup/editing/commands.ts';
+import type { OfferedBinary } from '@/setup/editing/rules.ts';
+import {
+	binaryLabel,
+	binaryTargetDefaults,
+	binaryTicked,
+	defaultTriggers,
+	distributionCommands,
+	generatedJob,
+	inferredJob,
+	keptDistributionCommands,
+	offeredBinaries,
+	publicationStepDefault,
+	triggerChoices,
+} from '@/setup/editing/rules.ts';
 import type { SetupPlan, SetupWorkflow } from '@/setup/types.ts';
+import { triggerHandovers } from '@/setup/types.ts';
 import { node, Refused } from '@/ui/browser/dom';
-
-export const workflowEditors = {
-	file: 'control',
-	job: 'control',
-	triggers: 'control',
-	commands: 'control',
-	publicationSteps: 'control',
-	tagPrefix: 'control',
-	binaries: 'control',
-	credentials: 'json',
-} as const satisfies Editors<WorkflowField>;
 
 export const element = node;
 export function hint(parent: HTMLElement, message: string) {
@@ -81,13 +84,6 @@ export function jsonEditor(parent: HTMLElement, field: string, value: unknown, h
 		},
 	};
 }
-function buildLabel(build: BinaryBuild): string {
-	return `${build.name} (${
-		build.toolchain === 'cargo'
-			? `Cargo, ${build.manifest}`
-			: `Go, ${build.package === '.' ? build.module : `${build.module}/${build.package.slice(2)}`}`
-	})`;
-}
 interface BinaryEditor {
 	read(): Result.Result<BinaryRelease | undefined, Refused>;
 	refresh(): void;
@@ -106,7 +102,7 @@ function binaryEditor(
 	box.append(list, element('p', 'Targets'), targetList);
 	parent.append(box);
 	const ticked = new Map<string, boolean>();
-	let offered: { build: BinaryBuild; candidate?: BinaryCandidate }[] = [];
+	let offered: OfferedBinary[] = [];
 	let targetsEdited = !!initial?.binaries;
 	const targets = new Map<BinaryTarget, HTMLInputElement>(binaryTargets.map(target => {
 		const input = element('input');
@@ -118,23 +114,10 @@ function binaryEditor(
 		label(targetList, target, input);
 		return [target, input];
 	}));
-	const checked = (build: BinaryBuild) =>
-		ticked.get(build.name)
-			?? (initial ? initial.binaries?.builds.some(entry => entry.name === build.name) ?? false : true);
+	const checked = (build: BinaryBuild) => ticked.get(build.name) ?? binaryTicked(build, initial);
 	return {
 		refresh() {
-			const packages = new Set(selection().packages.map(pkg => pkg.id));
-			const candidates = (plan.binaryCandidates ?? []).filter(candidate => packages.has(candidate.package));
-			const existing = initial?.binaries?.builds ?? [];
-			offered = [
-				...existing.map(build => {
-					const candidate = candidates.find(entry => entry.build.name === build.name);
-					return candidate ? { build, candidate } : { build };
-				}),
-				...candidates.filter(candidate => !existing.some(build => build.name === candidate.build.name)).map(
-					candidate => ({ build: candidate.build, candidate }),
-				),
-			];
+			offered = offeredBinaries(plan, selection().packages.map(pkg => pkg.id), initial);
 			list.replaceChildren();
 			for (const { build, candidate } of offered) {
 				const input = element('input');
@@ -143,16 +126,13 @@ function binaryEditor(
 				input.addEventListener('change', () => {
 					ticked.set(build.name, input.checked);
 				});
-				label(list, buildLabel(build), input);
+				label(list, binaryLabel(build), input);
 				const note = candidate && leftOut(candidate);
 				if (note) hint(list, note);
 			}
 			if (!targetsEdited) {
-				const chosen = offered.filter(entry => checked(entry.build));
-				for (const [target, input] of targets) {
-					input.checked = defaultBinaryTargets.some(value => value === target)
-						&& chosen.every(entry => entry.candidate?.targets.includes(target) ?? true);
-				}
+				const defaults = binaryTargetDefaults(offered.filter(entry => checked(entry.build)), initial);
+				for (const [target, input] of targets) input.checked = defaults.includes(target);
 			}
 			box.hidden = !offered.length;
 		},
@@ -225,10 +205,15 @@ export function workflow(
 	const jobOverride = element('details');
 	jobOverride.append(element('summary', 'Choose a different job (optional)'));
 	controls.append(jobOverride);
-	const triggers = select(controls, `existingTriggers: ${existingTriggersQuestion}`, [
-		['review', `${existingTriggersNames.review}: ${existingTriggersSentences.review}`],
-		['dispatchOnly', `${existingTriggersNames.dispatchOnly}: ${existingTriggersSentences.dispatchOnly}`],
-	], initial?.triggers === 'dispatchOnly' ? 'dispatchOnly' : 'review');
+	const triggers = select(
+		controls,
+		`existingTriggers: ${existingTriggersQuestion}`,
+		triggerChoices(initial?.triggers ?? 'review').map((
+			value,
+		): [string, string] => [value, `${existingTriggersNames[value]}: ${existingTriggersSentences[value]}`]),
+		'review',
+	);
+	let triggersEdited = false;
 	triggers.dataset.field = 'triggers';
 	const triggerHelp = hint(
 		controls,
@@ -273,7 +258,7 @@ export function workflow(
 	);
 	const binaries = preparing ? undefined : binaryEditor(extras, plan, selection, initial);
 	let commandsEdited = !!initial?.commands;
-	const mappingValues = new Map(Object.entries(initial?.publicationSteps ?? {}));
+	const mappingValues = new Map<string, string>();
 	let mappingControls = new Map<string, HTMLSelectElement>();
 	parent.append(box);
 	const editor: WorkflowEditor = {
@@ -302,7 +287,7 @@ export function workflow(
 				const parsed = safeDecode(setupWorkflow, {
 					file: editor.file(),
 					job: chosen,
-					triggers: triggers.disabled ? 'review' : triggers.value === 'dispatchOnly' ? 'dispatchOnly' : 'review',
+					triggers: triggers.disabled ? 'review' : triggerHandovers.find(value => value === triggers.value) ?? 'review',
 					commands: commands.disabled ? kept?.job === chosen ? kept.commands : '' : commands.value,
 					publicationSteps: Object.fromEntries(
 						[...mappingControls].filter(([, control]) => control.value).map(([id, control]) => [id, control.value]),
@@ -318,14 +303,9 @@ export function workflow(
 		},
 	};
 	function selectedJob(): string {
-		if (file.value === 'new') return preparing ? 'prepare' : 'publish';
-		if (file.value === 'same') {
-			if (initial?.file === editor.file() && initial.job) return initial.job;
-			return plan.workflows.find(w => w.file === editor.file())?.roles.find(entry =>
-				entry.stream === selection().name && entry.operation === role
-			)?.job ?? 'prepare';
-		}
-		return job.value;
+		if (file.value !== 'new' && file.value !== 'same') return job.value;
+		const evidence = plan.workflows.find(w => w.file === editor.file());
+		return inferredJob(role, selection().name, editor.file(), evidence, initial) ?? generatedJob(role);
 	}
 	const visible = (control: HTMLElement & { disabled: boolean }, show: boolean) => {
 		if (control.parentElement) control.parentElement.hidden = !show;
@@ -344,11 +324,12 @@ export function workflow(
 			&& (preparing || selection().actionRelease !== 'source' && selection().packages.length > 0);
 		if (!commandsEdited) {
 			commands.value = !preparing && selection().actionRelease === 'distribution'
-				? initial?.commands && initial.commands !== ledgerCommand
-					? initial.commands
-					: [plan.actionRelease?.commands, initial?.commands || suggestedCommands(role, selection(), plan)].filter(
-						Boolean,
-					).join('\n')
+				? keptDistributionCommands(initial)
+					?? distributionCommands(
+						initial,
+						plan.actionRelease?.commands ?? '',
+						suggestedCommands(role, selection(), plan),
+					)
 				: suggestedCommands(role, selection(), plan);
 		}
 		commandNotice.textContent = commandsEdited
@@ -376,9 +357,7 @@ export function workflow(
 						...steps.map((step): [string, string] => [step.id, step.label]),
 					],
 					mappingValues.get(pkg.id)
-						?? (selection().packages.length === 1 && steps.length === 1 && /publish/i.test(steps[0]?.label ?? '')
-							? steps[0]?.id ?? ''
-							: ''),
+						?? publicationStepDefault(pkg.id, file.value, job.value, steps, selection().packages.length, initial),
 				);
 				mappingControls.set(pkg.id, control);
 				control.addEventListener('change', () => {
@@ -421,14 +400,7 @@ export function workflow(
 		const evidence = plan.workflows.find(w => w.file === file.value);
 		const previousJob = job.value;
 		job.replaceChildren(option('', 'Choose a job'), ...(evidence?.jobs ?? []).map(value => option(value, value)));
-		const roles = evidence?.roles.filter(entry => entry.stream === selection().name && entry.operation === role) ?? [];
-		const inferred = initial?.file === file.value && initial.job
-			? initial.job
-			: roles.length === 1
-			? roles[0]?.job
-			: evidence?.jobs.length === 1
-			? evidence.jobs[0]
-			: undefined;
+		const inferred = inferredJob(role, selection().name, file.value, evidence, initial);
 		job.value = evidence?.jobs.includes(previousJob) ? previousJob : inferred ?? '';
 		const multiple = (evidence?.jobs.length ?? 0) > 1;
 		const override = !managed && !creating && !shared && !!inferred && multiple;
@@ -441,6 +413,7 @@ export function workflow(
 			? `Using the ${job.value} job from ${file.value}.`
 			: 'A job is a named group of steps in this workflow. Choose the job that performs this part of the release.';
 		const automatic = evidence?.events.some(event => event !== 'workflow_dispatch') ?? false;
+		if (!triggersEdited) triggers.value = defaultTriggers(file.value, initial);
 		visible(triggers, !managed && !creating && !shared && automatic);
 		triggerHelp.hidden = triggers.disabled;
 		binaries?.refresh();
@@ -466,6 +439,9 @@ export function workflow(
 	});
 	commands.addEventListener('input', () => {
 		commandsEdited = true;
+	});
+	triggers.addEventListener('change', () => {
+		triggersEdited = true;
 	});
 	job.addEventListener('change', () => {
 		jobHelp.textContent = job.value

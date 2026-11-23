@@ -2,7 +2,6 @@ import type { CLIError } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
 import { failure } from '@/cli/render/output';
 import type { BinaryBuild } from '@/domain/binary-platforms.ts';
-import { defaultBinaryTargets } from '@/domain/binary-platforms.ts';
 import { packageLabel } from '@/domain/package-label';
 import {
 	approvalOfPublishWhen,
@@ -12,10 +11,11 @@ import {
 } from '@/domain/setup-terms.ts';
 import { mutableArray, safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 import { setupChoicesSchema, setupStream } from '@/setup/contract.ts';
-import type { Selection } from '@/setup/defaults.ts';
-import { suggestedCommands, ungenerated } from '@/setup/defaults.ts';
+import type { Selection } from '@/setup/editing/commands.ts';
+import { suggestedCommands, ungenerated } from '@/setup/editing/commands.ts';
 import type { ChoicesField, StreamField, WorkflowField } from '@/setup/editing/fields.ts';
 import { choicesFields, streamFields, workflowFields } from '@/setup/editing/fields.ts';
+import { binaryTargetDefaults, generatedJob, inferredJob, offeredBinaries } from '@/setup/editing/rules.ts';
 import type { SetupChoices, SetupPlan } from '@/setup/types.ts';
 
 type Stream = SetupChoices['streams'][number];
@@ -212,16 +212,15 @@ function binaries(
 		if (!chosen) {
 			return yield* Effect.fail(failure('--target needs --binary', 'BINARY_REQUIRED'));
 		}
+		const offered = offeredBinaries(plan, packages, stream.promote);
 		return {
 			builds: chosen,
 			targets: targets
 				? [...targets]
-				: existing?.targets
-					?? defaultBinaryTargets.filter(target =>
-						chosen.every(build =>
-							candidates.find(candidate => candidate.build.name === build.name)?.targets.includes(target) ?? true
-						)
-					),
+				: binaryTargetDefaults(
+					chosen.map(build => offered.find(entry => entry.build.name === build.name) ?? { build }),
+					stream.promote,
+				),
 		};
 	});
 }
@@ -237,9 +236,8 @@ function generated(
 		const file = safeDecode(text, given.file);
 		if (!file.success) return given;
 		const evidence = plan.workflows.find(workflow => workflow.file === file.data);
-		const owned = evidence?.roles.filter(entry => entry.stream === stream && entry.operation === role) ?? [];
-		const inferred = owned.length === 1 ? owned[0]?.job : evidence?.jobs.length === 1 ? evidence.jobs[0] : undefined;
-		const job = safeDecode(text, given.job).data ?? (evidence ? inferred : role === 'prepare' ? 'prepare' : 'publish');
+		const job = safeDecode(text, given.job).data
+			?? (evidence ? inferredJob(role, stream, file.data, evidence, undefined) : generatedJob(role));
 		if (job === undefined) {
 			return yield* Effect.fail(
 				failure(

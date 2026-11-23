@@ -37,7 +37,7 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { ledgerCommand } from '@/setup/defaults.ts';
+import { ledgerCommand } from '@/setup/editing/commands.ts';
 import { setupOptions } from '@/setup/options.ts';
 import { streamSummary } from '@/setup/summary.ts';
 

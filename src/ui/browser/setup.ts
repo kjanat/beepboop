@@ -1,6 +1,5 @@
 import { Effect, Result } from 'effect';
 import { routes } from '@/contract/routes';
-import { publishable } from '@/domain/package-publication.ts';
 import { approvalPolicies, configurableStarts, versionBumps } from '@/domain/release-start.ts';
 import {
 	alwaysStarted,
@@ -22,36 +21,21 @@ import {
 } from '@/domain/setup-terms.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import { setupStream } from '@/setup/contract.ts';
-import type { ChoicesField, Editors, StreamField } from '@/setup/editing/fields.ts';
-import { jsonFields, streamFields } from '@/setup/editing/fields.ts';
+import type { StreamField } from '@/setup/editing/fields.ts';
+import { jsonFields, streamEditors, streamFields } from '@/setup/editing/fields.ts';
+import {
+	chosenApproval,
+	chosenBump,
+	chosenMerge,
+	packageCandidates,
+	versioningChoices,
+} from '@/setup/editing/rules.ts';
 import { parseSetupPlan } from '@/setup/plan.ts';
 import type { SetupChoices, SetupPlan, Versioning } from '@/setup/types.ts';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
 import { element, hint, issueText, jsonEditor, label, select, text, workflow } from '@/ui/browser/setup-fields';
 
-export const choicesEditors = { streams: 'control', actionsRevision: 'control' } as const satisfies Editors<
-	ChoicesField
->;
-export const streamEditors = {
-	name: 'control',
-	packages: 'control',
-	required: 'control',
-	versioning: 'control',
-	approval: 'control',
-	start: 'control',
-	bump: 'control',
-	versionPrMerge: 'control',
-	actionRelease: 'control',
-	observe: 'control',
-	prepare: 'control',
-	promote: 'control',
-	versionSource: 'json',
-	versionFiles: 'json',
-	companionModules: 'json',
-	needs: 'json',
-	operations: 'json',
-} as const satisfies Editors<StreamField>;
 const streamHelp: Record<StreamField, string> = {
 	name: '',
 	packages: '',
@@ -113,14 +97,12 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 		const body = element('fieldset');
 		body.className = 'setup-group-body';
 		box.append(body);
-		const selected = plan.inventory.packages.flatMap((pkg, index) => {
-			const id = plan.packageIds[index];
-			if (!id || !publishable(pkg)) return [];
+		const selected = packageCandidates(plan).map(pkg => {
 			const input = element('input');
 			input.type = 'checkbox';
-			input.checked = value.packages.includes(id);
+			input.checked = value.packages.includes(pkg.id);
 			label(body, `${pkg.name} (${pkg.manifest})`, input);
-			return [{ input, pkg: { ...pkg, id } }];
+			return { input, pkg };
 		});
 		body.dataset.field = 'packages required';
 		const action = plan.actionRelease
@@ -176,11 +158,12 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			entry,
 			`${versionScopeNames[entry]}: ${versionScopeSentences[entry]}`,
 		];
-		const versioning = select(groupAdvanced, `versionScope: ${versionScopeQuestion}`, [
-			scope('workspace'),
-			scope('independent'),
-			...(value.versioning === 'none' ? [scope('none')] : []),
-		], value.versioning);
+		const versioning = select(
+			groupAdvanced,
+			`versionScope: ${versionScopeQuestion}`,
+			versioningChoices(value.versioning).map(scope),
+			value.versioning,
+		);
 		versioning.dataset.field = 'versioning';
 		hint(groupAdvanced, 'Choose the actual version when preparing a release. Setup does not change package versions.');
 		const releasing = element('fieldset');
@@ -291,9 +274,9 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					: versioning.value === 'none'
 					? 'none'
 					: 'workspace';
-				const chosenApproval = approvalPolicies.find(entry => entry === approval.value);
-				const chosenBump = versionBumps.find(entry => entry === bump.value);
-				const chosenMerge = versionPrMerges.find(entry => entry === merging.value);
+				const publishWhen = chosenApproval(approval.value);
+				const landing = chosenBump(bump.value);
+				const merge = chosenMerge(merging.value, value.versionPrMerge);
 				const started = starts.filter(entry => entry.input.checked).map(entry => entry.channel);
 				const extra: Record<string, unknown> = {
 					...(action?.value === 'source'
@@ -306,9 +289,9 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 							},
 						}
 						: {}),
-					...(chosenApproval ? { approval: chosenApproval } : {}),
-					...(chosenBump ? { bump: chosenBump } : {}),
-					...(chosenMerge && (chosenMerge !== 'manual' || value.versionPrMerge) ? { versionPrMerge: chosenMerge } : {}),
+					...(publishWhen ? { approval: publishWhen } : {}),
+					...(landing ? { bump: landing } : {}),
+					...(merge ? { versionPrMerge: merge } : {}),
 					...(started.length || value.start ? { start: started } : {}),
 				};
 				for (const [field, editor] of advancedFields) {
