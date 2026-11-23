@@ -609,13 +609,14 @@ When the commit signature, a check, the commit status or package metadata
 stops a release, `beepboop release` asks what comes next, and the card of the
 release on the runs page shows the same choices as buttons:
 
-- **Rerun and wait** reruns the failed jobs of each failing check, waits for
-  the new results and publishes once they pass. `--yes` takes this choice once.
-- **Release without the check** makes this release ignore the gates that stop
-  it. The activity log names who skipped them.
-- **Always release without the check** switches those gates off for every later
-  release of the stream. The repositories page lists them under **Release
-  gates** with **Switch on**.
+- **Rerun and wait** reruns the failed jobs of each finished workflow run with
+  a failed check, waits for the new results and publishes once they pass.
+  It shows when a check failed. `--yes` takes this choice once.
+- **Release without the check** makes this release ignore the failing and
+  running gates that stop it. The activity log names who skipped them.
+- **Always release without the check** switches the failed gates off for every
+  later release of the stream. The repositories page lists them under
+  **Release gates** with **Switch on**.
 - **Stop** leaves the release stopped.
 
 `beepboop runs checks ID --choice rerun`, `skip` or `always` makes the same

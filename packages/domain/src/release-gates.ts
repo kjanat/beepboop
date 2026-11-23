@@ -45,6 +45,10 @@ export function stoppedByGates(reason: string | undefined): boolean {
 	);
 }
 
+export function rerunnable(reason: string | undefined): boolean {
+	return (reason ?? '').split('; ').some(part => part.startsWith(gateReasons.checks));
+}
+
 const waiting = ['pending', 'blocked', 'awaiting-approval'];
 export function gatedRelease<T extends { operation: string; stream: string; state: string; createdAt: number }>(
 	executions: readonly T[],

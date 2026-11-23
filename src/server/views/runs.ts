@@ -5,7 +5,7 @@ import type { Status, Tone } from '@/contract/views';
 import { managerSpec } from '@/domain/catalog.ts';
 import { matchesPublication } from '@/domain/package-identity.ts';
 import { packageLabel } from '@/domain/package-label';
-import { stoppedByGates } from '@/domain/release-gates.ts';
+import { rerunnable, stoppedByGates } from '@/domain/release-gates.ts';
 import { startLabels } from '@/domain/release-start.ts';
 import { versionPrMergeSentences } from '@/domain/setup-terms.ts';
 import { defaultTagPolicy, semVer, tagFor } from '@/domain/version.ts';
@@ -107,6 +107,7 @@ export function runCard(run: Execution, now: number) {
 		checksStop: run.operation === 'promote' && stoppedByGates(run.reason)
 			&& (run.state === 'awaiting-approval'
 				|| (run.state === 'failed' && run.attempts === 0 && run.approvedAt === undefined)),
+		rerunnable: rerunnable(run.reason),
 		reconcilable: run.state === 'uncertain',
 		cancellable: !['succeeded', 'cancelled', 'failed'].includes(run.state),
 	};

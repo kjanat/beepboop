@@ -1362,20 +1362,27 @@ test('release shows the wait for checks and stops with the failing check', async
 	expect(repository.runs).toEqual([]);
 });
 
-function stoppedThenPublished(repository: Repository, rerun: boolean) {
+function stoppedThenPublished(
+	repository: Repository,
+	rerun: boolean,
+	stop: (head: string) => void = head => {
+		repository.checks.set(head, [{ name: 'test', status: 'completed', conclusion: 'failure', runId: 50 }]);
+	},
+	ci: 'completed' | 'in_progress' = 'completed',
+) {
 	const steps = [
 		() => world.wait(16_000),
 		async () => {
 			const head = world.github.head(repository);
-			repository.checks.set(head, [{ name: 'test', status: 'completed', conclusion: 'failure', runId: 50 }]);
+			stop(head);
 			repository.runs.push({
 				id: 50,
 				path: '.github/workflows/ci.yml',
 				event: 'push',
 				headSha: head,
 				headBranch: repository.defaultBranch,
-				status: 'completed',
-				conclusion: 'failure',
+				status: ci,
+				conclusion: ci === 'completed' ? 'failure' : null,
 				attempt: 1,
 				title: 'CI',
 				inputs: {},
@@ -1384,6 +1391,11 @@ function stoppedThenPublished(repository: Repository, rerun: boolean) {
 			await world.wait(16_000);
 		},
 		async () => {
+			const ran = repository.runs.find(entry => entry.id === 50);
+			if (ran) {
+				ran.status = 'completed';
+				ran.conclusion = rerun ? 'success' : 'failure';
+			}
 			if (rerun) passChecks(repository, world.github.head(repository));
 			await world.wait(60_000);
 		},
@@ -1437,8 +1449,38 @@ test('release --yes stops when the rerun checks fail again', async () => {
 	const repository = await cliStarts();
 	stoppedThenPublished(repository, false);
 	const result = await run(['release', 'patch', '--repository', repository.name, '--yes']);
-	expect([result.exitCode, result.stderr.join('')]).toEqual([1, 'checks failed: test\nchecks failed: test\n']);
+	const [promotion] = await promotions();
+	expect([result.exitCode, result.stderr.join('')]).toEqual([
+		1,
+		`checks failed: test\nchecks failed: test\nChoose with beepboop runs checks ${promotion?.id} --choice rerun, skip or always\n`,
+	]);
 	expect(repository.runs.find(entry => entry.id === 50)?.attempt).toBe(2);
+});
+
+test('release --yes leaves a stop without a failed check to the owner', async () => {
+	const repository = await cliStarts();
+	stoppedThenPublished(repository, false, head => {
+		const commit = repository.commits.get(head);
+		if (commit) commit.verified = false;
+		passChecks(repository, head);
+	});
+	const result = await run(['release', 'patch', '--repository', repository.name, '--yes']);
+	const [promotion] = await promotions();
+	expect([result.exitCode, result.stderr.join('')]).toEqual([
+		1,
+		`signature unverified\nChoose with beepboop runs checks ${promotion?.id} --choice rerun, skip or always\n`,
+	]);
+});
+
+test('release prints the refusal of a rerun while the failed check still runs, and the command to choose again', async () => {
+	const repository = await cliStarts();
+	stoppedThenPublished(repository, false, undefined, 'in_progress');
+	const result = await run(['release', 'patch', '--repository', repository.name], [true, 'rerun']);
+	const [promotion] = await promotions();
+	expect([result.exitCode, result.stderr.join('')]).toEqual([
+		1,
+		`checks failed: test\nNo finished check run failed, so none can rerun\nChoose with beepboop runs checks ${promotion?.id} --choice rerun, skip or always\n`,
+	]);
 });
 
 test('release without a terminal names the command that resolves the stopped checks', async () => {

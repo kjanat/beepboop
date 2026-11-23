@@ -7,7 +7,7 @@ import { failure, prompted, unprompted } from '@/cli/output';
 import { routes } from '@/contract/routes';
 import type { BinaryProgress } from '@/contract/views';
 import type { CheckChoice } from '@/domain/release-gates.ts';
-import { stoppedByGates } from '@/domain/release-gates.ts';
+import { rerunnable, stoppedByGates } from '@/domain/release-gates.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, looseStruct, mutableArray, mutableRecord } from '@/kernel/schema/structs.ts';
 
@@ -205,6 +205,8 @@ const checkOptions = [
 	{ value: 'stop', label: 'Stop' },
 ] as const satisfies readonly { value: CheckChoice | 'stop'; label: string }[];
 
+const [rerunOption, ...laterOptions] = checkOptions;
+
 const chosenNote: Record<CheckChoice, string> = {
 	rerun: 'Beepboop reruns the failed checks and publishes once they pass.',
 	skip: 'This release ignores the checks that stopped it.',
@@ -214,16 +216,17 @@ const chosenNote: Record<CheckChoice, string> = {
 function checkChoice(
 	answers: CheckAnswers,
 	reran: boolean,
+	reason: string | undefined,
 ): Effect.Effect<CheckChoice | 'stop' | 'unanswered', CLIError> {
 	const ask = answers.ask;
-	if (answers.yes) return Effect.succeed(reran ? 'stop' : 'rerun');
+	if (answers.yes) return Effect.succeed(reran || !rerunnable(reason) ? 'unanswered' : 'rerun');
 	if (!ask) return Effect.succeed('unanswered');
 	return unprompted(
 		prompted(() =>
 			ask({
 				kind: 'select',
 				message: 'The checks stopped the release. What next?',
-				choices: [...checkOptions],
+				choices: rerunnable(reason) ? [rerunOption, ...laterOptions] : [...laterOptions],
 			})
 		),
 		() => Effect.succeed('unanswered'),
@@ -325,15 +328,22 @@ export function followRelease(
 				out.error(reason);
 				report();
 				if (promotion.state === 'failed' && stoppedByGates(promotion.reason) && !out.jsonMode) {
-					const choice: CheckChoice | 'stop' | 'unanswered' = yield* checkChoice(answers, reran);
+					const choice: CheckChoice | 'stop' | 'unanswered' = yield* checkChoice(answers, reran, promotion.reason);
+					const hint = `Choose with beepboop runs checks ${promotion.id} --choice rerun, skip or always`;
 					if (choice === 'unanswered') {
-						out.error(`Choose with beepboop runs checks ${promotion.id} --choice rerun, skip or always`);
+						out.error(hint);
 					} else if (choice !== 'stop') {
-						yield* client.call(routes.executionsChecks, {
+						const refused = yield* client.call(routes.executionsChecks, {
 							id: promotion.id,
 							repositoryId: promotion.repositoryId,
 							choice,
-						});
+						}).pipe(Effect.as(undefined), Effect.catch(error => Effect.succeed(error.message)));
+						if (refused !== undefined) {
+							out.error(refused);
+							out.error(hint);
+							out.setExitCode(1);
+							return;
+						}
 						out.log(chosenNote[choice]);
 						reran ||= choice === 'rerun';
 						promotionId = promotion.id;

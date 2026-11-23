@@ -1,12 +1,11 @@
 import { expect, spyOn, test } from 'bun:test';
 import { join } from 'node:path';
-import type { Repository } from '@root/test/support/github.ts';
+import type { CheckRun, Repository } from '@root/test/support/github.ts';
 import type { Api } from '@root/test/support/http.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { promotions } from '@root/test/support/releases.ts';
 import { npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
-import type { World } from '@root/test/support/world.ts';
-import { eachWorld, origin } from '@root/test/support/world.ts';
+import { eachWorld, origin, World } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema } from 'effect';
 import { streamGates } from '@/contract/views';
@@ -27,7 +26,16 @@ async function audit(action: string) {
 	return decodeSync(auditRows, rows.results);
 }
 
-async function stopped(): Promise<{ repository: Repository; api: Api; sha: string; id: string }> {
+interface Stop {
+	checks?: CheckRun[];
+	runs?: { id: number; status: 'completed' | 'in_progress' }[];
+	credentials?: string[];
+	reason?: string;
+}
+
+async function stopped(
+	stop: Stop = {},
+): Promise<{ repository: Repository; api: Api; sha: string; id: string }> {
 	const repository = widget(world.github, { configured: false });
 	world.github.push(repository, {
 		'.github/beepboop.json': JSON.stringify({
@@ -37,6 +45,7 @@ async function stopped(): Promise<{ repository: Repository; api: Api; sha: strin
 					packages: ['pkg:npm/widget'],
 					required: ['pkg:npm/widget'],
 					prepare: { strategy: 'managed' },
+					credentials: stop.credentials ?? [],
 					promote: { approval: 'push', workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] } },
 				},
 			},
@@ -47,23 +56,28 @@ async function stopped(): Promise<{ repository: Repository; api: Api; sha: strin
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	const raised = world.github.push(repository, { 'package.json': npmManifest('widget', '1.1.0') }, 'Release 1.1.0');
-	repository.checks.set(raised.sha, [{ name: 'test', status: 'completed', conclusion: 'failure', runId: 7 }]);
-	repository.runs.push({
-		id: 7,
-		path: '.github/workflows/ci.yml',
-		event: 'push',
-		headSha: raised.sha,
-		headBranch: repository.defaultBranch,
-		status: 'completed',
-		conclusion: 'failure',
-		attempt: 1,
-		title: 'Release 1.1.0',
-		inputs: {},
-	});
+	repository.checks.set(
+		raised.sha,
+		stop.checks ?? [{ name: 'test', status: 'completed', conclusion: 'failure', runId: 7 }],
+	);
+	for (const run of stop.runs ?? [{ id: 7, status: 'completed' }]) {
+		repository.runs.push({
+			id: run.id,
+			path: '.github/workflows/ci.yml',
+			event: 'push',
+			headSha: raised.sha,
+			headBranch: repository.defaultBranch,
+			status: run.status,
+			conclusion: run.status === 'completed' ? 'failure' : null,
+			attempt: 1,
+			title: 'Release 1.1.0',
+			inputs: {},
+		});
+	}
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(16_000);
 	const [waiting] = await promotions(api);
-	expect([waiting?.state, waiting?.reason]).toEqual(['awaiting-approval', 'checks failed: test']);
+	expect([waiting?.state, waiting?.reason]).toEqual(['awaiting-approval', stop.reason ?? 'checks failed: test']);
 	return { repository, api, sha: raised.sha, id: waiting?.id ?? '' };
 }
 
@@ -111,9 +125,10 @@ test('rerun and wait reruns the failed jobs and publishes once the check passes'
 	const run = repository.runs.find(entry => entry.id === 7);
 	expect([run?.attempt, run?.status]).toEqual([2, 'queued']);
 	expect((await audit('promotion.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7`]);
-	repository.checks.set(sha, [{ name: 'test', status: 'in_progress', conclusion: null, runId: 7 }]);
-	await world.wait(16_000);
-	expect((await promotions(api))[0]?.reason).toBe('test running');
+	await world.wait(60_000);
+	expect((await promotions(api)).map(entry => [entry.state, entry.reason])).toEqual([
+		['awaiting-approval', 'test running'],
+	]);
 	expect(dispatched()).toEqual([]);
 	passChecks(repository, sha);
 	await world.wait(60_000);
@@ -137,7 +152,9 @@ test('a started release that stopped on its checks waits again after a choice', 
 		runCard(failed, Date.now()).checksStop,
 		runCard({ ...failed, attempts: 1 }, Date.now()).checksStop,
 		runCard({ ...failed, reason: 'The workflow run failed' }, Date.now()).checksStop,
-	]).toEqual([true, false, false]);
+		runCard(failed, Date.now()).rerunnable,
+		runCard({ ...failed, reason: 'signature unverified' }, Date.now()).rerunnable,
+	]).toEqual([true, false, false, true, false]);
 	const chosen = await api('/api/executions/checks', { id, choice: 'skip' });
 	expect(text(chosen.body, 'state')).toBe('awaiting-approval');
 	await world.wait(16_000);
@@ -150,7 +167,7 @@ test('a check choice is refused when no check stops the release or no failed run
 	if (commit) commit.verified = false;
 	passChecks(repository, sha);
 	const rerun = await api('/api/executions/checks', { id, choice: 'rerun' });
-	expect([rerun.status, text(rerun.body, 'error')]).toEqual([422, 'No failed check run to rerun']);
+	expect([rerun.status, text(rerun.body, 'error')]).toEqual([422, 'No finished check run failed, so none can rerun']);
 	if (commit) commit.verified = true;
 	const nothing = await api('/api/executions/checks', { id, choice: 'skip' });
 	expect([nothing.status, text(nothing.body, 'error')]).toEqual([422, 'No check stops this release']);
@@ -235,3 +252,84 @@ test.each(
 )('the reason %p is a check stop: %p', (reason, expected) => {
 	expect(stoppedByGates(reason)).toBe(expected);
 });
+
+test('rerun reruns every workflow run whose check failed, and refuses a run that still runs', async () => {
+	const { repository, api, id } = await stopped({
+		checks: [
+			{ name: 'test', status: 'completed', conclusion: 'failure', runId: 7 },
+			{ name: 'test', status: 'completed', conclusion: 'failure', runId: 8 },
+			{ name: 'lint', status: 'completed', conclusion: 'failure', runId: 9 },
+		],
+		runs: [{ id: 7, status: 'completed' }, { id: 8, status: 'completed' }, { id: 9, status: 'in_progress' }],
+		reason: 'checks failed: test, test, lint',
+	});
+	expect((await api('/api/executions/checks', { id, choice: 'rerun' })).status).toBe(200);
+	expect(repository.runs.map(run => [run.id, run.attempt])).toEqual([[7, 2], [8, 2], [9, 1]]);
+	expect((await audit('promotion.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7, 8`]);
+	const again = await api('/api/executions/checks', { id, choice: 'rerun' });
+	expect([again.status, text(again.body, 'error')]).toEqual([422, 'No finished check run failed, so none can rerun']);
+}, 60_000);
+
+test('release without the check also skips running checks, and always switches off only the failed ones', async () => {
+	const running: Stop = {
+		checks: [
+			{ name: 'test', status: 'completed', conclusion: 'failure', runId: 7 },
+			{ name: 'lint', status: 'in_progress', conclusion: null, runId: 7 },
+		],
+		reason: 'checks failed: test; lint running',
+	};
+	const once = await stopped(running);
+	expect((await once.api('/api/executions/checks', { id: once.id, choice: 'skip' })).status).toBe(200);
+	expect((await audit('promotion.checks.skip')).map(row => row.target)).toEqual([`${once.id}: check test, check lint`]);
+	world.dispose();
+	world = await World.create();
+	const always = await stopped(running);
+	expect((await always.api('/api/executions/checks', { id: always.id, choice: 'always' })).status).toBe(200);
+	expect((await audit('stream.gate.skip')).map(row => row.target)).toEqual(['octo/widget:main:check test']);
+	world.dispose();
+	world = await World.create();
+	const pending = await stopped({
+		checks: [{ name: 'lint', status: 'in_progress', conclusion: null, runId: 7 }],
+		reason: 'lint running',
+	});
+	const refused = await pending.api('/api/executions/checks', { id: pending.id, choice: 'always' });
+	expect([refused.status, text(refused.body, 'error')]).toEqual([422, 'No failed check to switch off']);
+}, 60_000);
+
+test('the gate list of a stream leaves out the checks that one release skips', async () => {
+	const { repository, api, id } = await stopped({
+		credentials: ['npm-token'],
+		reason: 'no runtime grant for publish.yml: npm-token',
+	});
+	expect((await api('/api/executions/checks', { id, choice: 'skip' })).status).toBe(200);
+	await world.wait(16_000);
+	expect((await promotions(api))[0]?.state).toBe('awaiting-approval');
+	const gates = decodeSync(
+		streamGates,
+		(await api('/api/repositories/gates', { repositoryId: repository.id, stream: 'main' })).body,
+	);
+	expect(gates.gates.find(entry => entry.gate.kind === 'check')).toEqual({
+		gate: { kind: 'check', name: 'test' },
+		state: 'failed',
+		fact: 'failure',
+	});
+}, 60_000);
+
+test('a choice on a started release whose checks pass by now restarts it', async () => {
+	const { repository, api, sha, id } = await stopped();
+	const [waiting] = await promotions(api);
+	if (!waiting) throw new Error('Expected a promotion');
+	await world.coordinator(repository).enqueue({
+		...waiting,
+		approvedBy: 'start',
+		started: { via: 'cli', actor: 'owner' },
+	});
+	await world.wait(16_000);
+	expect((await promotions(api))[0]?.state).toBe('failed');
+	passChecks(repository, sha);
+	const chosen = await api('/api/executions/checks', { id, choice: 'skip' });
+	expect(text(chosen.body, 'state')).toBe('awaiting-approval');
+	expect(await audit('promotion.checks.skip')).toEqual([]);
+	await world.wait(16_000);
+	expect(dispatched()).toEqual([id]);
+}, 60_000);

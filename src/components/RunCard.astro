@@ -158,14 +158,16 @@ const card = runCard(run, now);
 			class="actions"
 		>
 			<input type="hidden" name="id" value={run.id}>
-			<button
-				class="primary"
-				name="choice"
-				value="rerun"
-				title="Rerun the failed jobs of each failing check and publish once they pass"
-			>
-				Rerun and wait
-			</button>
+			{card.rerunnable && (
+				<button
+					class="primary"
+					name="choice"
+					value="rerun"
+					title="Rerun the failed jobs of each failing check and publish once they pass"
+				>
+					Rerun and wait
+				</button>
+			)}
 			<button
 				name="choice"
 				value="skip"

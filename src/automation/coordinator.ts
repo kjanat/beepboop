@@ -321,13 +321,16 @@ function referenceProbe(reference: string, version: string): Publication | undef
 	};
 }
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, Automation>;
-type GateSubject = Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>;
+type GateSubject = Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'> & {
+	reruns?: number[];
+};
 interface GateOutcome {
 	gate: ReleaseGate;
 	state: 'passed' | 'waiting' | 'failed';
 	fact: string;
 	detail?: string;
 	runId?: number;
+	runDone?: boolean;
 }
 interface CommitGates {
 	manifest: string[];
@@ -2833,7 +2836,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					?? { repository: record.name, repositoryId, sourceSha: record.sha, configuration, stream };
 				const [{ outcomes }, skips, metadata] = yield* Effect.all([
 					this.commitGates(subject),
-					this.gateSkips(subject),
+					Effect.flatMap(this.store, store => store.gateSkips.list(repositoryId, stream)),
 					this.metadataProblemsOf(subject),
 				], { concurrency: 'unbounded' });
 				const merged = mergedOutcomes([...outcomes, {
@@ -2845,7 +2848,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const skipOf = (gate: ReleaseGate) => skips.find(skip => sameGate(skip.gate, gate));
 				const gates: GateView[] = merged.map(outcome => {
 					const skip = skipOf(outcome.gate);
-					const { runId: _runId, ...shown } = outcome;
+					const { runId: _runId, runDone: _runDone, ...shown } = outcome;
 					return { ...shown, ...(skip ? { skipped: { actor: skip.actor, at: skip.at } } : {}) };
 				});
 				for (const skip of skips) {
@@ -2890,26 +2893,30 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						? [{ gate: { kind: 'metadata' as const }, state: 'failed' as const, fact: 'incomplete' }]
 						: []),
 				]).filter(outcome => outcome.state !== 'passed' && !skips.some(skip => sameGate(skip.gate, outcome.gate)));
-				if (!stopping.length) return yield* precondition('No check stops this release');
-				const store = yield* this.store;
-				const at = clock.currentTimeMillisUnsafe();
-				const labels = stopping.map(outcome => gateLabel(outcome.gate));
 				const next: Execution = execution.state === 'failed'
 					? { ...execution, state: 'awaiting-approval', publications: reopened(execution.publications) }
 					: { ...execution };
 				delete next.reason;
+				if (!stopping.length) {
+					if (execution.state !== 'failed') return yield* precondition('No check stops this release');
+					yield* this.put(next);
+					yield* this.wakeUp();
+					return next;
+				}
+				const store = yield* this.store;
+				const at = clock.currentTimeMillisUnsafe();
 				if (choice === 'rerun') {
 					const runs = [
 						...new Set(
-							mergedOutcomes(outcomes).flatMap(outcome =>
-								outcome.state === 'failed' && outcome.runId !== undefined
+							outcomes.flatMap(outcome =>
+								outcome.state === 'failed' && outcome.runId !== undefined && outcome.runDone === true
 									&& stopping.some(entry => sameGate(entry.gate, outcome.gate))
 									? [outcome.runId]
 									: []
 							),
 						),
 					];
-					if (!runs.length) return yield* precondition('No failed check run to rerun');
+					if (!runs.length) return yield* precondition('No finished check run failed, so none can rerun');
 					const gateway = yield* this.gateway;
 					const token = yield* gateway.token(execution.repository, execution.repositoryId, {
 						contents: 'read',
@@ -2918,15 +2925,22 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					for (const run of runs) {
 						yield* gateway.call(`/repos/${execution.repository}/actions/runs/${run}/rerun-failed-jobs`, token, 'POST');
 					}
+					next.reruns = [...new Set([...(execution.reruns ?? []), ...runs])];
 					yield* store.audit(actor, 'promotion.checks.rerun', `${id}: ${runs.join(', ')}`);
 				} else if (choice === 'skip') {
 					next.skippedGates = [
 						...(execution.skippedGates ?? []),
 						...stopping.map(outcome => ({ gate: outcome.gate, actor, at })),
 					];
-					yield* store.audit(actor, 'promotion.checks.skip', `${id}: ${labels.join(', ')}`);
+					yield* store.audit(
+						actor,
+						'promotion.checks.skip',
+						`${id}: ${stopping.map(outcome => gateLabel(outcome.gate)).join(', ')}`,
+					);
 				} else {
-					for (const outcome of stopping) {
+					const failing = stopping.filter(outcome => outcome.state === 'failed');
+					if (!failing.length) return yield* precondition('No failed check to switch off');
+					for (const outcome of failing) {
 						yield* store.gateSkips.skip(execution.repositoryId, execution.stream, outcome.gate, actor);
 						yield* store.audit(
 							actor,
@@ -3198,6 +3212,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				),
 			);
 			const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
+			const statuses = new Map(workflowRuns.map(run => [String(run.id), run.status]));
 			const runOf = (run: (typeof runs)[number]) => /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
 			const pathOf = (run: (typeof runs)[number]) => paths.get(runOf(run) ?? '');
 			const unfinished = runs.filter(run => run.status !== 'completed');
@@ -3216,15 +3231,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			for (const run of gating) {
 				const conclusion = String(run.conclusion);
 				const runId = runOf(run);
+				const runDone = !runId || !statuses.has(runId) || statuses.get(runId) === 'completed';
+				const failed = run.status === 'completed' && !passingConclusions.includes(conclusion);
+				const rerunning = failed && !runDone && subject.reruns?.includes(Number(runId)) === true;
 				outcomes.push({
-					...(runId ? { runId: Number(runId) } : {}),
+					...(runId ? { runId: Number(runId), runDone } : {}),
 					gate: { kind: 'check', name: String(run.name) },
-					state: run.status !== 'completed'
-						? 'waiting'
-						: passingConclusions.includes(conclusion)
-						? 'passed'
-						: 'failed',
-					fact: run.status === 'completed' ? conclusion : 'running',
+					state: run.status !== 'completed' || rerunning ? 'waiting' : failed ? 'failed' : 'passed',
+					fact: rerunning ? 'rerunning' : run.status === 'completed' ? conclusion : 'running',
 				});
 			}
 			if (Number(status.total_count) > 0) {
