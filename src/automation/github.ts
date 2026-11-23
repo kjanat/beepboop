@@ -1,34 +1,27 @@
-import { Clock, Effect, Exit, Option, Schema } from 'effect';
-import { signJwt } from 'micro509/jose';
-import { importPkcs8Pem } from 'micro509/keys';
+import { Effect, Exit, Option, Schema } from 'effect';
 import { rawFile, rawPreset } from '@/automation/github-raw';
-import type { BotIdentity } from '@/automation/token';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { parsePresetReference } from '@/domain/preset.ts';
 import type { RefState } from '@/domain/refs.ts';
-import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import type { BotIdentity, GitHubApp, InstallationState } from '@/github/app.ts';
+import { makeGitHubApp, missingInstallationPermissions } from '@/github/app.ts';
 import { downloadWorkflowArtifact } from '@/github/artifacts.ts';
 import { copyReleaseAsset } from '@/github/releases.ts';
 import type { GitObject } from '@/github/resources.ts';
 import {
-	accessTokenSchema,
-	appSchema,
 	commitSchema,
 	comparisonSchema,
 	contentSchema,
-	installationSchema,
 	issueEventSchema,
 	matchingRefSchema,
 	repositorySchema,
 	treeSchema,
-	userSchema,
 	workflowRunSchema,
 } from '@/github/resources.ts';
 import type { TagRequest } from '@/github/tags.ts';
 import { createTag, peelTag, tagRefs } from '@/github/tags.ts';
-import type { GitHubTransport } from '@/github/transport.ts';
-import { gitHubRequest } from '@/github/transport.ts';
-import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
+import { GitHubTransport, gitHubRequest } from '@/github/transport.ts';
+import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
@@ -39,9 +32,6 @@ import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray } from '@/kernel/schema/structs.ts';
 
 type Permission = Record<string, 'read' | 'write'>;
-const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
-const ownerLogins = new Map<number, string>();
-const botIdentities = new Map<string, BotIdentity>();
 export interface VerificationContext {
 	repository: string;
 	github(path: string): Effect.Effect<unknown, DomainError>;
@@ -60,12 +50,19 @@ export interface SnapshotSource {
 }
 export class RepositoryGateway {
 	constructor(
-		private credentials: Credentials,
-		private ownerId: number,
+		credentials: Credentials,
+		ownerId: number,
 		private transport: Fetcher = platformFetch,
 		readonly defer?: (work: Promise<void>) => void,
 		private api?: GitHubTransport['Service'],
+		private app: GitHubApp['Service'] = Effect.runSync(makeGitHubApp(credentials, ownerId)),
 	) {}
+	private readonly requests = GitHubTransport.of({
+		call: (path, token, method, body, readOnlyGraphql) => this.call(path, token, method, body, readOnlyGraphql),
+	});
+	private viaGateway<A>(work: Effect.Effect<A, DomainError, GitHubTransport>): Effect.Effect<A, DomainError> {
+		return Effect.provideService(work, GitHubTransport, this.requests);
+	}
 	call(
 		path: string,
 		token: string,
@@ -121,92 +118,15 @@ export class RepositoryGateway {
 		id: number | undefined,
 		permissions: Permission = { contents: 'read', actions: 'read' },
 	): Effect.Effect<string, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			if (!repositoryNamePattern.test(name)) return yield* precondition('Invalid repository');
-			const jwt = yield* self.appToken();
-			const installation = yield* self.read(installationSchema, `/repos/${name}/installation`, jwt);
-			if (installation.account.id !== self.ownerId) {
-				return yield* precondition('Owner mismatch');
-			}
-			if (installation.permissions) {
-				const missing = Object.entries(permissions).filter(([name, level]) =>
-					installation.permissions?.[name] !== 'write' && installation.permissions?.[name] !== level
-				).map(([name, level]) => `${name}: ${level}`);
-				if (missing.length) {
-					return yield* precondition(
-						`${missingInstallationPermissions} (${missing.join(', ')}). Update permissions for ${yield* self
-							.appPage} and approve the installation update before retrying`,
-					);
-				}
-			}
-			const { token } = yield* self.read(
-				accessTokenSchema,
-				`/app/installations/${installation.id}/access_tokens`,
-				jwt,
-				'POST',
-				{
-					...(id === undefined ? { repositories: [name.split('/')[1]] } : { repository_ids: [id] }),
-					permissions,
-				},
-			);
-			const repository = yield* self.read(repositorySchema, `/repos/${name}`, token);
-			if (
-				(id !== undefined && repository.id !== id)
-				|| repository.full_name !== name
-				|| repository.owner.id !== self.ownerId
-			) {
-				return yield* precondition('Repository mismatch');
-			}
-			return token;
-		});
+		return this.viaGateway(this.app.installationToken(name, id, permissions));
 	}
-	/** JWT for the configured App, never the workflow's GITHUB_TOKEN. */
-	private appToken(): Effect.Effect<string, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const clock = yield* Clock.Clock;
-
-			const imported = yield* fromPromise(() =>
-				importPkcs8Pem(self.credentials.GITHUB_APP_PRIVATE_KEY, { kind: 'rsa', hash: 'SHA-256' })
-			);
-			if (!imported.ok) return yield* toDomainError(new Error(imported.message));
-			const now = Math.floor(clock.currentTimeMillisUnsafe() / 1000);
-			return yield* fromPromise(() =>
-				signJwt({
-					privateKey: imported.value,
-					algorithm: 'RS256',
-					claims: { iss: self.credentials.GITHUB_APP_ID, iat: now - 60, exp: now + 9 * 60 },
-				})
-			);
-		});
+	mintToken(name: string, id: number, permissions: Permission): Effect.Effect<string, DomainError> {
+		return this.viaGateway(this.app.mintToken(name, id, permissions));
 	}
-	readonly appPage: Effect.Effect<string, DomainError> = Effect.gen({ self: this }, function*() {
-		const { slug } = yield* this.read(appSchema, '/app', yield* this.appToken());
-		return `https://github.com/apps/${encodeURIComponent(slug)}`;
-	});
-	readonly botIdentity: Effect.Effect<BotIdentity, DomainError> = Effect.gen({ self: this }, function*() {
-		const cached = botIdentities.get(this.credentials.GITHUB_APP_ID);
-		if (cached) return cached;
-		const jwt = yield* this.appToken();
-		const { slug } = yield* this.read(appSchema, '/app', jwt);
-		if (!/^[a-z0-9-]+$/.test(slug)) return yield* precondition('Invalid App slug');
-		const login = `${slug}[bot]`;
-		const installation = yield* this.ownerInstallation(jwt);
-		const { token } = yield* this.read(
-			accessTokenSchema,
-			`/app/installations/${installation.id}/access_tokens`,
-			jwt,
-			'POST',
-			{ permissions: { metadata: 'read' } },
-		);
-		const user = yield* this.read(userSchema, `/users/${encodeURIComponent(login)}`, token);
-		if (user.login !== login || user.type !== 'Bot') return yield* precondition('App bot identity mismatch');
-		const id = user.id;
-		const identity = { login, id, email: `${id}+${login}@users.noreply.github.com` };
-		botIdentities.set(this.credentials.GITHUB_APP_ID, identity);
-		return identity;
-	});
+	readonly appPage: Effect.Effect<string, DomainError> = Effect.suspend(() => this.viaGateway(this.app.appPage));
+	readonly botIdentity: Effect.Effect<BotIdentity, DomainError> = Effect.suspend(() =>
+		this.viaGateway(this.app.botIdentity)
+	);
 	defaultRevision(name: string, id: number): Effect.Effect<{ ref: string; sha: string }, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
@@ -242,16 +162,8 @@ export class RepositoryGateway {
 			github: path => installation.pipe(Effect.flatMap(issued => this.call(path, issued))),
 		};
 	}
-	installation(name: string): Effect.Effect<'active' | 'suspended' | 'uninstalled', DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			if (!repositoryNamePattern.test(name)) return yield* precondition('Invalid repository');
-			const found = yield* self.call(`/repos/${name}/installation`, yield* self.appToken());
-			if (found === null) return 'uninstalled';
-			const installation = yield* Effect.fromResult(decode(installationSchema, found));
-			if (installation.account.id !== self.ownerId) return yield* precondition('Owner mismatch');
-			return installation.suspended_at ? 'suspended' : 'active';
-		});
+	installation(name: string): Effect.Effect<InstallationState, DomainError> {
+		return this.viaGateway(this.app.installation(name));
 	}
 	identify(name: string): Effect.Effect<number, DomainError> {
 		const self = this;
@@ -360,25 +272,8 @@ export class RepositoryGateway {
 			),
 		);
 	}
-	/** Read the proposal head without modifying or creating a branch. */
-	private ownerInstallation(jwt: string): Effect.Effect<Decoded<typeof installationSchema>, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const installation = (yield* self.read(mutableArray(installationSchema), '/app/installations?per_page=100', jwt))
-				.find(installation => installation.account.id === self.ownerId);
-			if (!installation) return yield* precondition('The GitHub App is not installed on the owner account');
-			return installation;
-		});
-	}
 	ownerLogin(): Effect.Effect<string, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const cached = ownerLogins.get(self.ownerId);
-			if (cached) return cached;
-			const login = (yield* self.ownerInstallation(yield* self.appToken())).account.login;
-			ownerLogins.set(self.ownerId, login);
-			return login;
-		});
+		return this.viaGateway(this.app.ownerLogin);
 	}
 	contains(
 		repository: string,

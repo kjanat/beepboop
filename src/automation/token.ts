@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import { expectedRunTitle } from '@/automation/execution';
 import type { Execution } from '@/automation/types';
+import type { BotIdentity } from '@/github/app.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { forbidden, invalid } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
@@ -10,16 +11,10 @@ export type TokenPermissions = Record<string, 'read' | 'write'>;
 
 const issuable = new Set(['contents', 'pull_requests', 'issues', 'checks', 'statuses', 'metadata']);
 
-export interface BotIdentity {
-	login: string;
-	id: number;
-	email: string;
-}
-
 export interface TokenIssuer {
 	readonly botIdentity: Effect.Effect<BotIdentity, DomainError>;
 	defaultRevision(name: string, id: number): Effect.Effect<{ ref: string; sha: string }, DomainError>;
-	token(name: string, id: number, permissions: TokenPermissions): Effect.Effect<string, DomainError>;
+	mintToken(name: string, id: number, permissions: TokenPermissions): Effect.Effect<string, DomainError>;
 	workflowRun(name: string, id: number, runId: number): Effect.Effect<{ title: string; path: string }, DomainError>;
 }
 
@@ -122,7 +117,7 @@ export function issueWorkflowToken(
 			permissions = yield* tokenPermissions(body.permissions);
 		}
 		const bot = body.identity === true ? yield* issuer.botIdentity : undefined;
-		const token = yield* issuer.token(identity.repository, identity.repositoryId, permissions);
+		const token = yield* issuer.mintToken(identity.repository, identity.repositoryId, permissions);
 		const granted = Object.entries(permissions).map(([name, level]) => `${name}:${level}`).join(',');
 		yield* log.audit(`run:${identity.runId}`, 'token.issued', `${identity.repository} ${granted}`);
 		return { token, ...(bot ? { bot } : {}) };

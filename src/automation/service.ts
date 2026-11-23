@@ -53,6 +53,7 @@ import { compareVersions } from '@/domain/semver.ts';
 import { validateAgainst } from '@/domain/validate';
 import { semVer } from '@/domain/version.ts';
 import { latestTag, versionsInFiles } from '@/domain/version-tags.ts';
+import { GitHubApp, isolateGitHubApp } from '@/github/app.ts';
 import { workflowRunsSchema } from '@/github/resources.ts';
 import { GitHubTransport, gitHubTransportLayer } from '@/github/transport.ts';
 import type { SetupPullEdit, SetupPullMerge } from '@/github/webhooks.ts';
@@ -1213,12 +1214,13 @@ export const makeAutomation = Effect.gen(function*() {
 	const vault = yield* ApplicationSecrets;
 	const auth = yield* Authentication;
 	const github = yield* GitHubTransport;
+	const app = yield* GitHubApp;
 	const { fetch: transport } = yield* HttpTransport;
 	return new AutomationService(env, {
 		authentication: auth,
 		store: new Store(db),
 		vault,
-		gateway: new RepositoryGateway(env, Number(env.OWNER_ID), transport, defer, github),
+		gateway: new RepositoryGateway(env, Number(env.OWNER_ID), transport, defer, github, app),
 		credentials: new CredentialStore(db),
 		sessions: auth.sessions,
 		cliSessions: auth.cliSessions,
@@ -1251,6 +1253,7 @@ export function applicationLayer(
 		Layer.succeed(HttpTransport, { fetch: transport }),
 		databaseLayer(env.DB),
 		gitHubTransportLayer(transport),
+		Layer.sync(GitHubApp, () => isolateGitHubApp(transport, env, Number(env.OWNER_ID))),
 	);
 	const secrets = Layer.effect(
 		ApplicationSecrets,
