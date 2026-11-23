@@ -1,7 +1,7 @@
 import { Clock, Effect, Exit, Option, Schema } from 'effect';
 import { signJwt } from 'micro509/jose';
 import { importPkcs8Pem } from 'micro509/keys';
-import { rawFile } from '@/automation/github-raw';
+import { rawFile, rawPreset } from '@/automation/github-raw';
 import type { GitObject } from '@/automation/github-resources';
 import {
 	accessTokenSchema,
@@ -516,6 +516,8 @@ export class RepositoryGateway {
 			const parsed = parsePresetReference(reference);
 			if (!parsed) return yield* precondition('Invalid preset');
 			const { repository: name, preset, ref } = parsed;
+			const published = yield* rawPreset(self.transport, name, preset, ref);
+			if (Option.isSome(published)) return published.value;
 			// Public presets need no installation grant; repository configuration cannot redirect credential-bearing requests.
 			const metadata = yield* self.read(repositorySchema, `/repos/${name}`, '');
 			const { sha: commitSha } = yield* self.read(
