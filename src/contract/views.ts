@@ -120,23 +120,6 @@ export const credentialsView = looseStruct({
 });
 export type CredentialsView = Decoded<typeof credentialsView>;
 
-export const destinationView = looseStruct({
-	id: Schema.String,
-	name: Schema.String,
-	kind: Schema.String,
-	credential: Schema.String,
-	subscribeNew: Schema.Boolean,
-	enabled: Schema.Boolean,
-});
-export const notificationsView = looseStruct({
-	destinations: mutableArray(destinationView),
-	subscriptions: mutableArray(
-		looseStruct({ destinationId: Schema.String, registry: Schema.String, name: Schema.String }),
-	),
-	deliveries: mutableArray(Schema.Unknown),
-});
-export type NotificationsView = Decoded<typeof notificationsView>;
-
 export const approvalReadiness = looseStruct({
 	problems: mutableArray(Schema.String),
 	blocked: mutableArray(Schema.String),

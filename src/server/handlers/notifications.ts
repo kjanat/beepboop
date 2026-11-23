@@ -1,26 +1,23 @@
 import { Effect } from 'effect';
 import { addWatch, removeManualWatch } from '@/automation/package-watch';
 import { routes } from '@/contract/routes';
+import {
+	listNotifications,
+	removeDestination,
+	saveDestination,
+	setSubscription,
+} from '@/notifications/http/notifications.ts';
 import { admin } from '@/server/handlers/kit';
 
 export const notificationEndpoints = {
-	notificationsList: admin(routes.notificationsList, (_, { service }) => {
-		const notifications = service.notifications();
-		return Effect.all({
-			destinations: notifications.destinations(),
-			subscriptions: notifications.subscriptions(),
-			deliveries: notifications.recent(),
-		});
-	}),
+	notificationsList: admin(routes.notificationsList, (_, { service }) => listNotifications(service.notifications())),
 	notificationsSave: admin(
 		routes.notificationsSave,
-		(input, { service, actor }) =>
-			service.notifications().saveDestination(input.destination, actor).pipe(Effect.map(id => ({ id }))),
+		(input, { service, actor }) => saveDestination(service.notifications(), input.destination, actor),
 	),
 	notificationsRemove: admin(
 		routes.notificationsRemove,
-		(input, { service, actor }) =>
-			service.notifications().removeDestination(input.id, actor).pipe(Effect.as({ ok: true })),
+		(input, { service, actor }) => removeDestination(service.notifications(), input.id, actor),
 	),
 	packagesAdd: admin(routes.packagesAdd, (input, { service, actor }) =>
 		Effect.gen(function*() {
@@ -36,7 +33,6 @@ export const notificationEndpoints = {
 		})),
 	packagesSubscription: admin(
 		routes.packagesSubscription,
-		(input, { service, actor }) =>
-			service.notifications().setSubscription(input, input.subscribed, actor).pipe(Effect.as({ ok: true })),
+		(input, { service, actor }) => setSubscription(service.notifications(), input, actor),
 	),
 } as const;

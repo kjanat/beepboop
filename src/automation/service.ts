@@ -14,7 +14,6 @@ import { inboxEvent } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import { registryLayer } from '@/automation/managers/registry';
-import { Notifications } from '@/automation/notifications';
 import { metadataProblems } from '@/automation/package-metadata';
 import { pollPackages } from '@/automation/package-watch';
 import { preparationMerge } from '@/automation/preparation-pull-requests';
@@ -82,6 +81,7 @@ import {
 	mutableStruct,
 	safeDecode,
 } from '@/kernel/schema/structs.ts';
+import { Notifications } from '@/notifications/delivery.ts';
 import { AuditStore } from '@/persistence/d1/audit';
 import { ChangeLog } from '@/persistence/d1/changes';
 import { Database, databaseLayer } from '@/persistence/d1/database';
@@ -213,7 +213,7 @@ export class AutomationService {
 		return new WinGetService(this.store, this.gateway, this.env);
 	}
 	notifications() {
-		return new Notifications(this.store, () => this.vault(), this.dependencies.transport);
+		return new Notifications(this.store.db, () => this.vault(), this.dependencies.transport);
 	}
 	vault() {
 		return this.dependencies.vault;

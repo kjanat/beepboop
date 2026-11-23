@@ -7,13 +7,13 @@ import type { World } from '@root/test/support/world.ts';
 import { adminSubject, eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema } from 'effect';
-import { Notifications, versionChanged } from '@/automation/notifications';
-import { Store } from '@/automation/store';
 import { routes } from '@/contract/routes';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { decodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
+import { deliveryLeaseDuration, NotificationDeliveries } from '@/notifications/adapters/d1/deliveries.ts';
+import { Notifications } from '@/notifications/delivery.ts';
+import { versionChanged } from '@/notifications/notification.ts';
 import { sql } from '@/persistence/d1/database';
-import { deliveryLeaseDuration, NotificationDeliveries } from '@/persistence/d1/notification-deliveries';
 import { loaders } from '@/server/loaders';
 
 let world: World;
@@ -26,7 +26,7 @@ async function staged(
 	reveal: (alias: string) => Effect.Effect<{ value: string; version: number }> = () =>
 		Effect.succeed({ value: 'https://example.test/hook', version: 1 }),
 ) {
-	const notifications = new Notifications(new Store(world.db), () => ({
+	const notifications = new Notifications(world.db, () => ({
 		reveal,
 	}), request);
 	await world.sealCredential('notification-url');
