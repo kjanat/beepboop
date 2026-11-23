@@ -107,19 +107,17 @@ export const repositoryEndpoints = {
 			if (!plan.edits.length) return yield* precondition('Release setup already matches the reviewed configuration');
 			const result = head && !takeOver && saved?.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)
 				? yield* refreshPullRequest(service.gateway, snapshot, branch, title, body, head)
-				: yield* pullRequest(
-					service.gateway,
+				: yield* pullRequest(service.gateway, {
 					snapshot,
 					branch,
 					title,
 					body,
-					plan.edits,
-					head ?? undefined,
-					undefined,
-					previous,
-					undefined,
-					{ takeOver, coAuthored: true },
-				);
+					edits: plan.edits,
+					expectedHead: head ?? undefined,
+					setupEdits: previous,
+					takeOver,
+					coAuthored: true,
+				});
 			const content = plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
 				?? snapshot.files['.github/beepboop.json'];
 			const generated = new Map(

@@ -20,21 +20,7 @@ test('a pull request commit carries the administrator trailer only for work that
 	const edit = { path: 'NOTES.md', before: '', after: 'notes\n' };
 	const commit = async (branch: string, coAuthored: boolean) => {
 		const { head } = await Effect.runPromise(
-			pullRequest(
-				gateway,
-				snapshot,
-				branch,
-				'chore: notes',
-				'Notes',
-				[edit],
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				{
-					coAuthored,
-				},
-			),
+			pullRequest(gateway, { snapshot, branch, title: 'chore: notes', body: 'Notes', edits: [edit], coAuthored }),
 		);
 		return world.github.resolve(repository, head).message;
 	};

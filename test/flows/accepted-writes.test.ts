@@ -54,11 +54,17 @@ test('PR creation succeeds with a stale response head while all later GitHub rea
 		}
 		return response;
 	});
-	const result = await Effect.runPromise(pullRequest(gateway, snapshot, 'release/test', 'Release', '', [{
-		path: 'package.json',
-		before: snapshot.files['package.json'] ?? '',
-		after: '{"name":"widget","version":"1.1.0"}\n',
-	}]));
+	const result = await Effect.runPromise(pullRequest(gateway, {
+		snapshot,
+		branch: 'release/test',
+		title: 'Release',
+		body: '',
+		edits: [{
+			path: 'package.json',
+			before: snapshot.files['package.json'] ?? '',
+			after: '{"name":"widget","version":"1.1.0"}\n',
+		}],
+	}));
 	expect(result.url).toBe(`https://github.com/${repository.name}/pull/1`);
 	expect(result.head).toEqual(one(repository.pulls, 'created PR').head.sha);
 	await Promise.all(background);
@@ -240,11 +246,17 @@ for (const when of ['before update', 'during update'] as const) {
 		const repository = widget(world.github);
 		const gateway = new RepositoryGateway(world.env, Number(world.env.OWNER_ID));
 		const snapshot = await Effect.runPromise(gateway.snapshot(repository.name, repository.id));
-		const created = await Effect.runPromise(pullRequest(gateway, snapshot, 'release/base', 'Release', '', [{
-			path: 'package.json',
-			before: snapshot.files['package.json'] ?? '',
-			after: '{"name":"widget","version":"1.1.0"}\n',
-		}]));
+		const created = await Effect.runPromise(pullRequest(gateway, {
+			snapshot,
+			branch: 'release/base',
+			title: 'Release',
+			body: '',
+			edits: [{
+				path: 'package.json',
+				before: snapshot.files['package.json'] ?? '',
+				after: '{"name":"widget","version":"1.1.0"}\n',
+			}],
+		}));
 		const stored = one(repository.pulls, 'created PR');
 		if (when === 'before update') stored.base = 'maintenance';
 		world.network.serve('api.github.com', request => {

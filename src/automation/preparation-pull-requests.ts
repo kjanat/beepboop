@@ -44,20 +44,36 @@ function preparationPullNumber(repository: string, url: string): Effect.Effect<s
 		return parsed.pathname.slice(prefix.length);
 	});
 }
+export interface PullRequestDraft<R = never> {
+	readonly snapshot: Snapshot;
+	readonly branch: string;
+	readonly title: string;
+	readonly body: string;
+	readonly edits: Edit[];
+	readonly expectedHead?: string | undefined;
+	readonly checkpoint?: ((head: string) => Effect.Effect<void, DomainError, R>) | undefined;
+	readonly setupEdits?: Edit[] | undefined;
+	readonly existingPull?: number | undefined;
+	readonly takeOver?: boolean;
+	readonly coAuthored?: boolean;
+}
 export function pullRequest<R = never>(
 	gateway: RepositoryGateway,
-	snapshot: Snapshot,
-	branch: string,
-	title: string,
-	body: string,
-	edits: Edit[],
-	expectedHead?: string,
-	checkpoint?: (head: string) => Effect.Effect<void, DomainError, R>,
-	setupEdits?: Edit[],
-	existingPull?: number,
-	options: { takeOver?: boolean; coAuthored?: boolean } = {},
+	draft: PullRequestDraft<R>,
 ): Effect.Effect<{ url: string; head: string }, DomainError, R> {
-	const { takeOver = false, coAuthored = false } = options;
+	const {
+		snapshot,
+		branch,
+		title,
+		body,
+		edits,
+		expectedHead,
+		checkpoint,
+		setupEdits,
+		existingPull,
+		takeOver = false,
+		coAuthored = false,
+	} = draft;
 	return Effect.gen(function*() {
 		const { name, id } = snapshot.repository;
 		const token = yield* gateway.token(name, id, {
