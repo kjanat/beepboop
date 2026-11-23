@@ -14,19 +14,10 @@ import {
 	winGetTagPrefixPattern,
 	workflowFilePattern,
 } from '@/domain/catalog.ts';
-import {
-	bindingValue,
-	configurationValue,
-	refPolicyValue,
-	streamValue,
-	subscriptionIssue,
-	subscriptionValue,
-	wingetValue,
-} from '@/domain/configuration-value';
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { parseReleaseIdentity } from '@/domain/package-identity.ts';
 import { presetReferencePattern } from '@/domain/preset.ts';
-import { releaseStarts, versionBump } from '@/domain/release-start.ts';
+import { releaseStart, releaseStarts, versionBump } from '@/domain/release-start.ts';
 import {
 	approvalOfPublishWhen,
 	bumpOfVersionLands,
@@ -40,28 +31,125 @@ import {
 	versionLandsDescription,
 	versionPrMerge,
 	versionPrMergeDescription,
+	versionPrMerges,
 	versionScope,
 	versionScopeDescription,
 } from '@/domain/setup-terms.ts';
 import { versionFileSchema } from '@/domain/version-files.ts';
-import { actionsRevisionPattern, workflowSetup } from '@/domain/workflow-setup.ts';
+import { actionsRevisionPattern, workflowSetup, workflowSetupValue } from '@/domain/workflow-setup.ts';
 import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
 import type { Diagnostic, DiagnosticCode } from '@/kernel/errors/diagnostics.ts';
 import { isDiagnosticCode } from '@/kernel/errors/diagnostics.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
-import { textSchema as nonempty } from '@/kernel/schema/result.ts';
+import { textSchema as nonempty, stringsSchema as strings } from '@/kernel/schema/result.ts';
 import type { Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	mapped,
 	matchesPattern,
 	mutableArray,
 	mutableRecord,
+	mutableStruct,
 	refined,
 	schemaIssues,
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { purl } from '@/package-url';
+
+const managerName = Schema.Literals(managerNames);
+
+export const refPolicyValue = refined(
+	mutableStruct({
+		phase: Schema.Literals(['version', 'aliases']),
+		prefix: Schema.String,
+		aliases: mutableArray(Schema.Literals(['major', 'minor'])),
+		signed: Schema.Boolean,
+		immutable: Schema.optional(Schema.Boolean),
+		distribution: Schema.optional(mutableStruct({ files: strings, ancestry: Schema.Literal('ours') })),
+	}),
+	value => !value.distribution || (value.phase === 'version' && value.signed && value.immutable === true),
+	'Distribution publication requires signed version refs and immutable Releases',
+);
+const binding = {
+	outputs: Schema.optional(mutableArray(outputSchema)),
+	artifactInputs: Schema.optional(mutableArray(inputSchema)),
+	platform: Schema.optional(platformSchema),
+	refs: Schema.optional(refPolicyValue),
+	mode: Schema.optional(Schema.Literals(['observe', 'dispatch'])),
+	each: Schema.optional(Schema.Literal('package')),
+	needs: Schema.optional(strings),
+	needsJobs: Schema.optional(mutableRecord(Schema.String, strings)),
+	publications: Schema.optional(strings),
+	schedule: Schema.optional(Schema.String),
+	file: Schema.String,
+	ref: Schema.optional(Schema.String),
+	inputs: mutableRecord(Schema.String, Schema.Union([Schema.String, Schema.Boolean, Schema.Finite])).pipe(
+		Schema.withDecodingDefault(Effect.succeed({})),
+	),
+	required: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+	setup: Schema.optional(workflowSetupValue),
+};
+export const bindingValue = mutableStruct(binding);
+export const streamValue = mutableStruct({
+	versionFiles: Schema.optional(mutableArray(versionFileSchema)),
+	versionSource: Schema.optional(mutableStruct({ kind: Schema.Literal('tags'), prefix: Schema.String })),
+	packages: Schema.optional(strings),
+	companionModules: Schema.optional(strings),
+	packageTags: Schema.optional(strings),
+	versioning: Schema.Literals(['workspace', 'independent', 'none']),
+	concurrency: Schema.Literals(['queue', 'supersede-pending']),
+	prepare: mutableStruct({
+		strategy: Schema.optional(Schema.Literals(['managed', 'workflow'])),
+		version: Schema.Literal('manual'),
+		workflow: Schema.optional(bindingValue),
+		bump: Schema.optional(versionBump),
+		versionPrMerge: Schema.optional(Schema.Literals(versionPrMerges)),
+	}),
+	promote: mutableStruct({
+		approval: Schema.Literals(['required', 'merge', 'push']),
+		workflow: Schema.optional(bindingValue),
+	}),
+	start: Schema.optional(mutableArray(releaseStart)),
+	workflows: mutableRecord(Schema.String, bindingValue),
+	required: strings,
+	needs: Schema.optional(mutableRecord(Schema.String, strings)),
+	credentials: strings,
+	channels: mutableStruct({ stable: Schema.String, prerelease: Schema.String }),
+});
+const subscriptionFields = {
+	id: Schema.String,
+	sourceStream: Schema.optional(Schema.String),
+	sourceGroup: Schema.optional(Schema.String),
+	publication: Schema.optional(Schema.String),
+	source: Schema.String,
+	workflow: Schema.optional(Schema.String),
+};
+export const subscriptionIssue = strictStruct({
+	title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+	body: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(60_000)),
+});
+export const subscriptionValue = Schema.Union([
+	mutableStruct({
+		...subscriptionFields,
+		event: Schema.Literals(['release', 'package.version.changed', 'workflow_run']),
+		stream: Schema.String,
+		operation: Schema.String,
+	}),
+	mutableStruct({ ...subscriptionFields, event: Schema.Literal('package.version.changed'), issue: subscriptionIssue }),
+]);
+export const wingetValue = mutableStruct({
+	config: Schema.String,
+	tagPrefix: Schema.String,
+	automatic: Schema.Boolean,
+});
+export const configurationValue = mutableStruct({
+	actionsRevision: Schema.optional(Schema.String),
+	winget: Schema.optional(wingetValue),
+	extends: strings,
+	managers: mutableArray(managerName),
+	streams: mutableRecord(Schema.String, streamValue),
+	subscriptions: mutableArray(subscriptionValue),
+});
 
 export const reservedOperations = ['prepare', 'promote'] as const;
 export type ReservedOperation = (typeof reservedOperations)[number];

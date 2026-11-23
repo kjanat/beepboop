@@ -5,9 +5,9 @@ import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegis
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
 import { routes } from '@/contract/routes';
-import { configurationDiagnostics } from '@/domain/configuration';
+import { resolveConfiguration } from '@/domain/configuration/presets.ts';
+import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
-import { resolveConfiguration } from '@/domain/repository-configuration.ts';
 import { repositoryName, repositoryReference } from '@/domain/repository-name.ts';
 import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

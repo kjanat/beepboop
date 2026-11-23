@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import type { Stream } from '@/automation/types';
-import { operations } from '@/domain/configuration';
+import { operations } from '@/domain/configuration/schema.ts';
 import type { Inventory, Package } from '@/domain/inventory.ts';
 import { matchesPackage } from '@/domain/package-identity.ts';
 import { compareVersions } from '@/domain/semver.ts';

@@ -12,7 +12,7 @@ for.
 
 These files in this repository define the behaviour:
 
-- `packages/domain/src/configuration.ts` holds the zod schema for `.github/beepboop.json`.
+- `packages/domain/src/configuration/schema.ts` holds the zod schema for `.github/beepboop.json`.
   `schemas/v1.json` is generated from it and is served at
   `https://beepboop.kjanat.dev/schema/v1.json`.
 - `src/contract/setup.ts` holds `setupChoicesSchema` for the choices file.
@@ -242,7 +242,7 @@ Workflow binding fields:
 ## Checks
 
 - A "Configuration invalid" plan error lists each issue as `path: message`.
-  Compare the path against `packages/domain/src/configuration.ts`.
+  Compare the path against `packages/domain/src/configuration/schema.ts`.
 - `bun run discover ../repo` prints the inventory,
   streams and plan for the committed HEAD of a local checkout.
   `bun run discover --github owner/repo@ref` does the same for GitHub.

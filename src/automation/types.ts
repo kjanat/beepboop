@@ -3,14 +3,14 @@ import type { FrozenPackageTag } from '@/automation/package-tags';
 import type { GitHubRunState } from '@/contract/github';
 import type { ExecutionStateView } from '@/contract/views';
 import type { ManagerName } from '@/domain/catalog.ts';
-import type { Configuration, WorkflowBinding } from '@/domain/configuration';
+import type { Configuration, WorkflowBinding } from '@/domain/configuration/schema.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
 import type { ModuleTag, RefPlan, RefState } from '@/domain/refs.ts';
 import type { StartChannel } from '@/domain/release-start.ts';
 import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
 import type { PackageIdentity } from '@/package-url';
 
-export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration';
+export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration/schema.ts';
 export interface ReleasePlan {
 	lockfiles?: string[];
 	version: string;

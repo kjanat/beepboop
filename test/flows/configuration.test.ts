@@ -11,8 +11,8 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import type { ManagerName } from '@/domain/catalog.ts';
-import { configurationSchema, issueMessage } from '@/domain/configuration';
-import { refPolicyValue } from '@/domain/configuration-value';
+import { parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
+import { configurationSchema, issueMessage, refPolicyValue } from '@/domain/configuration/schema.ts';
 import {
 	identityOf,
 	identityPackageName,
@@ -20,7 +20,6 @@ import {
 	parseReleaseIdentity,
 	releaseIdentity,
 } from '@/domain/package-identity.ts';
-import { parseRepositoryConfiguration } from '@/domain/repository-configuration.ts';
 import { validateAgainst } from '@/domain/validate';
 import { workflowSetup } from '@/domain/workflow-setup.ts';
 import { record } from '@/kernel/schema/result.ts';

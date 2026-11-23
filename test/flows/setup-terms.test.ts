@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
 import { Effect, Result, Schema, Struct } from 'effect';
-import { configurationSchema } from '@/domain/configuration';
-import { legacyConfiguration, readableConfiguration } from '@/domain/configuration-names.ts';
-import { parseRepositoryConfiguration, resolveConfiguration } from '@/domain/repository-configuration.ts';
+import { legacyConfiguration, readableConfiguration } from '@/domain/configuration/names.ts';
+import { parseRepositoryConfiguration, resolveConfiguration } from '@/domain/configuration/presets.ts';
+import { configurationSchema } from '@/domain/configuration/schema.ts';
 import {
 	alwaysStarted,
 	existingTriggersQuestion,

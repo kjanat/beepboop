@@ -31,7 +31,7 @@ import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { integrateWorkflow, publishMinutes } from '@/automation/setup-workflows';
 import { setupChoicesSchema } from '@/contract/setup';
-import { mergeConfiguration } from '@/domain/repository-configuration.ts';
+import { mergeConfiguration } from '@/domain/configuration/presets.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

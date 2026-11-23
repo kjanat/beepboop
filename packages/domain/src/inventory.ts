@@ -1,5 +1,5 @@
 import type { ManagerName } from '@/domain/catalog.ts';
-import type { Configuration } from '@/domain/configuration';
+import type { Configuration } from '@/domain/configuration/schema.ts';
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
 import type { PackagePublication } from '@/domain/package-publication.ts';
 import type { Access } from '@/domain/repository';
