@@ -349,19 +349,14 @@ export const releaseEndpoints = {
 			if (input.preview !== false || !edits.length) {
 				return { sourceSha: snapshot.sha, upstreamRelease: release, edits };
 			}
-			const result = yield* pullRequest(
-				service.gateway,
+			const result = yield* pullRequest(service.gateway, {
 				snapshot,
-				`release/hooks/${release.repository.id}/${release.commit}`,
-				`chore: update hooks to ${release.version}`,
-				`Upstream: ${event.source}\nCommit: ${release.commit}`,
+				branch: `release/hooks/${release.repository.id}/${release.commit}`,
+				title: `chore: update hooks to ${release.version}`,
+				body: `Upstream: ${event.source}\nCommit: ${release.commit}`,
 				edits,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				{ coAuthored: true },
-			);
+				coAuthored: true,
+			});
 			yield* service.store.audit(actor, 'hooks.prepare', result.url);
 			return result;
 		})),

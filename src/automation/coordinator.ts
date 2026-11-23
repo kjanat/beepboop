@@ -1263,22 +1263,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					})
 					: prepared.head
 					? yield* resumePreparation(gateway, source, branch, title, body, prepared.head)
-					: yield* pullRequest(
-						gateway,
-						source,
+					: yield* pullRequest(gateway, {
+						snapshot: source,
 						branch,
 						title,
 						body,
-						ordered,
-						undefined,
-						head => {
+						edits: ordered,
+						checkpoint: head => {
 							prepared.head = head;
 							return this.put(execution);
 						},
-						undefined,
-						undefined,
-						{ coAuthored: execution.initiatedBy !== undefined },
-					);
+						coAuthored: execution.initiatedBy !== undefined,
+					});
 				const merged = yield* this.autoMerged(execution, result);
 				prepared.result = merged;
 				yield* this.put(execution);
@@ -3965,19 +3961,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						operation.body,
 						operation.head,
 					)
-					: yield* pullRequest(
-						gateway,
+					: yield* pullRequest(gateway, {
 						snapshot,
-						operation.branch,
-						operation.title,
-						operation.body,
-						operation.plan.edits,
-						undefined,
+						branch: operation.branch,
+						title: operation.title,
+						body: operation.body,
+						edits: operation.plan.edits,
 						checkpoint,
-						undefined,
-						undefined,
-						{ coAuthored: execution.initiatedBy !== undefined },
-					);
+						coAuthored: execution.initiatedBy !== undefined,
+					});
 				operation.result = yield* this.autoMerged(execution, result);
 				execution.state = 'succeeded';
 				delete execution.reason;

@@ -200,19 +200,18 @@ export function maintainSetup(
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
 			}
-			const result = yield* pullRequest(
-				gateway,
+			const result = yield* pullRequest(gateway, {
 				snapshot,
-				pull.branch,
-				proposal.title,
-				proposal.body,
-				plan.edits,
-				pull.head,
-				() => current,
-				previous,
-				pull.number,
-				{ coAuthored: true },
-			);
+				branch: pull.branch,
+				title: proposal.title,
+				body: proposal.body,
+				edits: plan.edits,
+				expectedHead: pull.head,
+				checkpoint: () => current,
+				setupEdits: previous,
+				existingPull: pull.number,
+				coAuthored: true,
+			});
 			const generated = new Map(
 				previous.flatMap(edit => {
 					const after = snapshot.files[edit.path];
@@ -299,19 +298,16 @@ function migrateSetup(
 			presetShas: resolved.presetShas,
 		}, resolved.configuration);
 		if (plan.blockers.length || !plan.edits.length) return;
-		const result = yield* pullRequest(
-			gateway,
+		const result = yield* pullRequest(gateway, {
 			snapshot,
 			branch,
-			setupTitle(branch, plan.edits),
-			setupBody(plan, { branch, defaultBranch: snapshot.repository.defaultBranch }),
-			plan.edits,
-			head ?? undefined,
-			undefined,
-			[],
-			undefined,
-			{ coAuthored: true },
-		);
+			title: setupTitle(branch, plan.edits),
+			body: setupBody(plan, { branch, defaultBranch: snapshot.repository.defaultBranch }),
+			edits: plan.edits,
+			expectedHead: head ?? undefined,
+			setupEdits: [],
+			coAuthored: true,
+		});
 		yield* replaceDocument(sql(store.db), 'onboarding', 'repository_id', id, document, {
 			...saved,
 			...result,
