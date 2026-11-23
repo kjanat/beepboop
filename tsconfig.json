@@ -17,7 +17,8 @@
 			"@/notifications/*": ["./packages/notifications/src/*"],
 			"@/publication/*": ["./packages/publication/src/*"],
 			"@/actions/*": ["./packages/actions/src/*"],
-			"@/setup/*": ["./packages/setup/src/*"]
+			"@/setup/*": ["./packages/setup/src/*"],
+			"@/release/*": ["./packages/release/src/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",

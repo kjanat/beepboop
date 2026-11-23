@@ -198,6 +198,18 @@
         "@types/mdast": "4.0.4",
       },
     },
+    "packages/release": {
+      "name": "@beepboopbot/release",
+      "version": "0.0.0",
+      "dependencies": {
+        "@beepboopbot/discovery": "workspace:*",
+        "@beepboopbot/domain": "workspace:*",
+        "@beepboopbot/kernel": "workspace:*",
+        "@beepboopbot/persistence": "workspace:*",
+        "@beepboopbot/publication": "workspace:*",
+        "effect": "^4.1.2",
+      },
+    },
     "packages/setup": {
       "name": "@beepboopbot/setup",
       "version": "0.0.0",
@@ -297,6 +309,8 @@
     "@beepboopbot/persistence": ["@beepboopbot/persistence@workspace:packages/persistence"],
 
     "@beepboopbot/publication": ["@beepboopbot/publication@workspace:packages/publication"],
+
+    "@beepboopbot/release": ["@beepboopbot/release@workspace:packages/release"],
 
     "@beepboopbot/setup": ["@beepboopbot/setup@workspace:packages/setup"],
 

@@ -1,5 +1,4 @@
 import type { ResolvedInput } from '@/automation/execution-outputs';
-import type { FrozenPackageTag } from '@/automation/package-tags';
 import type { ExecutionStateView } from '@/contract/views';
 import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration/schema.ts';
@@ -11,6 +10,7 @@ import type { GateSkip } from '@/domain/release-gates.ts';
 import type { StartChannel } from '@/domain/release-start.ts';
 import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
 import type { PublishKind } from '@/publication/publish-pace.ts';
+import type { FrozenPackageTag } from '@/release/domain/package-tags.ts';
 
 export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration/schema.ts';
 export interface ReleasePlan {

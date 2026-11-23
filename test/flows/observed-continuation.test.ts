@@ -4,10 +4,10 @@ import { editableConfiguration, publishWorkflow } from '@root/test/support/repos
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { createExecution } from '@/automation/execution';
-import { ReleaseHistory } from '@/automation/release-history';
 import { Automation } from '@/automation/service';
 import { requireReady } from '@/domain/repository';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { ReleaseHistory } from '@/release/domain/history.ts';
 
 let world: World;
 eachWorld(created => {

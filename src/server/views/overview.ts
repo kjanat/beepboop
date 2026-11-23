@@ -1,5 +1,5 @@
-import { newestActiveFirst } from '@/automation/execution-order.ts';
 import { readiness } from '@/domain/repository';
+import { newestActiveFirst } from '@/release/domain/execution-order.ts';
 import type { ViewOf } from '@/server/loaders.ts';
 import { activeStates, needingUser, releaseSummaries } from '@/server/releases.ts';
 

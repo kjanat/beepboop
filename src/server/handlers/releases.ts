@@ -1,12 +1,10 @@
 import { Effect } from 'effect';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
-import { createReleasePreparation } from '@/automation/managed';
 import { planRelease, selectedReleasePackages } from '@/automation/managers';
 import { planReleaseSet } from '@/automation/planning';
 import { pullRequest } from '@/automation/preparation-pull-requests';
 import { capabilitySentence, releasable, releaseCapability, startRefusal } from '@/automation/release-capability';
-import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Execution, ReleasePlan, ReleaseStarted, Stream } from '@/automation/types';
@@ -25,6 +23,8 @@ import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { planIdentity } from '@/persistence/identity-keys';
+import { createReleasePreparation } from '@/release/domain/managed.ts';
+import { resolvePackageVersion } from '@/release/domain/version.ts';
 import type { AdminContext } from '@/server/handlers/kit';
 import { admin, readyRepository } from '@/server/handlers/kit';
 
