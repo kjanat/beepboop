@@ -11,13 +11,14 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseJson, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { goManager } from '@/publication/registries/go.ts';
-import { jsrManager, setUpJsrPackage } from '@/publication/registries/jsr.ts';
+import { jsrManager } from '@/publication/registries/jsr.ts';
 import { npmLatest } from '@/publication/registries/npm.ts';
 import { pypiManager } from '@/publication/registries/pypi.ts';
 import type { Manager } from '@/publication/registries/registry.ts';
 import { registryLayer } from '@/publication/registries/registry.ts';
 import { verifyRegistry } from '@/publication/registries/verification.ts';
 import { vscodeManager } from '@/publication/registries/vscode.ts';
+import { setUpJsrPackage } from '@/publication/setup/jsr.ts';
 
 function openResponse(status: number, cancel: () => void) {
 	return new Response(new ReadableStream<Uint8Array>({ cancel }), { status });

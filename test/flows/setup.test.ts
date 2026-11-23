@@ -31,10 +31,11 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { cratePublishCommands } from '@/publication/crate-script.ts';
 import { releaseAfterMerge, setupBody } from '@/setup/body.ts';
 import { behaviourChanges, changeDetails, describeEdits, setupTitle } from '@/setup/changes.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
-import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/setup/editing/commands.ts';
+import { ledgerCommand, suggestedCommands } from '@/setup/editing/commands.ts';
 import { bodyChoices, setupOptions } from '@/setup/options.ts';
 import { parseSetupPlan } from '@/setup/plan.ts';
 import { streamSummary } from '@/setup/summary.ts';

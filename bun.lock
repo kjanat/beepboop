@@ -180,6 +180,7 @@
       "name": "@beepboopbot/publication",
       "version": "0.0.0",
       "dependencies": {
+        "@beepboopbot/credentials": "workspace:*",
         "@beepboopbot/discovery": "workspace:*",
         "@beepboopbot/domain": "workspace:*",
         "@beepboopbot/github": "workspace:*",
