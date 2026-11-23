@@ -1,7 +1,5 @@
 import { Effect, Option, Result } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
-import { expectedRunTitle } from '@/automation/execution';
-import type { Execution } from '@/automation/types';
 import type { BotIdentity } from '@/github/app.ts';
 import type { RevisionFiles } from '@/github/contents.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -110,12 +108,20 @@ const sameDefinition = Effect.fnUntraced(function*(
 	return Option.isSome(paths) && definition(current, paths.value) === definition(run, paths.value);
 });
 
-export interface TokenAudit {
-	audit(actor: string, action: string, target: string): Effect.Effect<void, DomainError>;
-	execution(id: string): Effect.Effect<Execution | undefined, DomainError>;
+export interface DispatchedExecution {
+	readonly repositoryId: number;
+	readonly state: string;
+	readonly runId?: number;
+	readonly workflow?: { readonly file: string; readonly ref: string };
+	readonly runTitle: string;
 }
 
-const dispatchedStates: Execution['state'][] = ['dispatching', 'running', 'uncertain'];
+export interface TokenAudit {
+	audit(actor: string, action: string, target: string): Effect.Effect<void, DomainError>;
+	execution(id: string): Effect.Effect<DispatchedExecution | undefined, DomainError>;
+}
+
+const dispatchedStates: ReadonlySet<string> = new Set(['dispatching', 'running', 'uncertain']);
 
 function dispatchedByBeepboop(
 	identity: RunIdentity,
@@ -130,7 +136,7 @@ function dispatchedByBeepboop(
 		const workflow = execution?.workflow;
 		if (
 			!execution || !workflow || execution.repositoryId !== identity.repositoryId
-			|| !dispatchedStates.includes(execution.state)
+			|| !dispatchedStates.has(execution.state)
 			|| (execution.runId !== undefined && execution.runId !== identity.runId)
 			|| identity.workflowRef !== `${identity.repository}/.github/workflows/${workflow.file}@${identity.ref}`
 			|| identity.ref.replace(/^refs\/(?:heads|tags)\//, '') !== workflow.ref.replace(/^refs\/(?:heads|tags)\//, '')
@@ -138,7 +144,7 @@ function dispatchedByBeepboop(
 			return false;
 		}
 		const run = yield* issuer.workflowRun(identity.repository, identity.repositoryId, identity.runId);
-		return (execution.runId === identity.runId || run.title === expectedRunTitle(execution))
+		return (execution.runId === identity.runId || run.title === execution.runTitle)
 			&& run.path === `.github/workflows/${workflow.file}`;
 	});
 }

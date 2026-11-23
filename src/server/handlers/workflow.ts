@@ -1,6 +1,6 @@
 import { Effect, Schema } from 'effect';
 import { issueWorkflowToken } from '@/auth/workflow-token.ts';
-import { createExecution } from '@/automation/execution';
+import { createExecution, dispatchedExecution } from '@/automation/execution';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Artifact, Execution, Publication } from '@/automation/types';
 import { routes } from '@/contract/routes';
@@ -118,7 +118,10 @@ export const workflowEndpoints = {
 		(input, { env, identity, service }) =>
 			issueWorkflowToken(identity, input, Number(env.OWNER_ID), service.gateway, {
 				audit: (actor, action, target) => service.store.audit(actor, action, target),
-				execution: id => fromPromise(() => service.coordinator(identity.repositoryId).execution(id)),
+				execution: id =>
+					fromPromise(() => service.coordinator(identity.repositoryId).execution(id)).pipe(
+						Effect.map(execution => execution && dispatchedExecution(execution)),
+					),
 			}),
 	),
 	workflowStart: workflow(routes.workflowStart, (input, context) =>

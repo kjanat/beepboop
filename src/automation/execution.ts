@@ -1,4 +1,5 @@
 import { Clock, Effect } from 'effect';
+import type { DispatchedExecution } from '@/auth/workflow-token.ts';
 import { outputsComplete } from '@/automation/execution-outputs';
 import { githubFailureReason, githubRunLabel } from '@/automation/run-labels';
 import type { Configuration, Execution, Publication, ReleaseReference, WorkflowBinding } from '@/automation/types';
@@ -161,6 +162,15 @@ export function runTitle(execution: Execution): string {
 }
 export function expectedRunTitle(execution: Execution): string {
 	return execution.titled ? runTitle(execution) : `Release operation ${execution.id}`;
+}
+export function dispatchedExecution(execution: Execution): DispatchedExecution {
+	return {
+		repositoryId: execution.repositoryId,
+		state: execution.state,
+		...(execution.runId === undefined ? {} : { runId: execution.runId }),
+		...(execution.workflow ? { workflow: { file: execution.workflow.file, ref: execution.workflow.ref } } : {}),
+		runTitle: expectedRunTitle(execution),
+	};
 }
 function requiredIds(execution: Execution): readonly string[] {
 	return execution.workflow?.publications
