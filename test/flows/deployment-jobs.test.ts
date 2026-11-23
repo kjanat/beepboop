@@ -71,3 +71,25 @@ test('deploys keeps a check that matches a deployment job and a job without an e
 	);
 	expect(deploys('verify (unit)', jobs)).toBe(false);
 });
+
+test.each([
+	["${{ format('publish ({0})', matrix.suite) }}"],
+	['${{ matrix.suite }}'],
+	["${{ format('}}', matrix.suite) }} (integration)"],
+	['${{ matrix.suite'],
+])('deploys keeps a check that a plain job called %p can render', name => {
+	const jobs = checkJobs(
+		[
+			'jobs:',
+			'  publish:',
+			'    environment: tag',
+			'    strategy: { matrix: { target: [npm] } }',
+			'  suites:',
+			`    name: "${name}"`,
+			'    strategy: { matrix: { suite: [integration] } }',
+			'',
+		].join('\n'),
+	);
+	expect(deploys('publish (integration)', jobs)).toBe(false);
+	expect(deploys('publish (npm)', jobs)).toBe(name === "${{ format('}}', matrix.suite) }} (integration)");
+});
