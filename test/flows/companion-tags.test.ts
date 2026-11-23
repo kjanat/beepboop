@@ -5,14 +5,14 @@ import { companionProposals } from '@/automation/companion-detection';
 import { createExecution } from '@/automation/execution';
 import type { SetupChoices } from '@/automation/setup-types';
 import { binaries } from '@/domain/binary-platforms.ts';
-import { configurationSchema } from '@/domain/configuration';
+import { parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
+import { configurationSchema } from '@/domain/configuration/schema.ts';
 import type { Inventory, Package, RepositoryRecord, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { registry } from '@/domain/package-publication.ts';
 import type { RefPolicy } from '@/domain/refs.ts';
 import { planRefs, refsLanded, streamModuleTagPrefixes } from '@/domain/refs.ts';
 import { requireReady } from '@/domain/repository';
-import { parseRepositoryConfiguration } from '@/domain/repository-configuration.ts';
 import { validateAgainst } from '@/domain/validate';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {

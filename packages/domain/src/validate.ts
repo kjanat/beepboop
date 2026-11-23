@@ -1,6 +1,6 @@
 import { Result } from 'effect';
-import type { Configuration, Stream } from '@/domain/configuration';
-import { operations as operationsOf } from '@/domain/configuration';
+import type { Configuration, Stream } from '@/domain/configuration/schema.ts';
+import { operations as operationsOf } from '@/domain/configuration/schema.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, parseReleaseIdentity, publishablePackages } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';

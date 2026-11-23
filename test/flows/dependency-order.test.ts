@@ -5,7 +5,7 @@ import { discover } from '@/automation/managers';
 import { planReleaseSet } from '@/automation/planning';
 import { compileReleaseSet } from '@/automation/release-set';
 import type { Execution } from '@/automation/types';
-import { configurationSchema } from '@/domain/configuration';
+import { configurationSchema } from '@/domain/configuration/schema.ts';
 import type { Package, Snapshot } from '@/domain/inventory.ts';
 import { publicationOrder } from '@/domain/publication-order.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';

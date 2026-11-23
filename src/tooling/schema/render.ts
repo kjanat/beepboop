@@ -1,6 +1,6 @@
 import { Effect, Schema, SchemaRepresentation } from 'effect';
 import { targetsSchema } from '@/contract/targets';
-import { configurationSchema } from '@/domain/configuration';
+import { configurationSchema } from '@/domain/configuration/schema.ts';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attempt, format, readText, refuse } from '@/tooling/runtime';
 

@@ -1,7 +1,7 @@
 import { hasTagPromotion } from '@/automation/release-version';
 import type { ReleasePlan, Stream, WorkflowBinding } from '@/automation/types';
 import type { StreamRelease } from '@/contract/views';
-import { operations } from '@/domain/configuration';
+import { operations } from '@/domain/configuration/schema.ts';
 import type { Inventory, RepositoryRecord } from '@/domain/inventory.ts';
 import { publishablePackages } from '@/domain/package-identity.ts';
 import { versionsInFiles } from '@/domain/version-tags.ts';

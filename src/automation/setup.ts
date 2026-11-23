@@ -36,8 +36,9 @@ import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
 import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/domain/binary-platforms.ts';
 import { isLockfile } from '@/domain/catalog.ts';
-import { configurationDiagnostics } from '@/domain/configuration';
-import { legacyConfiguration, readableConfiguration } from '@/domain/configuration-names.ts';
+import { legacyConfiguration, readableConfiguration } from '@/domain/configuration/names.ts';
+import { mergeConfiguration, parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
+import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, packageId, selectorKey } from '@/domain/package-identity.ts';
 import { packageMarkdown } from '@/domain/package-label';
@@ -50,7 +51,6 @@ import {
 	versionBump,
 	versionBumps,
 } from '@/domain/release-start.ts';
-import { mergeConfiguration, parseRepositoryConfiguration } from '@/domain/repository-configuration.ts';
 import {
 	alwaysStarted,
 	existingTriggersNames,

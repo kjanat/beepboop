@@ -1,8 +1,8 @@
 import type { Schema } from 'effect';
 import { Effect, Result } from 'effect';
-import type { Configuration } from '@/domain/configuration';
-import { configurationSchema } from '@/domain/configuration';
-import { legacyConfiguration } from '@/domain/configuration-names.ts';
+import { legacyConfiguration } from '@/domain/configuration/names.ts';
+import type { Configuration } from '@/domain/configuration/schema.ts';
+import { configurationSchema } from '@/domain/configuration/schema.ts';
 import { parsePresetReference } from '@/domain/preset.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

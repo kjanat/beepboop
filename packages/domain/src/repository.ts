@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import type { Configuration } from '@/domain/configuration';
+import type { Configuration } from '@/domain/configuration/schema.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { blocking } from '@/kernel/errors/diagnostics.ts';

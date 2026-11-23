@@ -1,5 +1,5 @@
 import { parse } from 'yaml';
-import { readableConfiguration } from '@/domain/configuration-names.ts';
+import { readableConfiguration } from '@/domain/configuration/names.ts';
 import type { Edit, Snapshot } from '@/domain/inventory.ts';
 import {
 	approvalOfPublishWhen,

@@ -15,7 +15,7 @@ import { RepositoryGateway } from '@/automation/github';
 import type { Fetcher } from '@/automation/managers/registry';
 import { Automation, applicationLayer } from '@/automation/service';
 import { routes } from '@/contract/routes';
-import { configurationSchema } from '@/domain/configuration';
+import { configurationSchema } from '@/domain/configuration/schema.ts';
 import { semVer } from '@/domain/version.ts';
 import { failure } from '@/kernel/errors/classify.ts';
 import { readEach } from '@/kernel/errors/decoding.ts';
