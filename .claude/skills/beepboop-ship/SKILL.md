@@ -99,5 +99,9 @@ Run the check and the merge as separate commands:
 
 ## 8. Report
 
-Return the PR URL, the merge state, the test names that prove the change, and
-any decision the caller must know about. Nothing else.
+Return the PR URL, the merge state, the merge time, the test names that prove
+the change, and any decision the caller must know about. Nothing else.
+
+The caller owns the CodeRabbit follow-up. Fifteen minutes after the merge, it
+reads the PR comments for a CodeRabbit "Big if true" comment and ships each
+worthwhile item through this skill.
