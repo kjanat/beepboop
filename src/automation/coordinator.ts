@@ -29,17 +29,7 @@ import { mergeArtifacts, resolveInputs } from '@/automation/execution-outputs';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
-import { preparationBody } from '@/automation/managed';
 import { observedVersion, placeholderVersion } from '@/automation/managers';
-import type { PackageTagResult, PackageTagRow, Release } from '@/automation/package-tags';
-import {
-	frozenPackageTagRows,
-	packageTagGroups,
-	packageTagPage,
-	packageTagPages,
-	packageTagRows,
-	taggedReleases,
-} from '@/automation/package-tags';
 import {
 	commitVersion,
 	enableAutoMerge,
@@ -49,9 +39,6 @@ import {
 	resumePreparation,
 } from '@/automation/preparation-pull-requests';
 import type { PublishBudget } from '@/automation/publish-budget';
-import { ReleaseHistory } from '@/automation/release-history';
-import { compileReleaseSet } from '@/automation/release-set';
-import { manifestProblems, releasePaths } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { githubFailureReason } from '@/automation/run-labels';
 import type { AutomationBindings } from '@/automation/service';
@@ -181,6 +168,19 @@ import {
 	verifyPublication,
 	verifySecondaryPublications,
 } from '@/publication/registries/verify.ts';
+import { ReleaseHistory } from '@/release/domain/history.ts';
+import { preparationBody } from '@/release/domain/managed.ts';
+import type { PackageTagResult, PackageTagRow, Release } from '@/release/domain/package-tags.ts';
+import {
+	frozenPackageTagRows,
+	packageTagGroups,
+	packageTagPage,
+	packageTagPages,
+	packageTagRows,
+	taggedReleases,
+} from '@/release/domain/package-tags.ts';
+import { compileReleaseSet } from '@/release/domain/release-set.ts';
+import { manifestProblems, releasePaths } from '@/release/domain/version.ts';
 import { decodeSetupEditV1 } from '@/setup/edit.ts';
 import { maintainSetup } from '@/setup/server/maintenance.ts';
 import type { SetupEdit } from '@/setup/types.ts';

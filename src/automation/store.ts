@@ -1,5 +1,4 @@
 import { Effect, Schema } from 'effect';
-import { executionOrderSql, newestActiveFirst, validJson } from '@/automation/execution-order';
 import type { ActivityEntry, Execution } from '@/automation/types';
 import type { ExecutionFilter } from '@/contract/routes';
 import { RepositoryStore } from '@/discovery/adapters/d1/repositories.ts';
@@ -21,6 +20,7 @@ import { rowDocument } from '@/persistence/d1/document-row';
 import { GateSkipStore } from '@/persistence/d1/gate-skips';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import { readyRead } from '@/persistence/d1/ready-read';
+import { executionOrderSql, newestActiveFirst, validJson } from '@/release/domain/execution-order.ts';
 
 export interface UnreadableExecution {
 	kind: 'unreadable';

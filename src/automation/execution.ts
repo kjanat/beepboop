@@ -1,6 +1,5 @@
 import { Clock, Effect } from 'effect';
 import { outputsComplete } from '@/automation/execution-outputs';
-import { freezePackageTags, packageTagGroups } from '@/automation/package-tags';
 import { githubFailureReason, githubRunLabel } from '@/automation/run-labels';
 import type { Configuration, Execution, Publication, ReleaseReference, WorkflowBinding } from '@/automation/types';
 import { managerSpec } from '@/domain/catalog.ts';
@@ -13,6 +12,7 @@ import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { executionId } from '@/persistence/identity-keys';
+import { freezePackageTags, packageTagGroups } from '@/release/domain/package-tags.ts';
 
 export interface ExecutionRequest {
 	stream: string;

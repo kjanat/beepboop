@@ -5,10 +5,6 @@ import {
 	releasable,
 	releaseCapability,
 } from '@/automation/release-capability';
-import {
-	bumpedVersion,
-	recommendedVersion,
-} from '@/automation/release-version';
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Commit from '@/components/Commit.astro';
@@ -17,6 +13,7 @@ import type { Package } from '@/domain/inventory.ts';
 import { packageId, publishablePackages } from '@/domain/package-identity.ts';
 import { readiness } from '@/domain/repository';
 import { formatTime } from '@/kernel/time.ts';
+import { bumpedVersion, recommendedVersion } from '@/release/domain/version.ts';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { workflowChoices } from '@/server/views/workflows.ts';

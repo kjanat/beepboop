@@ -1,10 +1,10 @@
-import { hasTagPromotion } from '@/automation/release-version';
 import type { ReleasePlan, Stream, WorkflowBinding } from '@/automation/types';
 import type { StreamRelease } from '@/discovery/contract.ts';
 import { operations } from '@/domain/configuration/schema.ts';
 import type { Inventory, RepositoryRecord } from '@/domain/inventory.ts';
 import { publishablePackages } from '@/domain/package-identity.ts';
 import { versionsInFiles } from '@/domain/version-tags.ts';
+import { hasTagPromotion } from '@/release/domain/version.ts';
 
 export interface ReleaseTrigger {
 	file: string;

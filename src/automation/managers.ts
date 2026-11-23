@@ -1,6 +1,5 @@
 import { Effect } from 'effect';
 import { alreadyPrepared, fileEdits } from '@/automation/editors';
-import { resolvePackageVersion } from '@/automation/release-version';
 import type { ReleasePlan } from '@/automation/types';
 import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { discoveryRegistry } from '@/discovery/managers/builtins.ts';
@@ -14,6 +13,7 @@ import { parseVersionRequest } from '@/domain/version-request.ts';
 import { tagPrefix } from '@/domain/version-tags.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import { resolvePackageVersion } from '@/release/domain/version.ts';
 
 export { publicationOrder } from '@/domain/publication-order.ts';
 

@@ -236,6 +236,46 @@
 		"specifier": "@/automation/snapshot"
 	},
 	{
+		"file": "packages/release/src/domain/execution-order.ts",
+		"specifier": "@/automation/types.ts"
+	},
+	{
+		"file": "packages/release/src/domain/history.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/release/src/domain/managed.ts",
+		"specifier": "@/automation/execution"
+	},
+	{
+		"file": "packages/release/src/domain/managed.ts",
+		"specifier": "@/automation/planning"
+	},
+	{
+		"file": "packages/release/src/domain/managed.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/release/src/domain/package-tags.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/release/src/domain/package-tags.ts",
+		"specifier": "@/contract/views"
+	},
+	{
+		"file": "packages/release/src/domain/release-set.ts",
+		"specifier": "@/automation/execution"
+	},
+	{
+		"file": "packages/release/src/domain/release-set.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/release/src/domain/version.ts",
+		"specifier": "@/automation/types"
+	},
+	{
 		"file": "packages/setup/src/draft.ts",
 		"specifier": "@/automation/release-capability"
 	},

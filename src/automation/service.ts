@@ -13,13 +13,6 @@ import type { InboxEvent } from '@/automation/inbox';
 import { inboxEvent } from '@/automation/inbox';
 import { planRelease } from '@/automation/managers';
 import { preparationMerge } from '@/automation/preparation-pull-requests';
-import {
-	hasTagPromotion,
-	manifestProblems,
-	releasedVersion,
-	releasePaths,
-	unreleasedManifestVersion,
-} from '@/automation/release-version';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { Store } from '@/automation/store';
 import type { AutomationEvent, Execution, ReleaseStarted, Stream } from '@/automation/types';
@@ -83,6 +76,13 @@ import { resolvePublished } from '@/publication/registries/verify.ts';
 import { setUpJsrPackages } from '@/publication/setup/jsr.ts';
 import type { WinGetBindings } from '@/publication/winget/service.ts';
 import { WinGetService } from '@/publication/winget/service.ts';
+import {
+	hasTagPromotion,
+	manifestProblems,
+	releasedVersion,
+	releasePaths,
+	unreleasedManifestVersion,
+} from '@/release/domain/version.ts';
 import { releaseAfterMerge } from '@/setup/body.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
 import { inferredConfiguration } from '@/setup/draft.ts';
