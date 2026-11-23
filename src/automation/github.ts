@@ -1,6 +1,7 @@
-import { Clock, Context, Data, Effect, Exit, Layer, Schema } from 'effect';
+import { Clock, Context, Data, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { signJwt } from 'micro509/jose';
 import { importPkcs8Pem } from 'micro509/keys';
+import { rawFile } from '@/automation/github-raw';
 import type { GitObject } from '@/automation/github-resources';
 import {
 	accessTokenSchema,
@@ -578,7 +579,11 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id);
-			const { default_branch: defaultBranch } = yield* self.read(repositorySchema, `/repos/${name}`, token);
+			const { default_branch: defaultBranch, private: hidden } = yield* self.read(
+				repositorySchema,
+				`/repos/${name}`,
+				token,
+			);
 			const { sha: commitSha } = yield* self.read(
 				commitSchema,
 				`/repos/${name}/commits/${encodeURIComponent(revision ?? defaultBranch)}`,
@@ -588,11 +593,15 @@ export class RepositoryGateway {
 			if (tree.truncated) {
 				return yield* precondition('Repository tree truncated; discovery requires complete input');
 			}
+			const api = (path: string) => self.file(name, path, commitSha, token);
 			const source: SnapshotSource = {
 				repository: { id, name, defaultBranch },
 				sha: commitSha,
 				entries: tree.tree,
-				read: path => self.file(name, path, commitSha, token),
+				read: hidden ? api : path =>
+					rawFile(self.transport, name, commitSha, path).pipe(
+						Effect.flatMap(Option.match({ onNone: () => api(path), onSome: Effect.succeed })),
+					),
 				tags: prefixes => self.tags(name, prefixes, token),
 			};
 			return source;

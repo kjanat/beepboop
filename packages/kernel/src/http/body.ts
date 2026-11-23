@@ -54,17 +54,20 @@ export function responseText(
 	}));
 }
 
-export function responseBytes(response: Body): Effect.Effect<Uint8Array<ArrayBuffer>, ResponseReadError> {
+export function responseBytes(
+	response: Body,
+	options: { readonly maxBytes?: number } = {},
+): Effect.Effect<Uint8Array<ArrayBuffer>, ResponseReadError> {
 	return readBody(response, reader => Effect.gen(function*() {
 		const chunks: Uint8Array[] = [];
 		let size = 0;
-		if (reader) {
-			for (;;) {
-				const chunk = yield* Effect.tryPromise({ try: () => reader.read(), catch: readFailure });
-				if (chunk.done) break;
-				chunks.push(chunk.value);
-				size += chunk.value.byteLength;
-			}
+		const limit = options.maxBytes ?? Infinity;
+		while (reader && size < limit) {
+			const chunk = yield* Effect.tryPromise({ try: () => reader.read(), catch: readFailure });
+			if (chunk.done) break;
+			const bytes = limit - size < chunk.value.byteLength ? chunk.value.subarray(0, limit - size) : chunk.value;
+			chunks.push(bytes);
+			size += bytes.byteLength;
 		}
 		const bytes = new Uint8Array(size);
 		let offset = 0;

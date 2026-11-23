@@ -77,6 +77,7 @@ export interface Repository {
 	id: number;
 	name: string;
 	defaultBranch: string;
+	private: boolean;
 	trees: Map<string, Map<string, TreeEntry>>;
 	blobs: Map<string, Buffer>;
 	commits: Map<string, Commit>;
@@ -190,6 +191,7 @@ export class FakeGitHub {
 				full_name: repository.name,
 				owner: { id: ownerId, login: ownerLogin },
 				default_branch: repository.defaultBranch,
+				private: repository.private,
 			});
 		});
 		this.route('GET', new RegExp(`^${repo}/commits/([^/]+)$`), match => {
@@ -749,6 +751,15 @@ export class FakeGitHub {
 		return json({ message: 'Not handled by the fake GitHub' }, 501);
 	}
 
+	raw(request: Request): Response {
+		const [owner, name, reference, ...path] = new URL(request.url).pathname.slice(1).split('/').map(decodeURIComponent);
+		const repository = this.repositories.get(`${owner}/${name}`);
+		const commit = repository && !repository.private ? repository.commits.get(reference ?? '') : undefined;
+		const entry = commit && repository?.trees.get(commit.tree)?.get(path.join('/'));
+		const content = entry?.type === 'blob' ? repository?.blobs.get(entry.sha) : undefined;
+		if (request.method !== 'GET' || content === undefined) return new Response('404: Not Found', { status: 404 });
+		return new Response(new Uint8Array(content), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+	}
 	suspend(): void {
 		this.suspendedAt = new Date().toISOString();
 	}
@@ -771,6 +782,7 @@ export class FakeGitHub {
 			id: this.id(),
 			name,
 			defaultBranch,
+			private: false,
 			trees: new Map(),
 			blobs: new Map(),
 			commits: new Map(),

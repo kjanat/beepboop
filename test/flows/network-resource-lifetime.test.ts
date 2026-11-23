@@ -289,7 +289,7 @@ test('parallel verification performs one real installation validation and token 
 				return Response.json({ token: 'synthetic-token' });
 			}
 			if (path === '/repos/o/r') {
-				return Response.json({ id: 3, full_name: 'o/r', owner: { id: 1 }, default_branch: 'master' });
+				return Response.json({ id: 3, full_name: 'o/r', owner: { id: 1 }, default_branch: 'master', private: false });
 			}
 			expect(init?.headers).toMatchObject({ Authorization: 'Bearer synthetic-token' });
 			return Response.json({ ok: true });

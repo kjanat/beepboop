@@ -67,7 +67,13 @@ function fixture(options: {
 			const method = init?.method ?? 'GET';
 			calls.push({ path, method });
 			if (path === `/repos/${repository}`) {
-				return Response.json({ id: 1, full_name: repository, owner: { id: 1 }, default_branch: 'main' });
+				return Response.json({
+					id: 1,
+					full_name: repository,
+					owner: { id: 1 },
+					default_branch: 'main',
+					private: false,
+				});
 			}
 			if (path.endsWith('/git/ref/heads/main')) {
 				headReads++;
