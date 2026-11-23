@@ -22,6 +22,7 @@ import {
 	runTitle,
 	settle,
 	settleRun,
+	unreported,
 	validatePublicationIdentity,
 	verifiableCancellation,
 } from '@/automation/execution';
@@ -4035,6 +4036,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 								yield* verifyPublication(publication, transport, context),
 							);
 						}
+					}
+					for (const reference of unreported(execution)) {
+						const probe = execution.version ? referenceProbe(reference, execution.version) : undefined;
+						if (!probe || !canVerifyPublication(probe.manager)) continue;
+						const context = (yield* this.gateway).verification(execution.repository, execution.repositoryId);
+						const transport = (yield* Automation).dependencies.transport;
+						const checked = yield* verifyPublication(probe, transport, context);
+						if (checked.outcome === 'succeeded') execution.publications.push(checked);
 					}
 					const limited = execution.publications.flatMap(publication =>
 						publication.outcome === 'rate-limited' ? [Date.parse(publication.retryAfter)] : []
