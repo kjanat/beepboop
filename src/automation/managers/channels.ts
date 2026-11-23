@@ -1,9 +1,9 @@
 import { Effect, Schema } from 'effect';
-import type { Channel, ChannelOutcome } from '@/automation/destinations';
-import { tracksBranch } from '@/automation/destinations';
-import type { Snapshot } from '@/automation/inventory';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { LookupFailure, latestText, latestVersion, unpublished } from '@/automation/managers/verification';
+import type { Channel, ChannelOutcome } from '@/domain/destinations.ts';
+import { tracksBranch } from '@/domain/destinations.ts';
+import type { Snapshot } from '@/domain/inventory.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';

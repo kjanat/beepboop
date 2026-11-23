@@ -14,9 +14,9 @@ import {
 	verifyRegistry,
 } from '@/automation/managers/verification';
 import { cargoMembers } from '@/automation/managers/workspaces';
-import { excluded, registry } from '@/automation/package-publication';
 import type { Publication } from '@/automation/types';
-import { compareVersions, isPrerelease } from '@/contract/semver';
+import { excluded, registry } from '@/domain/package-publication.ts';
+import { compareVersions, isPrerelease } from '@/domain/semver.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseText } from '@/kernel/http/body.ts';
@@ -106,7 +106,7 @@ export const cargoManager = {
 
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		const detected = new Set<import('@/contract/catalog').ManagerName>();
+		const detected = new Set<import('@/domain/catalog.ts').ManagerName>();
 		const root = Result.try(() => object(parseToml(snapshot.files['Cargo.toml'] ?? '')));
 		if (Result.isFailure(root)) {
 			inventory.diagnostics.push(fileProblem('Cargo.toml', 'invalid-manifest', 'invalid TOML'));

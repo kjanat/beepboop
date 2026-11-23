@@ -1,7 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { Ask, CLIError, Out, SelectChoice } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import { publishable } from '@/automation/package-publication';
 import type { Selection } from '@/automation/setup-defaults';
 import {
 	ledgerCommand,
@@ -14,13 +13,15 @@ import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import { lookOf } from '@/cli/look';
 import { failure, prompted } from '@/cli/output';
-import type { BinaryBuild, BinaryRelease } from '@/contract/binary-platforms';
-import { binaryTargets, defaultBinaryTargets, leftOut, supportedTargets } from '@/contract/binary-platforms';
-import { workflowFilePattern } from '@/contract/catalog';
-import { approvalPolicies, versionBumps } from '@/contract/release-start';
 import { bumpable, setupStream, startable } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
+import type { BinaryBuild, BinaryRelease } from '@/domain/binary-platforms.ts';
+import { binaryTargets, defaultBinaryTargets, leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
+import { workflowFilePattern } from '@/domain/catalog.ts';
+import { packageLabel } from '@/domain/package-label';
+import { publishable } from '@/domain/package-publication.ts';
+import { approvalPolicies, versionBumps } from '@/domain/release-start.ts';
 import {
 	existingTriggersNames,
 	existingTriggersQuestion,
@@ -39,9 +40,8 @@ import {
 	versionScopeNames,
 	versionScopeQuestion,
 	versionScopeSentences,
-} from '@/contract/setup-terms';
-import { actionsRevisionPattern } from '@/contract/workflow-setup';
-import { packageLabel } from '@/domain/package-label';
+} from '@/domain/setup-terms.ts';
+import { actionsRevisionPattern } from '@/domain/workflow-setup.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
 import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 

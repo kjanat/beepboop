@@ -1,8 +1,8 @@
-import type { Inventory, Package, RepositoryRecord } from '@/automation/inventory';
-import { identityOf, packageId, selectorKey } from '@/automation/package-identity';
-import type { PackagePublication } from '@/automation/package-publication';
-import { excluded, registry } from '@/automation/package-publication';
 import type { Execution } from '@/automation/types';
+import type { Inventory, Package, RepositoryRecord } from '@/domain/inventory.ts';
+import { identityOf, packageId, selectorKey } from '@/domain/package-identity.ts';
+import type { PackagePublication } from '@/domain/package-publication.ts';
+import { excluded, registry } from '@/domain/package-publication.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { blocking, legacyDiagnostic, messages } from '@/kernel/errors/diagnostics.ts';
 

@@ -1,8 +1,8 @@
 import { Effect, Schema } from 'effect';
-import type { Package } from '@/automation/inventory';
-import { matchesPackage, packageId } from '@/automation/package-identity';
-import type { SemVer } from '@/contract/version';
-import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/contract/version';
+import type { Package } from '@/domain/inventory.ts';
+import { matchesPackage, packageId } from '@/domain/package-identity.ts';
+import type { SemVer } from '@/domain/version.ts';
+import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/domain/version.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

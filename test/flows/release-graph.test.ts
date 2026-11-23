@@ -5,9 +5,7 @@ import { applySetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import type { Snapshot } from '@/automation/inventory';
 import { discover } from '@/automation/managers';
-import { packageId } from '@/automation/package-identity';
 import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
 import type { ReleaseGraph, StreamProposal, Target } from '@/automation/release-graph/graph';
 import { inferReleaseGraph } from '@/automation/release-graph/graph';
@@ -16,6 +14,8 @@ import { workflowModels } from '@/automation/release-graph/workflows';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SnapshotSource } from '@/automation/snapshot';
 import { buildSnapshot } from '@/automation/snapshot';
+import type { Snapshot } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

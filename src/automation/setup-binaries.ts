@@ -1,8 +1,8 @@
 import { object } from '@/automation/managers/helpers';
 import { pinned } from '@/automation/setup-actions';
-import type { BinaryBuild, BinaryRelease, BinaryTarget } from '@/contract/binary-platforms';
-import { platforms } from '@/contract/binary-platforms';
-import { hostedRunners } from '@/contract/runners';
+import type { BinaryBuild, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
+import { platforms } from '@/domain/binary-platforms.ts';
+import { hostedRunners } from '@/domain/runners.ts';
 
 // GitHub expressions, evaluated by Actions rather than JavaScript.
 export const expression = (value: string) => `\${{ ${value} }}`;

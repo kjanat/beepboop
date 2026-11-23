@@ -1,9 +1,9 @@
 import { Result } from 'effect';
-import type { Inventory, Snapshot } from '@/automation/inventory';
-import { matchesPackage, parseReleaseIdentity, publishablePackages } from '@/automation/package-identity';
-import { publishable } from '@/automation/package-publication';
-import type { Configuration, Stream } from '@/automation/types';
+import type { Configuration, Stream } from '@/domain/configuration';
 import { operations as operationsOf } from '@/domain/configuration';
+import type { Inventory, Snapshot } from '@/domain/inventory.ts';
+import { matchesPackage, parseReleaseIdentity, publishablePackages } from '@/domain/package-identity.ts';
+import { publishable } from '@/domain/package-publication.ts';
 import type { Diagnostic, DiagnosticSubject } from '@/kernel/errors/diagnostics.ts';
 
 function versioned(reference: string): boolean {

@@ -1,11 +1,11 @@
-import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { gateJobs, workflowJobs } from '@/automation/job-gate';
-import { packageId } from '@/automation/package-identity';
-import { publishable } from '@/automation/package-publication';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
 import { ledgerCommand } from '@/automation/setup-defaults';
 import type { SetupChoices } from '@/automation/setup-types';
-import { isLockfile } from '@/contract/catalog';
+import { isLockfile } from '@/domain/catalog.ts';
+import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
+import { publishable } from '@/domain/package-publication.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { shellQuote } from '@/kernel/text/shell-quote.ts';

@@ -1,6 +1,6 @@
 import { Effect, Schema } from 'effect';
 import type { Execution } from '@/automation/types';
-import { precedenceKey } from '@/contract/semver';
+import { precedenceKey } from '@/domain/semver.ts';
 import { isDecodingFailure } from '@/kernel/errors/decoding.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import { decodeEventV1 } from '@/persistence/codecs/v1';

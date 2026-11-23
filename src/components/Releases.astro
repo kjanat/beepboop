@@ -1,7 +1,5 @@
 ---
 import { Effect } from 'effect';
-import type { Package } from '@/automation/inventory';
-import { packageId, publishablePackages } from '@/automation/package-identity';
 import {
 	capabilitySentence,
 	releasable,
@@ -15,6 +13,8 @@ import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Commit from '@/components/Commit.astro';
 import type { Status } from '@/contract/views';
+import type { Package } from '@/domain/inventory.ts';
+import { packageId, publishablePackages } from '@/domain/package-identity.ts';
 import { readiness } from '@/domain/repository';
 import { formatTime } from '@/kernel/time.ts';
 import type { ViewOf } from '@/server/loaders.ts';

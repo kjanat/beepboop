@@ -1,13 +1,13 @@
-import type { Inventory, Snapshot } from '@/automation/inventory';
-import { latestTag } from '@/automation/managers/tags';
-import { packageId } from '@/automation/package-identity';
-import { publishable } from '@/automation/package-publication';
 import { staticGuard } from '@/automation/release-graph/bindings';
 import type { ReleaseGraph, StreamProposal, StreamWorkflow, Target } from '@/automation/release-graph/graph';
 import { code } from '@/automation/release-graph/graph';
 import type { Destination } from '@/automation/release-graph/workflows';
 import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { SetupChoices } from '@/automation/setup-types';
+import type { Inventory, Snapshot } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
+import { publishable } from '@/domain/package-publication.ts';
+import { latestTag } from '@/domain/version-tags.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';

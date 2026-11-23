@@ -9,7 +9,6 @@ import {
 	reportStep,
 } from '@/contract/ledger';
 import { destinationInput, subscriptionInput, watchInput } from '@/contract/notifications';
-import { versionPrMerge } from '@/contract/setup-terms';
 import {
 	acknowledged,
 	approvalReadiness,
@@ -24,6 +23,7 @@ import {
 	securityChallenge,
 	securityProof,
 } from '@/contract/views';
+import { versionPrMerge } from '@/domain/setup-terms.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { shaSchema as sha, textSchema as text } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded, Encoded } from '@/kernel/schema/structs.ts';

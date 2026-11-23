@@ -1,12 +1,12 @@
 import { Effect } from 'effect';
-import type { Inventory, Package } from '@/automation/inventory';
-import { tagPrefix } from '@/automation/managers/tags';
-import { matchesPackage } from '@/automation/package-identity';
 import type { Stream } from '@/automation/types';
-import type { VersionRequest } from '@/automation/version';
-import { nextVersion } from '@/automation/version';
-import { compareVersions } from '@/contract/semver';
 import { operations } from '@/domain/configuration';
+import type { Inventory, Package } from '@/domain/inventory.ts';
+import { matchesPackage } from '@/domain/package-identity.ts';
+import { compareVersions } from '@/domain/semver.ts';
+import type { VersionRequest } from '@/domain/version-request.ts';
+import { nextVersion } from '@/domain/version-request.ts';
+import { tagPrefix } from '@/domain/version-tags.ts';
 import { distinct } from '@/kernel/collections/distinct.ts';
 import { blocking } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

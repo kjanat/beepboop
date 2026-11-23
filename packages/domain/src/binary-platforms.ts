@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import { hostedRunners } from '@/contract/runners';
+import { hostedRunners } from '@/domain/runners.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import {
 	matchesPattern,

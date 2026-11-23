@@ -15,9 +15,9 @@ import { jobObstacles } from '@/automation/setup-workflows';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
-import { binaryTargets, defaultBinaryTargets, supportedTargets } from '@/contract/binary-platforms';
 import { routes } from '@/contract/routes';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
+import { binaryTargets, defaultBinaryTargets, supportedTargets } from '@/domain/binary-platforms.ts';
 import {
 	publishWhenQuestion,
 	startFromQuestion,
@@ -26,7 +26,7 @@ import {
 	versionPrMergeQuestion,
 	versionPrMergeSentences,
 	versionPrMerges,
-} from '@/contract/setup-terms';
+} from '@/domain/setup-terms.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

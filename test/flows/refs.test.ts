@@ -5,12 +5,12 @@ import { join } from 'node:path';
 import { publishRefs } from '@root/actions/runtime/refs.ts';
 import { commitAll, gitOutput, materialize } from '@root/test/support/actions.ts';
 import { Effect, Exit, Schema } from 'effect';
-import type { Package } from '@/automation/inventory';
-import { packageId } from '@/automation/package-identity';
-import { registry } from '@/automation/package-publication';
-import type { RefPolicy } from '@/automation/refs';
-import { moduleTagPrefixes, planRefs, versionTagged } from '@/automation/refs';
-import { semVer } from '@/contract/version';
+import type { Package } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
+import { registry } from '@/domain/package-publication.ts';
+import type { RefPolicy } from '@/domain/refs.ts';
+import { moduleTagPrefixes, planRefs, versionTagged } from '@/domain/refs.ts';
+import { semVer } from '@/domain/version.ts';
 
 const commit = 'a'.repeat(40), other = 'b'.repeat(40), oid = 'c'.repeat(40);
 const policy: RefPolicy = { phase: 'version', prefix: 'rshellcheck-v', aliases: [], signed: false };

@@ -11,9 +11,9 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import { createExecution, expectedRunTitle } from '@/automation/execution';
-import type { Edit } from '@/automation/inventory';
-import type { RefPlan } from '@/automation/refs';
 import { Store } from '@/automation/store';
+import type { Edit } from '@/domain/inventory.ts';
+import type { RefPlan } from '@/domain/refs.ts';
 import { requireReady } from '@/domain/repository';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 

@@ -23,10 +23,10 @@ import {
 	repositoryTable,
 	repositoryView,
 } from '@/cli/views';
-import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/contract/catalog';
 import { routes } from '@/contract/routes';
-import { autoMergeMethods } from '@/contract/setup-terms';
 import { executionStates, executionView as executionViewSchema } from '@/contract/views';
+import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/domain/catalog.ts';
+import { autoMergeMethods } from '@/domain/setup-terms.ts';
 import {
 	approvalShaPattern,
 	credentialAliasPattern,

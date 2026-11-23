@@ -1,4 +1,4 @@
-import { validRef } from '@/contract/catalog';
+import { validRef } from '@/domain/catalog.ts';
 
 export function matchesRef(pattern: string, ref: string): boolean {
 	if (!validRef(pattern) || !ref.startsWith('refs/')) return false;

@@ -2,8 +2,8 @@
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Time from '@/components/Time.astro';
-import { destinationLabels, watchedRegistries } from '@/contract/catalog';
 import { watchedPackageHref } from '@/contract/links';
+import { destinationLabels, watchedRegistries } from '@/domain/catalog.ts';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packagesPage } from '@/server/views/packages.ts';
 

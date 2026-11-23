@@ -1,14 +1,8 @@
 import { Effect, Result } from 'effect';
 import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
-import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
-import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
-import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { canVerifyPublication, discover } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
-import { tagPrefix, versionsInFiles } from '@/automation/managers/tags';
-import { matchesPackage, packageId, selectorKey } from '@/automation/package-identity';
-import { publishable } from '@/automation/package-publication';
 import { newVersionStartRefusal } from '@/automation/release-capability';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import type { ReleaseGraph } from '@/automation/release-graph/graph';
@@ -38,17 +32,25 @@ import {
 	workflowEvidence,
 } from '@/automation/setup-workflows';
 import type { Configuration } from '@/automation/types';
-import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/contract/binary-platforms';
-import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/contract/binary-platforms';
-import { isLockfile } from '@/contract/catalog';
+import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
+import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
+import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/domain/binary-platforms.ts';
+import { isLockfile } from '@/domain/catalog.ts';
+import { configurationDrift } from '@/domain/configuration';
+import { legacyConfiguration, readableConfiguration } from '@/domain/configuration-names.ts';
+import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
+import { matchesPackage, packageId, selectorKey } from '@/domain/package-identity.ts';
+import { packageMarkdown } from '@/domain/package-label';
+import { publishable } from '@/domain/package-publication.ts';
+import { publicationStages } from '@/domain/publication-stages';
 import {
 	configurableStarts,
 	releaseStarts,
 	startWorkflowFile,
 	versionBump,
 	versionBumps,
-} from '@/contract/release-start';
-import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
+} from '@/domain/release-start.ts';
+import { mergeConfiguration, parseRepositoryConfiguration } from '@/domain/repository-configuration.ts';
 import {
 	alwaysStarted,
 	existingTriggersNames,
@@ -69,14 +71,12 @@ import {
 	versionPrMerges,
 	versionScopeNames,
 	versionScopeSentences,
-} from '@/contract/setup-terms';
-import { versionFileSchema } from '@/contract/version-files';
-import type { WorkflowSetupInput } from '@/contract/workflow-setup';
-import { workflowSetup } from '@/contract/workflow-setup';
-import { configurationDrift } from '@/domain/configuration';
-import { packageMarkdown } from '@/domain/package-label';
-import { publicationStages } from '@/domain/publication-stages';
+} from '@/domain/setup-terms.ts';
 import { validateAgainst } from '@/domain/validate';
+import { versionFileSchema } from '@/domain/version-files.ts';
+import { tagPrefix, versionsInFiles } from '@/domain/version-tags.ts';
+import type { WorkflowSetupInput } from '@/domain/workflow-setup.ts';
+import { workflowSetup } from '@/domain/workflow-setup.ts';
 import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
 import { blocking } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

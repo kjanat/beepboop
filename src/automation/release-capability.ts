@@ -1,10 +1,10 @@
-import type { Inventory, RepositoryRecord } from '@/automation/inventory';
-import { versionsInFiles } from '@/automation/managers/tags';
-import { publishablePackages } from '@/automation/package-identity';
 import { hasTagPromotion } from '@/automation/release-version';
 import type { ReleasePlan, Stream, WorkflowBinding } from '@/automation/types';
 import type { StreamRelease } from '@/contract/views';
 import { operations } from '@/domain/configuration';
+import type { Inventory, RepositoryRecord } from '@/domain/inventory.ts';
+import { publishablePackages } from '@/domain/package-identity.ts';
+import { versionsInFiles } from '@/domain/version-tags.ts';
 
 export interface ReleaseTrigger {
 	file: string;

@@ -1,12 +1,12 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml, TomlError } from 'smol-toml';
 import { isScalar } from 'yaml';
-import type { Edit, Snapshot } from '@/automation/inventory';
 import type { ReleasePlan } from '@/automation/types';
-import { isLockfile } from '@/contract/catalog';
-import { semver } from '@/contract/semver';
-import type { VersionFile } from '@/contract/version-files';
-import { textVersionPattern } from '@/contract/version-files';
+import { isLockfile } from '@/domain/catalog.ts';
+import type { Edit, Snapshot } from '@/domain/inventory.ts';
+import { semver } from '@/domain/semver.ts';
+import type { VersionFile } from '@/domain/version-files.ts';
+import { textVersionPattern } from '@/domain/version-files.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

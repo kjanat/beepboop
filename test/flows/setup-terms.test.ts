@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
 import { Effect, Result, Schema, Struct } from 'effect';
-import { parseRepositoryConfiguration, resolveConfiguration } from '@/automation/configuration';
-import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
+import { configurationSchema } from '@/domain/configuration';
+import { legacyConfiguration, readableConfiguration } from '@/domain/configuration-names.ts';
+import { parseRepositoryConfiguration, resolveConfiguration } from '@/domain/repository-configuration.ts';
 import {
 	alwaysStarted,
 	existingTriggersQuestion,
@@ -18,8 +19,7 @@ import {
 	versionPrMergeSentences,
 	versionScopeQuestion,
 	versionScopeSentences,
-} from '@/contract/setup-terms';
-import { configurationSchema } from '@/domain/configuration';
+} from '@/domain/setup-terms.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -34,13 +34,15 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 
-const root = new URL('../../src/', import.meta.url);
+const root = new URL('../../', import.meta.url);
 
 async function sources(): Promise<Map<string, string>> {
 	const found = new Map<string, string>();
-	for (const path of new Bun.Glob('**/*.{ts,astro}').scanSync(root.pathname)) {
-		if (path === 'contract/setup-terms.ts') continue;
-		found.set(path, await Bun.file(new URL(path, root)).text());
+	for (const pattern of ['src/**/*.{ts,astro}', 'packages/*/src/**/*.{ts,astro}']) {
+		for (const path of new Bun.Glob(pattern).scanSync(root.pathname)) {
+			if (path === 'packages/domain/src/setup-terms.ts') continue;
+			found.set(path, await Bun.file(new URL(path, root)).text());
+		}
 	}
 	return found;
 }
@@ -82,7 +84,7 @@ const earlierWording = [
 	'continues the release without another approval',
 ];
 
-test('each setup term sentence is written once, in src/contract/setup-terms.ts', async () => {
+test('each setup term sentence is written once, in packages/domain/src/setup-terms.ts', async () => {
 	const found = await sources();
 	const repeats = [...found].flatMap(([path, text]) =>
 		[...sentences, ...earlierWording].filter(sentence => text.includes(sentence)).map(sentence =>

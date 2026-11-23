@@ -21,8 +21,8 @@ import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
 import { app } from '@/cli/cli';
-import { startFromEffect } from '@/contract/setup-terms';
 import { streamRelease } from '@/contract/views';
+import { startFromEffect } from '@/domain/setup-terms.ts';
 import { errorEnvelope } from '@/kernel/errors/domain-error.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {

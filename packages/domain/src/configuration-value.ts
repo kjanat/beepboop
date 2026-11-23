@@ -1,10 +1,10 @@
 import { Effect, Schema } from 'effect';
-import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
-import { managerNames } from '@/contract/catalog';
-import { releaseStart, versionBump } from '@/contract/release-start';
-import { versionPrMerges } from '@/contract/setup-terms';
-import { versionFileSchema } from '@/contract/version-files';
-import { workflowSetupValue } from '@/contract/workflow-setup';
+import { managerNames } from '@/domain/catalog.ts';
+import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
+import { releaseStart, versionBump } from '@/domain/release-start.ts';
+import { versionPrMerges } from '@/domain/setup-terms.ts';
+import { versionFileSchema } from '@/domain/version-files.ts';
+import { workflowSetupValue } from '@/domain/workflow-setup.ts';
 import { stringsSchema as strings } from '@/kernel/schema/result.ts';
 import { mutableArray, mutableRecord, mutableStruct, refined, strictStruct } from '@/kernel/schema/structs.ts';
 

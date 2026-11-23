@@ -1,12 +1,7 @@
 import { Schema, Struct } from 'effect';
-import type { ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import { completion } from '@/automation/execution';
 import type { ResolvedInput } from '@/automation/execution-outputs';
-import type { DiscoveredWorkflow, Edit, Package, RepositoryRecord } from '@/automation/inventory';
-import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
-import { publicationSchema } from '@/automation/package-publication';
 import type { ReleaseSetPlan } from '@/automation/planning';
-import type { RefPlan } from '@/automation/refs';
 import type { SetupEdit } from '@/automation/setup-types';
 import type {
 	Artifact,
@@ -17,12 +12,17 @@ import type {
 	ReleaseReference,
 	SubscriptionDelivery,
 } from '@/automation/types';
-import { managerDestinationIds, managerNames } from '@/contract/catalog';
 import { githubRunState } from '@/contract/github';
-import { startChannel } from '@/contract/release-start';
 import { setupChoicesSchema } from '@/contract/setup';
-import { autoMergeMethods, versionPrMerge } from '@/contract/setup-terms';
 import { executionStates } from '@/contract/views';
+import { managerDestinationIds, managerNames } from '@/domain/catalog.ts';
+import type { ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
+import type { DiscoveredWorkflow, Edit, Package, RepositoryRecord } from '@/domain/inventory.ts';
+import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
+import { publicationSchema } from '@/domain/package-publication.ts';
+import type { RefPlan } from '@/domain/refs.ts';
+import { startChannel } from '@/domain/release-start.ts';
+import { autoMergeMethods, versionPrMerge } from '@/domain/setup-terms.ts';
 import { diagnostic, isDiagnosticCode } from '@/kernel/errors/diagnostics.ts';
 import { stringsSchema as strings } from '@/kernel/schema/result.ts';
 import { decodeSync, mapped, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';

@@ -1,13 +1,13 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { object } from '@/automation/managers/helpers';
 import { packageManifests } from '@/automation/managers/package-json';
-import { latestTag, tagPrefix } from '@/automation/managers/tags';
-import { publishable, registry } from '@/automation/package-publication';
-import { npmTargets } from '@/contract/catalog';
 import { npmTargetDescriptor, platformMap, targetFields, targetsSchema } from '@/contract/targets';
-import { safeVersionPath } from '@/contract/version-files';
+import { npmTargets } from '@/domain/catalog.ts';
+import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
+import { publishable, registry } from '@/domain/package-publication.ts';
+import { safeVersionPath } from '@/domain/version-files.ts';
+import { latestTag, tagPrefix } from '@/domain/version-tags.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';

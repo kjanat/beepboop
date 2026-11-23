@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
 import { binaryCandidates, unixDependencies } from '@/automation/binary-candidates';
-import type { Snapshot } from '@/automation/inventory';
 import { discover } from '@/automation/managers';
-import { leftOut, supportedTargets } from '@/contract/binary-platforms';
+import { leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
+import type { Snapshot } from '@/domain/inventory.ts';
 
 function snapshot(files: Record<string, string>, extra: string[] = []): Snapshot {
 	return {

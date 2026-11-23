@@ -1,14 +1,14 @@
 import { Effect, Schema } from 'effect';
-import { resolveConfiguration } from '@/automation/configuration';
-import type { RepositoryRecord } from '@/automation/inventory';
 import { discover } from '@/automation/managers';
 import { streamReleases } from '@/automation/release-capability';
-import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
 import { routes } from '@/contract/routes';
 import { configurationDiagnostics } from '@/domain/configuration';
+import type { RepositoryRecord } from '@/domain/inventory.ts';
+import { resolveConfiguration } from '@/domain/repository-configuration.ts';
+import { repositoryName, repositoryReference } from '@/domain/repository-name.ts';
 import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, domainError, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';

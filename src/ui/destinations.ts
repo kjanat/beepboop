@@ -1,15 +1,15 @@
+import type { WinGetSubmission } from '@/automation/winget';
+import { githubHref, registryHref } from '@/contract/links';
+import { managerSpec } from '@/domain/catalog.ts';
 import type {
 	Channel,
 	ChannelOutcome,
 	ManifestDestinationId,
 	RegistryOutcome,
 	RegistryState,
-} from '@/automation/destinations';
-import { channelKey, isChannelOutcome, registryDestination, winget } from '@/automation/destinations';
-import type { Inventory, Package } from '@/automation/inventory';
-import type { WinGetSubmission } from '@/automation/winget';
-import { managerSpec } from '@/contract/catalog';
-import { githubHref, registryHref } from '@/contract/links';
+} from '@/domain/destinations.ts';
+import { channelKey, isChannelOutcome, registryDestination, winget } from '@/domain/destinations.ts';
+import type { Inventory, Package } from '@/domain/inventory.ts';
 
 export type ManifestOutcome =
 	| { destination: ManifestDestinationId; state: 'unsubmitted' }

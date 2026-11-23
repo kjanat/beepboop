@@ -1,5 +1,4 @@
 import { Effect } from 'effect';
-import type { RepositoryRecord } from '@/automation/inventory';
 import { packageWatches } from '@/automation/package-watch.ts';
 import type { Automation, AutomationBindings, AutomationService } from '@/automation/service.ts';
 import { withAutomation } from '@/automation/service.ts';
@@ -7,6 +6,7 @@ import type { UnreadableExecution, UnreadableRepository } from '@/automation/sto
 import { readableValues } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
 import { parseGrant } from '@/automation/vault.ts';
+import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { recover } from '@/kernel/errors/classify.ts';
 import type { Readable } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

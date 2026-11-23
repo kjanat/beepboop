@@ -1,9 +1,6 @@
 import type { CronExpression } from 'cron-parser';
 import { CronExpressionParser } from 'cron-parser';
 import { Effect, Result, Schema } from 'effect';
-import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
-import { parseReleaseIdentity } from '@/automation/package-identity';
-import { presetReferencePattern } from '@/automation/preset';
 import {
 	defaultWinGetTagPrefix,
 	jobKeyPattern,
@@ -16,8 +13,20 @@ import {
 	winGetConfigPattern,
 	winGetTagPrefixPattern,
 	workflowFilePattern,
-} from '@/contract/catalog';
-import { releaseStarts, versionBump } from '@/contract/release-start';
+} from '@/domain/catalog.ts';
+import {
+	bindingValue,
+	configurationValue,
+	refPolicyValue,
+	streamValue,
+	subscriptionIssue,
+	subscriptionValue,
+	wingetValue,
+} from '@/domain/configuration-value';
+import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
+import { parseReleaseIdentity } from '@/domain/package-identity.ts';
+import { presetReferencePattern } from '@/domain/preset.ts';
+import { releaseStarts, versionBump } from '@/domain/release-start.ts';
 import {
 	approvalOfPublishWhen,
 	bumpOfVersionLands,
@@ -33,18 +42,9 @@ import {
 	versionPrMergeDescription,
 	versionScope,
 	versionScopeDescription,
-} from '@/contract/setup-terms';
-import { versionFileSchema } from '@/contract/version-files';
-import { actionsRevisionPattern, workflowSetup } from '@/contract/workflow-setup';
-import {
-	bindingValue,
-	configurationValue,
-	refPolicyValue,
-	streamValue,
-	subscriptionIssue,
-	subscriptionValue,
-	wingetValue,
-} from '@/domain/configuration-value';
+} from '@/domain/setup-terms.ts';
+import { versionFileSchema } from '@/domain/version-files.ts';
+import { actionsRevisionPattern, workflowSetup } from '@/domain/workflow-setup.ts';
 import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
 import type { Diagnostic, DiagnosticCode } from '@/kernel/errors/diagnostics.ts';
 import { isDiagnosticCode } from '@/kernel/errors/diagnostics.ts';

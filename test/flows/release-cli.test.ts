@@ -26,8 +26,8 @@ import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { checkoutRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
-import { startFromEffect } from '@/contract/setup-terms';
 import { binaryProgress, planReview } from '@/contract/views';
+import { startFromEffect } from '@/domain/setup-terms.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

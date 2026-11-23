@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
-import type { WatchedRegistry } from '@/contract/catalog';
-import { jsrPackageNamePattern, notificationKinds, watchedRegistries } from '@/contract/catalog';
+import type { WatchedRegistry } from '@/domain/catalog.ts';
+import { jsrPackageNamePattern, notificationKinds, watchedRegistries } from '@/domain/catalog.ts';
 import { credentialAliasPattern } from '@/kernel/schema/ids.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mapped, matchesPattern, mutableStruct, refined } from '@/kernel/schema/structs.ts';

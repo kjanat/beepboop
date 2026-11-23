@@ -1,8 +1,8 @@
-import type { RepositoryRecord } from '@/automation/inventory';
 import type { DeliveryState, NotificationDelivery } from '@/automation/notifications.ts';
 import type { ExecutionState, Publication } from '@/automation/types.ts';
 import type { WinGetSubmission } from '@/automation/winget.ts';
 import type { Status, Tone } from '@/contract/views';
+import type { RepositoryRecord } from '@/domain/inventory.ts';
 import type { Readiness } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';

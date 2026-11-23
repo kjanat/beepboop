@@ -1,13 +1,13 @@
 import { Effect, Schema } from 'effect';
 import { createExecution } from '@/automation/execution';
-import type { Edit } from '@/automation/inventory';
-import { matchesRef } from '@/automation/policy';
 import { issueWorkflowToken } from '@/automation/token';
 import type { Artifact, Execution, Publication } from '@/automation/types';
-import { isLockfile, reportableManagerNames } from '@/contract/catalog';
 import type { ClaimStep, NextStep, ReportStep } from '@/contract/ledger';
-import { startsFrom } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
+import { isLockfile, reportableManagerNames } from '@/domain/catalog.ts';
+import type { Edit } from '@/domain/inventory.ts';
+import { matchesRef } from '@/domain/ref-policy.ts';
+import { startsFrom } from '@/domain/release-start.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { requireReady } from '@/domain/repository';
 import { fromPromise } from '@/kernel/errors/classify.ts';

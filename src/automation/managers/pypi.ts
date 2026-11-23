@@ -5,7 +5,7 @@ import { isPyproject, privateProject } from '@/automation/managers/pyproject';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
-import { excluded, registry } from '@/automation/package-publication';
+import { excluded, registry } from '@/domain/package-publication.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseJson } from '@/kernel/http/body.ts';

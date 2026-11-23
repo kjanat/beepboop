@@ -1,5 +1,4 @@
 import { Clock, Effect, Schema } from 'effect';
-import type { RepositoryRecord } from '@/automation/inventory';
 import { jsrLatest } from '@/automation/managers/jsr';
 import { npmLatest } from '@/automation/managers/npm';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
@@ -9,8 +8,9 @@ import type { Store } from '@/automation/store';
 import type { AutomationEvent } from '@/automation/types';
 import type { WatchedPackage } from '@/automation/watchlist';
 import { watchlist } from '@/automation/watchlist';
-import type { WatchedRegistry } from '@/contract/catalog';
-import { watchedRegistries } from '@/contract/catalog';
+import type { WatchedRegistry } from '@/domain/catalog.ts';
+import { watchedRegistries } from '@/domain/catalog.ts';
+import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

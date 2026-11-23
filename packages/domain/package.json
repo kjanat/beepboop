@@ -1,5 +1,6 @@
 {
 	"name": "@beepboopbot/domain",
+	"version": "0.0.0",
 	"private": true,
 	"type": "module",
 	"exports": {
@@ -8,7 +9,9 @@
 	"dependencies": {
 		"@beepboopbot/kernel": "workspace:*",
 		"@cfworker/json-schema": "^4.1.6",
+		"cron-parser": "^5.10.3",
 		"effect": "^4.1.2",
-		"packageurl-js": "^2.0.1"
+		"packageurl-js": "^2.0.1",
+		"re2js": "2.10.0"
 	}
 }

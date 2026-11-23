@@ -1,5 +1,5 @@
-import type { ManagerDestinationId, RegistryDestinationId } from '@/contract/catalog';
-import { channelDestinationIds, destinationLabels } from '@/contract/catalog';
+import type { ManagerDestinationId, RegistryDestinationId } from '@/domain/catalog.ts';
+import { channelDestinationIds, destinationLabels } from '@/domain/catalog.ts';
 
 export type ManifestDestinationId = 'winget';
 export type Destination =

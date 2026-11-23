@@ -6,11 +6,11 @@ import {
 	validRef,
 	validTagPrefix,
 	workflowFilePattern,
-} from '@/contract/catalog';
-import { approvalPolicies, startChannel, versionBump } from '@/contract/release-start';
-import { versionPrMerge } from '@/contract/setup-terms';
-import { versionFileSchema } from '@/contract/version-files';
-import { actionsRevisionPattern, setupWorkflow } from '@/contract/workflow-setup';
+} from '@/domain/catalog.ts';
+import { approvalPolicies, startChannel, versionBump } from '@/domain/release-start.ts';
+import { versionPrMerge } from '@/domain/setup-terms.ts';
+import { versionFileSchema } from '@/domain/version-files.ts';
+import { actionsRevisionPattern, setupWorkflow } from '@/domain/workflow-setup.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import {

@@ -1,10 +1,10 @@
 import { listOrder, unfinishedStates } from '@/automation/execution-order.ts';
-import type { RepositoryRecord } from '@/automation/inventory';
-import { matchesPackage, matchesPublication, selectorKey } from '@/automation/package-identity';
 import { githubRunLabel } from '@/automation/run-labels';
 import type { Execution, Publication } from '@/automation/types.ts';
-import { compare, semVer } from '@/contract/version';
 import { operations } from '@/domain/configuration';
+import type { RepositoryRecord } from '@/domain/inventory.ts';
+import { matchesPackage, matchesPublication, selectorKey } from '@/domain/package-identity.ts';
+import { compare, semVer } from '@/domain/version.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 
 export const activeStates: readonly string[] = ['running', 'ready', 'dispatching', 'verifying'];

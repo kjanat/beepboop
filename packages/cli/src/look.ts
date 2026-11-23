@@ -1,7 +1,7 @@
 import type { Colors, Out } from '@kjanat/dreamcli';
 import { osc8 } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import { destinationLabels, destinationsOf, isManagerName } from '@/contract/catalog';
+import { destinationLabels, destinationsOf, isManagerName } from '@/domain/catalog.ts';
 
 export type State = 'published' | 'waiting' | 'failed' | 'skipped';
 

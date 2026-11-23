@@ -1,13 +1,13 @@
 import { expect, test } from 'bun:test';
 import { jsonFile, publishWorkflow } from '@root/test/support/repositories.ts';
 import { Effect, Schema, Struct } from 'effect';
-import type { Package, Snapshot } from '@/automation/inventory';
 import { discover } from '@/automation/managers';
-import { publicationOrder } from '@/automation/managers/order';
 import { planReleaseSet } from '@/automation/planning';
 import { compileReleaseSet } from '@/automation/release-set';
 import type { Execution } from '@/automation/types';
 import { configurationSchema } from '@/domain/configuration';
+import type { Package, Snapshot } from '@/domain/inventory.ts';
+import { publicationOrder } from '@/domain/publication-order.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

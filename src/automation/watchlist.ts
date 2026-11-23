@@ -1,7 +1,7 @@
-import type { RepositoryRecord } from '@/automation/inventory';
-import { publishable } from '@/automation/package-publication';
-import type { WatchedRegistry } from '@/contract/catalog';
-import { watchedRegistries } from '@/contract/catalog';
+import type { WatchedRegistry } from '@/domain/catalog.ts';
+import { watchedRegistries } from '@/domain/catalog.ts';
+import type { RepositoryRecord } from '@/domain/inventory.ts';
+import { publishable } from '@/domain/package-publication.ts';
 import { readiness } from '@/domain/repository';
 
 export interface WatchedPackage {

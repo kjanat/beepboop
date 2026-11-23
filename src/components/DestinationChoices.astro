@@ -1,6 +1,6 @@
 ---
-import type { NotificationKind } from '@/contract/catalog';
-import { notificationKindLabels, notificationKinds } from '@/contract/catalog';
+import type { NotificationKind } from '@/domain/catalog.ts';
+import { notificationKindLabels, notificationKinds } from '@/domain/catalog.ts';
 
 interface Props {
 	secrets: readonly { alias: string }[];

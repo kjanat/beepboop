@@ -1,7 +1,7 @@
 import { Cause, Effect, Schema } from 'effect';
-import type { NotificationKind, WatchedRegistry } from '@/contract/catalog';
-import { notificationKinds, watchedRegistries } from '@/contract/catalog';
 import { routes } from '@/contract/routes';
+import type { NotificationKind, WatchedRegistry } from '@/domain/catalog.ts';
+import { notificationKinds, watchedRegistries } from '@/domain/catalog.ts';
 import { awaitWith } from '@/kernel/errors/refusal.ts';
 import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';

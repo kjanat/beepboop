@@ -1,8 +1,6 @@
 import { Effect, Result } from 'effect';
-import type { Snapshot } from '@/automation/inventory';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object } from '@/automation/managers/helpers';
-import { tagQueries } from '@/automation/managers/tags';
 import { workspaceMembers } from '@/automation/managers/workspaces';
 import { bindInputs, matrixCombinations, substitute } from '@/automation/release-graph/bindings';
 import {
@@ -15,8 +13,10 @@ import {
 } from '@/automation/release-graph/calls';
 import { directoryFlagPattern, selectorFlagPattern } from '@/automation/release-graph/package-managers';
 import { literalPrefix } from '@/automation/release-graph/workflows';
-import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
-import { safeVersionPath } from '@/contract/version-files';
+import { isLockfile, managerNames, managerSpec } from '@/domain/catalog.ts';
+import type { Snapshot } from '@/domain/inventory.ts';
+import { safeVersionPath } from '@/domain/version-files.ts';
+import { tagQueries } from '@/domain/version-tags.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';

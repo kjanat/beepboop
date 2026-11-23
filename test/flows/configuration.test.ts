@@ -10,19 +10,19 @@ import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/su
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
-import { parseRepositoryConfiguration } from '@/automation/configuration';
+import type { ManagerName } from '@/domain/catalog.ts';
+import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
+import { refPolicyValue } from '@/domain/configuration-value';
 import {
 	identityOf,
 	identityPackageName,
 	parseIdentity,
 	parseReleaseIdentity,
 	releaseIdentity,
-} from '@/automation/package-identity';
-import type { ManagerName } from '@/contract/catalog';
-import { workflowSetup } from '@/contract/workflow-setup';
-import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
-import { refPolicyValue } from '@/domain/configuration-value';
+} from '@/domain/package-identity.ts';
+import { parseRepositoryConfiguration } from '@/domain/repository-configuration.ts';
 import { validateAgainst } from '@/domain/validate';
+import { workflowSetup } from '@/domain/workflow-setup.ts';
 import { record } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {

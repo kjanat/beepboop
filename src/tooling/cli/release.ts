@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Effect, Schema } from 'effect';
-import { packageId } from '@/automation/package-identity';
+import { packageId } from '@/domain/package-identity.ts';
 import { checkoutAt } from '@/host/git.ts';
 import { writeOutput } from '@/host/github-output.ts';
 import { sha256Hex } from '@/kernel/crypto/sha256.ts';

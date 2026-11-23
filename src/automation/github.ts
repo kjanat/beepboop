@@ -24,19 +24,19 @@ import {
 	userSchema,
 	workflowRunSchema,
 } from '@/automation/github-resources';
-import type { Edit, Snapshot } from '@/automation/inventory';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
-import { parsePresetReference } from '@/automation/preset';
-import type { RefState } from '@/automation/refs';
 import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/automation/release-graph/calls';
-import { repositoryNamePattern } from '@/automation/repository-name';
 import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import { setupBranches } from '@/automation/setup-changes';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import type { AutoMerge, PreparationResult } from '@/automation/types';
 import { githubApiVersion } from '@/contract/http';
-import type { AutoMergeMethod } from '@/contract/setup-terms';
+import type { Edit, Snapshot } from '@/domain/inventory.ts';
+import { parsePresetReference } from '@/domain/preset.ts';
+import type { RefState } from '@/domain/refs.ts';
+import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import type { AutoMergeMethod } from '@/domain/setup-terms.ts';
 import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
 import { legacyDiagnostic } from '@/kernel/errors/diagnostics.ts';
 import { DomainError, domainError, invalid, precondition, upstream } from '@/kernel/errors/domain-error.ts';
