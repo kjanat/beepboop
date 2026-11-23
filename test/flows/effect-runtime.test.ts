@@ -19,6 +19,7 @@ import { Vault } from '@/automation/vault';
 import { call, send } from '@/contract/client';
 import { routes } from '@/contract/routes';
 import { https } from '@/distribution/assets';
+import { GitHubApp, makeGitHubApp } from '@/github/app.ts';
 import { GitHubTransport, gitHubRequest } from '@/github/transport.ts';
 import { classify, fromSync, recover } from '@/kernel/errors/classify.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -255,6 +256,7 @@ test('the application layer uses explicitly supplied database, GitHub, HTTP and 
 				}),
 		}),
 		Layer.succeed(HttpTransport, { fetch: http }),
+		Layer.effect(GitHubApp, makeGitHubApp({ GITHUB_APP_ID: 'test', GITHUB_APP_PRIVATE_KEY: '' }, 1)),
 		Layer.succeed(ApplicationSecrets, vault),
 		Layer.succeed(ApplicationConfiguration, {
 			env: {
