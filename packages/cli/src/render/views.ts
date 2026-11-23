@@ -1,20 +1,16 @@
 import type { Out } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
-import type { Look, State } from '@/cli/render/look';
+import type { Look } from '@/cli/render/look';
 import { lookOf, registryOf, table } from '@/cli/render/look';
 import { emit } from '@/cli/render/output';
+import { stateOf } from '@/cli/render/states';
 import type { CredentialsView, ExecutionView, RepositoryView } from '@/contract/views';
 import { planReview } from '@/contract/views';
 import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/kernel/schema/structs.ts';
 import type { NotificationsView } from '@/notifications/contract.ts';
 
-const executionStates: Record<string, State> = {
-	succeeded: 'published',
-	failed: 'failed',
-	cancelled: 'skipped',
-};
-export function executionState(look: Look, state: string): string {
-	const kind = executionStates[state] ?? 'waiting';
+function executionState(look: Look, state: string): string {
+	const kind = stateOf('execution', state);
 	return `${look.mark(kind)} ${look.state(kind, state)}`;
 }
 
@@ -92,11 +88,7 @@ export function repositoryView(out: Out, repository: RepositoryView) {
 			table(
 				out,
 				packages.map(pkg => {
-					const state: State = pkg.publicationStatus === 'published'
-						? 'published'
-						: pkg.publicationStatus === 'missing'
-						? 'waiting'
-						: 'skipped';
+					const state = stateOf('inventory', pkg.publicationStatus);
 					return {
 						package: look.pkg(pkg.name),
 						registry: registryOf(pkg.manager),
