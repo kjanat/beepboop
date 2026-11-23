@@ -2,15 +2,16 @@ import { Effect } from 'effect';
 import type { CLISessionRow } from '@/auth/adapters/d1/cli-sessions.ts';
 import type { Automation, AutomationBindings, AutomationService } from '@/automation/service.ts';
 import { withAutomation } from '@/automation/service.ts';
-import type { UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
-import { readableValues } from '@/automation/store.ts';
+import type { UnreadableExecution } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
 import type { ActiveCredential } from '@/credentials/adapters/d1/credentials.ts';
 import type { CredentialDeliveryRow } from '@/credentials/adapters/d1/secret-deliveries.ts';
 import { grantRow } from '@/credentials/grant.ts';
+import type { UnreadableRepository } from '@/discovery/adapters/d1/repositories.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { recover } from '@/kernel/errors/classify.ts';
 import type { Readable } from '@/kernel/errors/decoding.ts';
+import { readableValues } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { packageWatches } from '@/notifications/package-watch.ts';
@@ -54,7 +55,7 @@ function split<T, U extends { kind: 'unreadable' }>(rows: (Readable<T> | U)[]): 
 function repositories(
 	service: AutomationService,
 ): Effect.Effect<Rows<RepositoryRecord, UnreadableRepository>, DomainError> {
-	return service.store.readRepositories().pipe(Effect.map(split));
+	return service.store.repositories.read().pipe(Effect.map(split));
 }
 function executions(
 	service: AutomationService,

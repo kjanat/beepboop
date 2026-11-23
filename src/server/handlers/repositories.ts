@@ -8,6 +8,7 @@ import { generatedFiles, openSetupPull, setupHead } from '@/automation/setup-pul
 import { repositorySnapshot } from '@/automation/snapshot';
 import { routes } from '@/contract/routes';
 import { discover } from '@/discovery/discover.ts';
+import { encodeRepository } from '@/discovery/repositories/codec-v1.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
@@ -17,7 +18,6 @@ import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, domainError, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
-import { encodeRepository } from '@/persistence/codecs/stored';
 import type { Context } from '@/server/handlers/kit';
 import { admin, storedRepository } from '@/server/handlers/kit';
 
@@ -73,13 +73,13 @@ export const repositoryEndpoints = {
 		})),
 	repositoriesList: admin(
 		routes.repositoriesList,
-		(_, { service }) => service.store.repositories().pipe(Effect.map(rows => rows.map(shown))),
+		(_, { service }) => service.store.repositories.all().pipe(Effect.map(rows => rows.map(shown))),
 	),
 	repositoriesResolve: admin(routes.repositoriesResolve, (input, { service }) =>
 		Effect.gen(function*() {
 			const wanted = yield* reference(input.repository);
 			const name = wanted.name.toLowerCase(), owner = wanted.owner?.toLowerCase();
-			const matches = (yield* service.store.enrollments()).filter(repository => {
+			const matches = (yield* service.store.repositories.enrollments()).filter(repository => {
 				const [candidateOwner = '', candidateName = ''] = repository.name.toLowerCase().split('/');
 				return candidateName === name && (owner === undefined || candidateOwner === owner);
 			});
@@ -91,7 +91,7 @@ export const repositoryEndpoints = {
 					}; name the owner`,
 				);
 			}
-			const stored = found ? yield* service.store.repository(found.id) : undefined;
+			const stored = found ? yield* service.store.repositories.get(found.id) : undefined;
 			if (stored) return shown(stored);
 			return yield* notFound(
 				'repository',
@@ -183,7 +183,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 					: error
 			),
 		);
-		const stored = yield* service.store.repository(id);
+		const stored = yield* service.store.repositories.get(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
 		const document = yield* service.onboarding.document(id);
 		const saved = document === undefined ? undefined : yield* Effect.fromResult(record(yield* fromJson(document)));

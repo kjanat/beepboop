@@ -10,6 +10,7 @@
 		"@beepboopbot/domain": "workspace:*",
 		"@beepboopbot/github": "workspace:*",
 		"@beepboopbot/kernel": "workspace:*",
+		"@beepboopbot/persistence": "workspace:*",
 		"effect": "^4.1.2",
 		"jsonc-parser": "^3.3.1",
 		"smol-toml": "^1.9.1",

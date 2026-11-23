@@ -26,3 +26,6 @@ export function decodeError(error: unknown): string {
 	if (error instanceof Schema.SchemaError) return error.message;
 	return error instanceof Error ? error.message : 'Unreadable document';
 }
+export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
+	return entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
+}

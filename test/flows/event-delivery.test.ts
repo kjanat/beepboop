@@ -51,7 +51,7 @@ async function follower(operation = 'rebuild') {
 	await world.run(Effect.gen(function*() {
 		yield* (yield* Automation).discover(repository.name, repository.id);
 	}));
-	const repositories = await world.run(Automation.use(service => service.store.readableRepositories()));
+	const repositories = await world.run(Automation.use(service => service.store.repositories.readable()));
 	const enqueued: Execution[] = [];
 	let refuse = true;
 	const delivery: EventDelivery = {

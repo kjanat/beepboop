@@ -1,10 +1,10 @@
 import { Schema } from 'effect';
+import { decodeRepositoryV1 } from '@/discovery/repositories/codec-v1.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import type { Access } from '@/domain/repository';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
-import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
 
 export const repositoryColumns = 'id, name, document, access, suspended_at';
 export const enrollmentColumns = 'id, name, access, suspended_at';

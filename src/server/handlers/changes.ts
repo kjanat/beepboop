@@ -8,7 +8,7 @@ export const changeEndpoints = {
 	changes: admin(routes.changes, (input, { service }) => service.changes.since(input.since, input.repositoryId)),
 	adminReindex: elevated(routes.adminReindex, (input, { service, actor }) =>
 		Effect.gen(function*() {
-			const known = (yield* service.store.readRepositories()).map(entry =>
+			const known = (yield* service.store.repositories.read()).map(entry =>
 				entry.kind === 'readable' ? entry.value.id : entry.id
 			);
 			if (input.repositoryId !== undefined && !known.includes(input.repositoryId)) {

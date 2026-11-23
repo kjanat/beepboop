@@ -33,7 +33,7 @@ export function storedRepository(
 	id: number,
 	missing: string,
 ): Effect.Effect<RepositoryRecord, DomainError> {
-	return service.store.repository(id).pipe(
+	return service.store.repositories.get(id).pipe(
 		Effect.filterOrFail(
 			(repository): repository is RepositoryRecord => repository !== undefined,
 			() => notFound('repository', missing, String(id)),
@@ -137,7 +137,7 @@ export function workflow<Q extends Contract, S extends Contract>(
 		run: (context, read) =>
 			Effect.gen(function*() {
 				const identity = yield* identify(context);
-				const enrollment = yield* context.service.store.repository(identity.repositoryId);
+				const enrollment = yield* context.service.store.repositories.get(identity.repositoryId);
 				if (!enrollment || readiness(enrollment).kind === 'suspended') {
 					return yield* forbidden('Repository is not enrolled or has been suspended');
 				}
