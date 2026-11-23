@@ -1,6 +1,4 @@
 import { Context, Effect, Layer } from 'effect';
-import type { VerificationContext } from '@/automation/gateway.ts';
-import { checkChannel } from '@/automation/managers/channels';
 import type { Publication } from '@/automation/types';
 import type { Discoverer } from '@/discovery/managers/registry.ts';
 import { DiscoveryRegistry, uniqueDiagnostics } from '@/discovery/managers/registry.ts';
@@ -16,6 +14,8 @@ import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
+import { checkChannel } from '@/publication/registries/channels.ts';
+import type { VerificationContext } from '@/publication/registries/context.ts';
 
 export interface Manager extends Discoverer {
 	verifyPublication?(

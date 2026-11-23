@@ -1,7 +1,4 @@
 import { Effect } from 'effect';
-import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
-import { Registry } from '@/automation/managers/registry';
-import { latestVersion, publicationResult, unconfirmed, unpublished } from '@/automation/managers/verification';
 import { jsrDiscoverer } from '@/discovery/managers/jsr.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { jsrPackageNamePattern } from '@/domain/catalog.ts';
@@ -11,6 +8,9 @@ import { domainError, upstream } from '@/kernel/errors/domain-error.ts';
 import { responseBytes, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
+import type { Adapter, RegistryVersion } from '@/publication/registries/registry.ts';
+import { Registry } from '@/publication/registries/registry.ts';
+import { latestVersion, publicationResult, unconfirmed, unpublished } from '@/publication/registries/verification.ts';
 
 export function jsrLatest(name: string, request: Fetcher): Effect.Effect<RegistryVersion> {
 	if (!jsrPackageNamePattern.test(name)) {

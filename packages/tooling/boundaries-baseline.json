@@ -197,18 +197,6 @@
 	},
 	{
 		"file": "packages/notifications/src/package-watch.ts",
-		"specifier": "@/automation/managers/jsr"
-	},
-	{
-		"file": "packages/notifications/src/package-watch.ts",
-		"specifier": "@/automation/managers/npm"
-	},
-	{
-		"file": "packages/notifications/src/package-watch.ts",
-		"specifier": "@/automation/managers/registry"
-	},
-	{
-		"file": "packages/notifications/src/package-watch.ts",
 		"specifier": "@/automation/types"
 	},
 	{
@@ -273,6 +261,38 @@
 	},
 	{
 		"file": "packages/publication/src/ledger.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/publication/src/registries/cargo.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/publication/src/registries/go.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/publication/src/registries/goreleaser.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/publication/src/registries/oci.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/publication/src/registries/registry.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/publication/src/registries/verification.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/publication/src/registries/verify.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/publication/src/registries/vscode.ts",
 		"specifier": "@/automation/types"
 	}
 ]

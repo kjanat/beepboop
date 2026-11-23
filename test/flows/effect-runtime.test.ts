@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect';
 import { TestClock } from 'effect/testing';
 import { SessionStore } from '@/auth/adapters/d1/sessions.ts';
-import { latestVersion, registryRequest } from '@/automation/managers/verification';
 import {
 	ApplicationConfiguration,
 	ApplicationSecrets,
@@ -31,6 +30,7 @@ import { retryTransient } from '@/kernel/http/retry.ts';
 import { AuditStore } from '@/persistence/d1/audit';
 import type { Sql } from '@/persistence/d1/database';
 import { Database } from '@/persistence/d1/database';
+import { latestVersion, registryRequest } from '@/publication/registries/verification.ts';
 import { capture } from '@/tooling/runtime';
 import { readBody } from '@/webhook';
 

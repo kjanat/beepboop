@@ -1,9 +1,14 @@
 import { Effect } from 'effect';
-import type { Adapter } from '@/automation/managers/registry';
-import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { normalizedProject, projectName, pypiDiscoverer } from '@/discovery/managers/pypi.ts';
 import { responseJson } from '@/kernel/http/body.ts';
+import type { Adapter } from '@/publication/registries/registry.ts';
+import {
+	latestVersion,
+	publicationResult,
+	registryRequest,
+	unconfirmed,
+} from '@/publication/registries/verification.ts';
 
 const projectVersion = /^[0-9A-Za-z.+!-]+$/;
 

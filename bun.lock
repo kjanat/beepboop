@@ -149,6 +149,7 @@
         "@beepboopbot/domain": "workspace:*",
         "@beepboopbot/kernel": "workspace:*",
         "@beepboopbot/persistence": "workspace:*",
+        "@beepboopbot/publication": "workspace:*",
         "effect": "^4.1.2",
       },
     },
@@ -164,6 +165,7 @@
       "name": "@beepboopbot/publication",
       "version": "0.0.0",
       "dependencies": {
+        "@beepboopbot/discovery": "workspace:*",
         "@beepboopbot/domain": "workspace:*",
         "@beepboopbot/kernel": "workspace:*",
         "effect": "^4.1.2",

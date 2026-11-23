@@ -1,10 +1,10 @@
 import { Effect } from 'effect';
-import type { VerificationContext } from '@/automation/gateway.ts';
-import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
-import { publicationResult } from '@/automation/managers/verification';
 import type { Publication } from '@/automation/types';
 import { goreleaserDiscoverer } from '@/discovery/managers/goreleaser.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
+import type { VerificationContext } from '@/publication/registries/context.ts';
+import type { Adapter, RegistryVersion } from '@/publication/registries/registry.ts';
+import { publicationResult } from '@/publication/registries/verification.ts';
 
 function verifyRelease(
 	publication: Publication,

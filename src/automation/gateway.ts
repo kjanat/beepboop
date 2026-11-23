@@ -18,12 +18,9 @@ import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
 import { decode } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
+import type { VerificationContext } from '@/publication/registries/context.ts';
 
 type Permission = Record<string, 'read' | 'write'>;
-export interface VerificationContext {
-	repository: string;
-	github(path: string): Effect.Effect<unknown, DomainError>;
-}
 export class RepositoryGateway {
 	constructor(
 		credentials: Credentials,

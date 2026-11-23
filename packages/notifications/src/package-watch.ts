@@ -1,7 +1,4 @@
 import { Clock, Effect } from 'effect';
-import { jsrLatest } from '@/automation/managers/jsr';
-import { npmLatest } from '@/automation/managers/npm';
-import type { RegistryVersion } from '@/automation/managers/registry';
 import type { AutomationEvent } from '@/automation/types';
 import type { WatchedRegistry } from '@/domain/catalog.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
@@ -16,6 +13,9 @@ import type { WatchedPackage } from '@/notifications/watchlist.ts';
 import { watchlist } from '@/notifications/watchlist.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { sql } from '@/persistence/d1/database';
+import { jsrLatest } from '@/publication/registries/jsr.ts';
+import { npmLatest } from '@/publication/registries/npm.ts';
+import type { RegistryVersion } from '@/publication/registries/registry.ts';
 
 export interface PackageWatch extends WatchedPackage {
 	manual: boolean;

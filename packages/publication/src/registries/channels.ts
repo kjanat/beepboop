@@ -1,10 +1,10 @@
 import { Effect, Schema } from 'effect';
-import type { RegistryVersion } from '@/automation/managers/registry';
-import { LookupFailure, latestText, latestVersion, unpublished } from '@/automation/managers/verification';
 import type { Channel, ChannelOutcome } from '@/domain/destinations.ts';
 import { tracksBranch } from '@/domain/destinations.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
+import type { RegistryVersion } from '@/publication/registries/registry.ts';
+import { LookupFailure, latestText, latestVersion, unpublished } from '@/publication/registries/verification.ts';
 
 const aurInfo = mutableStruct({
 	type: Schema.String,

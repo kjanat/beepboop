@@ -1,5 +1,11 @@
 import { Effect, Result } from 'effect';
-import type { Adapter } from '@/automation/managers/registry';
+import type { Publication } from '@/automation/types';
+import { cargoDiscoverer } from '@/discovery/managers/cargo.ts';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import { compareVersions, isPrerelease } from '@/domain/semver.ts';
+import { responseText } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import type { Adapter } from '@/publication/registries/registry.ts';
 import {
 	LookupFailure,
 	latestText,
@@ -9,13 +15,7 @@ import {
 	unconfirmed,
 	unpublished,
 	verifyRegistry,
-} from '@/automation/managers/verification';
-import type { Publication } from '@/automation/types';
-import { cargoDiscoverer } from '@/discovery/managers/cargo.ts';
-import { object } from '@/discovery/managers/manifest-editing.ts';
-import { compareVersions, isPrerelease } from '@/domain/semver.ts';
-import { responseText } from '@/kernel/http/body.ts';
-import type { Fetcher } from '@/kernel/http/fetcher.ts';
+} from '@/publication/registries/verification.ts';
 export function crateIndexUrl(name: string): string {
 	const lower = name.toLowerCase();
 	const path = lower.length <= 2
