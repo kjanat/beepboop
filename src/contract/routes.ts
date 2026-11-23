@@ -22,7 +22,9 @@ import {
 	repositoryView,
 	securityChallenge,
 	securityProof,
+	streamGates,
 } from '@/contract/views';
+import { releaseGate } from '@/domain/release-gates.ts';
 import { versionPrMerge } from '@/domain/setup-terms.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { shaSchema as sha, textSchema as text } from '@/kernel/schema/result.ts';
@@ -175,6 +177,22 @@ export const routes = {
 			after: Schema.optional(text),
 		}),
 		response: packageTagPage,
+	}),
+	repositoriesGates: route({
+		method: 'POST',
+		path: '/api/repositories/gates',
+		auth: 'admin',
+		idempotent: true,
+		request: mutableStruct({ repositoryId: id, stream: text }),
+		response: streamGates,
+	}),
+	repositoriesGateSkip: route({
+		method: 'POST',
+		path: '/api/repositories/gates/skip',
+		auth: 'admin',
+		idempotent: true,
+		request: mutableStruct({ repositoryId: id, stream: text, gate: releaseGate, skip: Schema.Boolean }),
+		response: streamGates,
 	}),
 	repositoriesDiscover: route({
 		method: 'POST',

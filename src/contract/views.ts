@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 import { githubJobKinds } from '@/domain/github-run-state.ts';
+import { releaseGate } from '@/domain/release-gates.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 
@@ -140,6 +141,22 @@ export const approvalReadiness = looseStruct({
 	problems: mutableArray(Schema.String),
 	blocked: mutableArray(Schema.String),
 });
+export const gateStates = ['passed', 'waiting', 'failed', 'absent'] as const;
+export const gateView = mutableStruct({
+	gate: releaseGate,
+	state: Schema.Literals(gateStates),
+	fact: Schema.String,
+	detail: Schema.optional(Schema.String),
+	skipped: Schema.optional(mutableStruct({ actor: Schema.String, at: Schema.Finite })),
+});
+export type GateView = Decoded<typeof gateView>;
+export const streamGates = mutableStruct({
+	stream: Schema.String,
+	commit: Schema.String,
+	version: Schema.optional(Schema.String),
+	gates: mutableArray(gateView),
+});
+export type StreamGates = Decoded<typeof streamGates>;
 export const securityChallenge = looseStruct({ id: Schema.String, options: Schema.Unknown });
 export const securityProof = looseStruct({ proof: Schema.optional(Schema.String) });
 export const acknowledged = looseStruct({ ok: Schema.Boolean });

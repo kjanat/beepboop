@@ -599,6 +599,19 @@ carries `"force": true` for a forced release, so a publication workflow can
 skip its own tests, and `actions/publish` publishes a package that lacks
 metadata.
 
+### Release gates
+
+The repositories page lists the release gates of each stream under **Release
+gates**: the commit signature, each check on the commit, the commit status and
+the package metadata. It shows each gate's state on the commit of the waiting
+or stopped release, or on the inspected commit when no release waits. **Switch
+off** makes every later release of the stream ignore that gate, and **Switch
+on** undoes it. Beepboop stores the choice on the server and leaves
+`.github/beepboop.json` as it is. A switched-off check stays listed when the
+commit lacks it. The activity log records who switched each gate, and the
+approval of a release names each failing or running gate it ignored. Manifest
+problems and more than 100 check runs always stop a release.
+
 `beepboop release` and the dashboard start a release on every stream that can
 publish one shared version. Some streams only prepare the version, from both
 places: a stream that versions each package on its own, a tag-based stream
