@@ -92,12 +92,6 @@ export function unreleasedManifestVersion(packages: Package[]): string | undefin
 		: undefined;
 }
 
-export function hasTagPromotion(stream: Stream, prefix: string): boolean {
-	const workflow = stream.promote.workflow;
-	return workflow !== undefined && workflow.mode !== 'observe' && !workflow.ref?.includes('*')
-		&& workflow.refs?.phase === 'version' && workflow.refs.prefix === prefix;
-}
-
 export function releasePaths(packages: Package[], stream: Stream): ReadonlySet<string> {
 	return new Set([
 		...packages.filter(pkg => !stream.packages || stream.packages.some(reference => matchesPackage(reference, pkg)))
