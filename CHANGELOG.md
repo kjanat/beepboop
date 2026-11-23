@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `beepboop adopt` and the dashboard start every setup field from the same default. For `startFrom`, `versionLands` and `publishWhen`, `beepboop adopt` first offers to leave the question for the setup PR, as the dashboard does. It suggests the only publishing step of a chosen workflow for a single package. The dashboard keeps the job that the proposal names for a generated workflow and the trigger handover saved for the chosen workflow.
 - `beepboop release` and `beepboop runs recover --action redispatch` poll a release every 5 seconds for at most 60 minutes, and slow server answers count toward the 60 minutes. Then they stop with exit code 1 and say that the release goes on in Beepboop and that `beepboop runs list` follows it.
 - Discovery of a public repository reads its files at the commit from `raw.githubusercontent.com` and spends no installation rate limit on them, and falls back to the GitHub API when that read fails.
 - Beepboop reuses a GitHub App installation token for the same repository and permissions until five minutes before it expires, instead of requesting a new one for every GitHub call. Each use still checks the installation's owner, permissions and suspension. A token handed to a workflow run is always new.

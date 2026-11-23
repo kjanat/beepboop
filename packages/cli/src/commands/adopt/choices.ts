@@ -4,13 +4,13 @@ import { Effect } from 'effect';
 import { lookOf } from '@/cli/render/look';
 import { failure, prompted } from '@/cli/render/output';
 import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
-import type { BinaryBuild, BinaryRelease } from '@/domain/binary-platforms.ts';
-import { binaryTargets, defaultBinaryTargets, leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
+import type { BinaryRelease } from '@/domain/binary-platforms.ts';
+import { binaryTargets, leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
 import { workflowFilePattern } from '@/domain/catalog.ts';
 import { packageLabel } from '@/domain/package-label';
-import { publishable } from '@/domain/package-publication.ts';
 import { approvalPolicies, versionBumps } from '@/domain/release-start.ts';
 import {
+	alwaysStarted,
 	existingTriggersNames,
 	existingTriggersQuestion,
 	existingTriggersSentences,
@@ -33,57 +33,30 @@ import { actionsRevisionPattern } from '@/domain/workflow-setup.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
 import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 import { bumpable, setupStream, startable } from '@/setup/contract.ts';
-import type { Selection } from '@/setup/defaults.ts';
+import type { Selection } from '@/setup/editing/commands.ts';
+import { preparationReasons, suggestedCommands, suggestedWorkflowFile, ungenerated } from '@/setup/editing/commands.ts';
+import { jsonFields, streamEditors, streamFields } from '@/setup/editing/fields.ts';
 import {
-	ledgerCommand,
-	preparationReasons,
-	suggestedCommands,
-	suggestedWorkflowFile,
-	ungenerated,
-} from '@/setup/defaults.ts';
-import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/setup/editing/fields.ts';
-import { jsonFields, streamFields } from '@/setup/editing/fields.ts';
+	binaryLabel,
+	binaryTargetDefaults,
+	binaryTicked,
+	chosenApproval,
+	chosenBump,
+	chosenMerge,
+	defaultTriggers,
+	distributionCommands,
+	generatedJob,
+	inferredJob,
+	keptDistributionCommands,
+	offeredBinaries,
+	packageCandidates,
+	publicationStepDefault,
+	triggerChoices,
+	versioningChoices,
+} from '@/setup/editing/rules.ts';
 import { streamSummary } from '@/setup/summary.ts';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/setup/types.ts';
 
-export const choicesEditors = { streams: 'control', actionsRevision: 'control' } as const satisfies Editors<
-	ChoicesField
->;
-export const streamEditors = {
-	name: 'control',
-	packages: 'control',
-	required: 'control',
-	versioning: 'control',
-	approval: 'control',
-	start: 'control',
-	bump: 'control',
-	versionPrMerge: 'control',
-	actionRelease: 'control',
-	observe: 'control',
-	prepare: 'control',
-	promote: 'control',
-	versionSource: 'json',
-	versionFiles: 'json',
-	companionModules: 'json',
-	needs: 'json',
-	operations: 'json',
-} as const satisfies Editors<StreamField>;
-export const workflowEditors = {
-	file: 'control',
-	job: 'control',
-	triggers: 'control',
-	commands: 'control',
-	publicationSteps: 'control',
-	tagPrefix: 'control',
-	binaries: 'control',
-	credentials: 'json',
-} as const satisfies Editors<WorkflowField>;
-
-function buildLabel(build: BinaryBuild): string {
-	return build.toolchain === 'cargo'
-		? `${build.name} (Cargo, ${build.manifest})`
-		: `${build.name} (Go, ${build.package === '.' ? build.module : `${build.module}/${build.package.slice(2)}`})`;
-}
 function validJson(value: string): boolean {
 	try {
 		JSON.parse(value);
@@ -121,6 +94,8 @@ function select(ask: Ask, message: string, entries: SelectChoice[]): Effect.Effe
 		? prompted(() => ask({ kind: 'select', message, choices: [first, ...rest] }))
 		: Effect.fail(failure('No choices available', 'NO_CHOICES'));
 }
+
+const unanswered: SelectChoice = { value: '', label: 'Leave it for the setup PR' };
 
 function preferring(entries: SelectChoice[], value: string | undefined): SelectChoice[] {
 	return [...entries.filter(entry => entry.value === value), ...entries.filter(entry => entry.value !== value)];
@@ -163,10 +138,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			streams: [],
 			...(plan.choices.actionsRevision ? { actionsRevision: plan.choices.actionsRevision } : {}),
 		};
-		const candidates = plan.inventory.packages.flatMap((pkg, index) => {
-			const id = plan.packageIds[index];
-			return id && publishable(pkg) ? [{ ...pkg, id }] : [];
-		});
+		const candidates = packageCandidates(plan);
 		const packageChoices = candidates.map(pkg => ({
 			value: pkg.id,
 			label: `${packageLabel(pkg.id)} (${pkg.manifest})`,
@@ -249,7 +221,6 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					? previous && !existing ? previous.file : suggestedWorkflowFile(role, selectedPackages, plan, files())
 					: selected;
 				const evidence = plan.workflows.find(w => w.file === file);
-				const roles = evidence?.roles.filter(entry => entry.stream === stream.name && entry.operation === role) ?? [];
 				const taken = preparing && selected !== 'same' && file === stream.promote?.file
 					? stream.promote.job
 					: undefined;
@@ -298,35 +269,23 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						}.`,
 					));
 				}
-				const inferred = previous?.file === file && previous.job && (!evidence || usable.includes(previous.job))
-					? previous.job
-					: roles.length === 1 && (!evidence || usable.includes(roles[0]?.job ?? ''))
-					? roles[0]?.job
-					: usable.length === 1
-					? usable[0]
-					: undefined;
+				const inferred = inferredJob(role, stream.name, file, evidence, previous, usable);
 				const job = inferred ?? (evidence
 					? yield* select(
 						ask,
 						`Which job in ${file} ${preparing ? 'prepares the release' : 'publishes these packages'}?`,
 						usable.map(value => ({ value })),
 					)
-					: preparing
-					? 'prepare'
-					: 'publish');
+					: generatedJob(role));
 				out.log(`${stream.name}: ${look.heading(file)}, ${job} job${selected === 'new' ? ' (generated)' : ''}.`);
 				let triggers: SetupWorkflow['triggers'] = 'review';
 				if (selected !== 'same' && evidence?.events.some(event => event !== 'workflow_dispatch')) {
-					const prior = previous?.file === file ? previous.triggers : 'review';
+					const prior = defaultTriggers(file, previous);
 					const entry = (value: SetupWorkflow['triggers']) => ({
 						value,
 						label: `${existingTriggersNames[value]}: ${existingTriggersSentences[value]}`,
 					});
-					const entries = [
-						entry('review'),
-						entry('dispatchOnly'),
-						...(prior === 'preserve' ? [entry('preserve')] : []),
-					];
+					const entries = triggerChoices(prior).map(entry);
 					const trigger = yield* select(
 						ask,
 						`${file}: existingTriggers. ${existingTriggersQuestion}`,
@@ -339,9 +298,14 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				const steps = evidence?.steps.filter(step => step.job === job) ?? [];
 				if (!preparing && !integrated && steps.length) {
 					for (const pkg of selectedPackages.packages) {
-						const prior = previous?.file === file && previous.job === job
-							? previous.publicationSteps[pkg.id]
-							: undefined;
+						const prior = publicationStepDefault(
+							pkg.id,
+							file,
+							job,
+							steps,
+							selectedPackages.packages.length,
+							previous,
+						);
 						const entries = [
 							{ value: '', label: 'Add Bash publishing commands' },
 							...steps.map(step => ({ value: step.id, label: step.label })),
@@ -368,12 +332,12 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						plan,
 					);
 				const commands = !preparing && stream.actionRelease?.kind === 'distribution'
-					? previous?.commands && previous.commands !== ledgerCommand
-						? previous.commands
-						: [
+					? keptDistributionCommands(previous)
+						?? distributionCommands(
+							previous,
 							plan.actionRelease?.commands || (yield* typedCommands(ask, 'this action', 'build')),
-							previous?.commands || suggested,
-						].filter(Boolean).join('\n')
+							suggested,
+						)
 					: integrated || (!preparing && !remaining.length)
 					? ''
 					: missing.length
@@ -408,16 +372,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			previous: SetupWorkflow | undefined,
 		): Effect.Effect<BinaryRelease | undefined, CLIError> =>
 			Effect.gen(function*() {
-				const candidates = (plan.binaryCandidates ?? []).filter(candidate =>
-					stream.packages.includes(candidate.package)
-				);
-				const existing = previous?.binaries?.builds ?? [];
-				const offered = [
-					...existing.map(build => ({ build, candidate: candidates.find(entry => entry.build.name === build.name) })),
-					...candidates.filter(candidate => !existing.some(build => build.name === candidate.build.name)).map(
-						candidate => ({ build: candidate.build, candidate }),
-					),
-				];
+				const offered = offeredBinaries(plan, stream.packages, previous);
 				const builds: typeof offered = [];
 				for (const entry of offered) {
 					const note = entry.candidate && leftOut(entry.candidate);
@@ -425,17 +380,14 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					const wanted = yield* prompted(() =>
 						ask({
 							kind: 'confirm',
-							message: `${stream.name}: build ${buildLabel(entry.build)} for the GitHub release?`,
-							default: previous ? existing.some(build => build.name === entry.build.name) : true,
+							message: `${stream.name}: build ${binaryLabel(entry.build)} for the GitHub release?`,
+							default: binaryTicked(entry.build, previous),
 						})
 					);
 					if (wanted) builds.push(entry);
 				}
 				if (!builds.length) return undefined;
-				const defaults = previous?.binaries?.targets
-					?? defaultBinaryTargets.filter(target =>
-						builds.every(entry => entry.candidate?.targets.includes(target) ?? true)
-					);
+				const defaults = binaryTargetDefaults(builds, previous);
 				const targets: BinaryRelease['targets'] = [];
 				for (
 					const target of binaryTargets.filter(target =>
@@ -459,28 +411,34 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 		const releaseMode = (stream: SetupChoices['streams'][number], all: boolean) =>
 			Effect.gen(function*() {
 				if (startable(stream) && (all || !stream.start)) {
-					const allowed = yield* prompted(() =>
-						ask({
-							kind: 'confirm',
-							message: `${stream.name}: ${startFromQuestion}? ${startFromSentences.action.replaceAll('`', '')}`,
-							default: stream.start?.includes('action') ?? false,
-						})
+					const start = yield* select(
+						ask,
+						`${stream.name}: startFrom. ${startFromQuestion}`,
+						preferring([
+							unanswered,
+							{ value: 'action', label: `action: ${startFromSentences.action.replaceAll('`', '')}` },
+							{ value: 'none', label: `none: ${alwaysStarted.replaceAll('`', '')}` },
+						], stream.start === undefined ? '' : stream.start.includes('action') ? 'action' : 'none'),
 					);
-					stream.start = allowed ? ['action'] : [];
+					if (start === 'action') stream.start = ['action'];
+					else if (start === 'none') stream.start = [];
+					else delete stream.start;
 				}
 				if (bumpable(stream) && (all || !stream.bump)) {
 					const bump = yield* select(
 						ask,
 						`${stream.name}: versionLands. ${versionLandsQuestion}`,
-						preferring(
-							versionBumps.map(value => ({
+						preferring([
+							unanswered,
+							...versionBumps.map(value => ({
 								value,
 								label: `${versionLandsNames[value]}: ${versionLandsSentences[value].replaceAll('`', '')}`,
 							})),
-							stream.bump,
-						),
+						], stream.bump ?? ''),
 					);
-					stream.bump = bump === 'commit' ? 'commit' : 'pr';
+					const chosen = chosenBump(bump);
+					if (chosen) stream.bump = chosen;
+					else delete stream.bump;
 				}
 				if (bumpable(stream) && all && stream.bump !== 'commit') {
 					const merge = yield* select(
@@ -494,22 +452,24 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 							stream.versionPrMerge ?? 'manual',
 						),
 					);
-					const chosen = versionPrMerges.find(value => value === merge);
-					if (chosen && (chosen !== 'manual' || stream.versionPrMerge)) stream.versionPrMerge = chosen;
+					const chosen = chosenMerge(merge, stream.versionPrMerge);
+					if (chosen) stream.versionPrMerge = chosen;
 				}
 				if (stream.promote && (all || !stream.approval)) {
 					const approval = yield* select(
 						ask,
 						`${stream.name}: publishWhen. ${publishWhenQuestion}`,
-						preferring(
-							approvalPolicies.map(value => ({
+						preferring([
+							unanswered,
+							...approvalPolicies.map(value => ({
 								value,
 								label: `${publishWhenNames[value]}: ${publishWhenSentences[value].replaceAll('`', '')}`,
 							})),
-							stream.approval,
-						),
+						], stream.approval ?? ''),
 					);
-					stream.approval = approval === 'push' ? 'push' : approval === 'merge' ? 'merge' : 'required';
+					const chosen = chosenApproval(approval);
+					if (chosen) stream.approval = chosen;
+					else delete stream.approval;
 				}
 			});
 		const advanced = (stream: SetupChoices['streams'][number]) =>
@@ -674,11 +634,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					value,
 					label: `${versionScopeNames[value]}: ${versionScopeSentences[value]}`,
 				});
-				const entries = [
-					entry('workspace'),
-					entry('independent'),
-					...(stream.versioning === 'none' ? [entry('none')] : []),
-				];
+				const entries = versioningChoices(stream.versioning).map(entry);
 				const versioning = yield* select(
 					ask,
 					`${stream.name}: versionScope. ${versionScopeQuestion}`,

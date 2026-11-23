@@ -7,7 +7,7 @@ import { releaseStarts, versionBump } from '@/domain/release-start.ts';
 import { versionPrMerge } from '@/domain/setup-terms.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
-import { crateScript, defaultTagPrefix, refreshedCommands, suggestedCommands } from '@/setup/defaults.ts';
+import { crateScript, defaultTagPrefix, refreshedCommands, suggestedCommands } from '@/setup/editing/commands.ts';
 import type { Operation } from '@/setup/options.ts';
 import type { SetupChoices, SetupWorkflow } from '@/setup/types.ts';
 import { actionReleaseOffer } from '@/setup/workflows/action-release.ts';

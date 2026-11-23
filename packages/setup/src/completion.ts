@@ -7,7 +7,7 @@ import { publishable } from '@/domain/package-publication.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { shellQuote } from '@/kernel/text/shell-quote.ts';
-import { ledgerCommand } from '@/setup/defaults.ts';
+import { ledgerCommand } from '@/setup/editing/commands.ts';
 import type { SetupChoices } from '@/setup/types.ts';
 
 type Stream = SetupChoices['streams'][number];

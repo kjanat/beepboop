@@ -18,3 +18,36 @@ export const workflowFields = keys(setupWorkflow.fields);
 export function jsonFields<K extends string>(fields: readonly K[], editors: Editors<K>): K[] {
 	return fields.filter(field => editors[field] === 'json');
 }
+
+export const choicesEditors = { streams: 'control', actionsRevision: 'control' } as const satisfies Editors<
+	ChoicesField
+>;
+export const streamEditors = {
+	name: 'control',
+	packages: 'control',
+	required: 'control',
+	versioning: 'control',
+	approval: 'control',
+	start: 'control',
+	bump: 'control',
+	versionPrMerge: 'control',
+	actionRelease: 'control',
+	observe: 'control',
+	prepare: 'control',
+	promote: 'control',
+	versionSource: 'json',
+	versionFiles: 'json',
+	companionModules: 'json',
+	needs: 'json',
+	operations: 'json',
+} as const satisfies Editors<StreamField>;
+export const workflowEditors = {
+	file: 'control',
+	job: 'control',
+	triggers: 'control',
+	commands: 'control',
+	publicationSteps: 'control',
+	tagPrefix: 'control',
+	binaries: 'control',
+	credentials: 'json',
+} as const satisfies Editors<WorkflowField>;
