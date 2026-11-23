@@ -1,8 +1,8 @@
 import { Schema } from 'effect';
-import { watchedPackageHref } from '@/contract/links';
 import type { NotificationKind, WatchedRegistry } from '@/domain/catalog.ts';
 import { watchedRegistries } from '@/domain/catalog.ts';
 import { mutableStruct } from '@/kernel/schema/structs.ts';
+import { watchedPackageHref } from '@/publication/links.ts';
 
 export const deliveryStates = ['pending', 'sending', 'delivered', 'failed'] as const;
 export type DeliveryState = (typeof deliveryStates)[number];

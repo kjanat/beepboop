@@ -1,35 +1,15 @@
-import { githubHref, registryHref } from '@/contract/links';
-import { managerSpec } from '@/domain/catalog.ts';
-import type {
-	Channel,
-	ChannelOutcome,
-	ManifestDestinationId,
-	RegistryOutcome,
-	RegistryState,
-} from '@/domain/destinations.ts';
-import { channelKey, isChannelOutcome, registryDestination, winget } from '@/domain/destinations.ts';
+import type { ChannelOutcome, RegistryOutcome, RegistryState } from '@/domain/destinations.ts';
+import { isChannelOutcome, registryDestination, winget } from '@/domain/destinations.ts';
 import type { Inventory, Package } from '@/domain/inventory.ts';
+import type { ManifestOutcome } from '@/publication/destinations.ts';
+import {
+	channelHref,
+	destinationHref,
+	destinationOutcomes,
+	primaryState,
+	repositoryChannelOutcomes,
+} from '@/publication/destinations.ts';
 import type { WinGetSubmission } from '@/publication/winget/submission.ts';
-
-export type ManifestOutcome =
-	| { destination: ManifestDestinationId; state: 'unsubmitted' }
-	| { destination: ManifestDestinationId; state: WinGetSubmission['state']; version: string; url?: string };
-
-export function wingetOutcome(submission: WinGetSubmission | undefined): ManifestOutcome {
-	if (!submission) return { destination: 'winget', state: 'unsubmitted' };
-	return {
-		destination: 'winget',
-		state: submission.state,
-		version: submission.plan.version,
-		...(submission.url ? { url: submission.url } : {}),
-	};
-}
-
-function channelHref(channel: Channel): string {
-	if (channel.destination === 'aur') return `https://aur.archlinux.org/packages/${encodeURIComponent(channel.name)}`;
-	const file = `${channel.name}.${channel.destination === 'scoop' ? 'json' : 'rb'}`;
-	return githubHref(channel.repository, 'blob', 'HEAD', channel.directory, file);
-}
 
 export interface DestinationEntry {
 	label: string;
@@ -37,26 +17,12 @@ export interface DestinationEntry {
 	href?: string;
 }
 
-function storedOutcomes(pkg: Package): RegistryOutcome[] {
-	if (pkg.destinations) return pkg.destinations;
-	const primary = managerSpec(pkg.manager).destinations?.primary;
-	if (!primary) return [];
-	if (pkg.published !== undefined) return [{ destination: primary, state: 'published', version: pkg.published }];
-	if (pkg.publicationStatus === 'missing') return [{ destination: primary, state: 'missing' }];
-	if (pkg.publicationStatus === 'failed') {
-		return [{ destination: primary, state: 'failed', reason: 'inspect diagnostics' }];
-	}
-	return [{ destination: primary, state: 'unchecked' }];
-}
-
 export function packageDestinations(pkg: Package, repository: string): DestinationEntry[] {
-	return storedOutcomes(pkg).map(outcome => registryEntry(outcome, pkg, repository));
+	return destinationOutcomes(pkg).map(outcome => registryEntry(outcome, pkg, repository));
 }
 
 export function primaryStatus(pkg: Package): string {
-	const primary = managerSpec(pkg.manager).destinations?.primary;
-	const outcome = storedOutcomes(pkg).find(outcome => outcome.destination === primary);
-	return outcome && !isChannelOutcome(outcome) ? stateLabel(outcome) : stateLabel({ state: 'unchecked' });
+	return stateLabel(primaryState(pkg));
 }
 
 export const submissionLabels = {
@@ -77,11 +43,7 @@ export function manifestEntry(outcome: ManifestOutcome): DestinationEntry {
 }
 
 export function repositoryChannels(inventory: Inventory): { outcome: ChannelOutcome; entry: DestinationEntry }[] {
-	const checked = new Map((inventory.destinations ?? []).map(outcome => [channelKey(outcome), outcome]));
-	return (inventory.channels ?? []).map(channel => {
-		const outcome: ChannelOutcome = checked.get(channelKey(channel)) ?? { ...channel, state: 'unchecked' };
-		return { outcome, entry: channelEntry(outcome) };
-	});
+	return repositoryChannelOutcomes(inventory).map(outcome => ({ outcome, entry: channelEntry(outcome) }));
 }
 
 function stateLabel(outcome: RegistryState): string {
@@ -105,10 +67,6 @@ function channelEntry(outcome: ChannelOutcome): DestinationEntry {
 function registryEntry(outcome: RegistryOutcome, pkg: Package, repository: string): DestinationEntry {
 	if (isChannelOutcome(outcome)) return channelEntry(outcome);
 	const { label } = registryDestination(outcome.destination);
-	const version = outcome.state === 'published' ? outcome.version : undefined;
-	const reference = pkg.manager === 'goreleaser' && outcome.destination === 'github-release' && version
-		? `v${version.replace(/^v/, '')}`
-		: version;
-	const href = registryHref(outcome.destination, pkg.name, reference, repository);
+	const href = destinationHref(outcome, pkg, repository);
 	return { label, status: stateLabel(outcome), ...(href ? { href } : {}) };
 }

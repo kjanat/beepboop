@@ -1,6 +1,5 @@
 import { runFailedNote } from '@/automation/execution.ts';
 import type { Execution, Publication } from '@/automation/types.ts';
-import { githubHref, registryHref } from '@/contract/links';
 import type { Status, Tone } from '@/contract/views';
 import { managerSpec } from '@/domain/catalog.ts';
 import { matchesPublication } from '@/domain/package-identity.ts';
@@ -11,6 +10,7 @@ import { versionPrMergeSentences } from '@/domain/setup-terms.ts';
 import { defaultTagPolicy, semVer, tagFor } from '@/domain/version.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import { formatTime } from '@/kernel/time.ts';
+import { githubHref, registryHref } from '@/publication/links.ts';
 import { packageDisplayName } from '@/server/package-name.ts';
 import type { releaseSummaries } from '@/server/releases.ts';
 import { byAge, checksPolicy, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
