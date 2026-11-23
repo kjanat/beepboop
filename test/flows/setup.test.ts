@@ -13,7 +13,6 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { parse, parseDocument } from 'yaml';
-import { bodyChoices, releaseAfterMerge, setupBody, setupOptions } from '@/automation/setup';
 import { rebuildingStatus } from '@/automation/setup-maintenance';
 import { discover } from '@/discovery/discover.ts';
 import { mergeConfiguration } from '@/domain/configuration/presets.ts';
@@ -32,9 +31,11 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { releaseAfterMerge, setupBody } from '@/setup/body.ts';
 import { behaviourChanges, changeDetails, describeEdits, setupTitle } from '@/setup/changes.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
 import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/setup/defaults.ts';
+import { bodyChoices, setupOptions } from '@/setup/options.ts';
 import { parseSetupPlan } from '@/setup/plan.ts';
 import { streamSummary } from '@/setup/summary.ts';
 import type { SetupChoices, SetupPlan } from '@/setup/types.ts';

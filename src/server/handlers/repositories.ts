@@ -1,7 +1,6 @@
 import { Effect, Schema } from 'effect';
 import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
 import { streamReleases } from '@/automation/release-capability';
-import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
 import { generatedFiles, openSetupPull, setupHead } from '@/automation/setup-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
@@ -19,7 +18,11 @@ import { conflict, domainError, invalid, notFound, precondition } from '@/kernel
 import { record } from '@/kernel/schema/result.ts';
 import type { Context } from '@/server/handlers/kit';
 import { admin, storedRepository } from '@/server/handlers/kit';
+import { setupBody } from '@/setup/body.ts';
 import { setupBranch, setupTitle } from '@/setup/changes.ts';
+import { branchConflictBlocker, previewSetup } from '@/setup/draft.ts';
+import { setupOptions } from '@/setup/options.ts';
+import { withRegistryStatus } from '@/setup/suggest.ts';
 
 function reference(input: string) {
 	return repositoryReference(input).pipe(Effect.mapError(error => invalid(error.message, ['repository'])));
