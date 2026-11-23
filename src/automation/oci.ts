@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
 import type { Fetcher } from '@/automation/managers/registry';
+import { platformFetch } from '@/automation/managers/registry';
 import type { Outcome, Publication } from '@/automation/types';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import { responseBytes, responseJson } from '@/kernel/http/body.ts';
@@ -7,7 +8,7 @@ import { sha256DigestPattern, sha256Hex } from '@/kernel/schema/ids.ts';
 import { record } from '@/kernel/schema/result.ts';
 
 /** Public distribution verification. Never forwards GitHub or vault credentials to registries. */
-export function verifyImage(publication: Publication, request: Fetcher = fetch): Effect.Effect<Publication> {
+export function verifyImage(publication: Publication, request: Fetcher = platformFetch): Effect.Effect<Publication> {
 	const [, host, image] = publication.name.match(/^(ghcr\.io|docker\.io)\/([a-z0-9][a-z0-9._/-]*)$/) ?? [];
 	if (!image || image.includes('..') || !/^[\w][\w.-]{0,127}$/.test(publication.version)) {
 		return Effect.succeed({ ...publication, outcome: 'failed' });

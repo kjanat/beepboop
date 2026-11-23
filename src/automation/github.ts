@@ -25,6 +25,7 @@ import {
 	workflowRunSchema,
 } from '@/automation/github-resources';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
+import { platformFetch } from '@/automation/managers/registry';
 import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/automation/release-graph/calls';
 import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import { setupBranches } from '@/automation/setup-changes';
@@ -239,7 +240,7 @@ export class RepositoryGateway {
 	constructor(
 		private credentials: Credentials,
 		private ownerId: number,
-		private transport: Fetcher = fetch,
+		private transport: Fetcher = platformFetch,
 		private defer?: (work: Promise<void>) => void,
 		private api?: GitHub['Service'],
 	) {}

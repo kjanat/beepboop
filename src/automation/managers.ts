@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 import { alreadyPrepared, applyVersionFiles, fileEdits } from '@/automation/editors';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
+import { platformFetch } from '@/automation/managers/registry';
 import { metadataDiagnostics } from '@/automation/package-metadata';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { Publication, ReleasePlan } from '@/automation/types';
@@ -108,20 +109,20 @@ export function canVerifyPublication(manager: ManagerName): boolean {
 }
 export function verifyPublication(
 	publication: Publication,
-	request: Fetcher = fetch,
+	request: Fetcher = platformFetch,
 	context?: VerificationContext,
 ): Effect.Effect<Publication> {
 	return managerRegistry.verifyPublication(publication, request, context);
 }
 export function verifySecondaryPublications(
 	publication: Publication,
-	request: Fetcher = fetch,
+	request: Fetcher = platformFetch,
 ): Effect.Effect<Publication[]> {
 	return managerRegistry.verifySecondaryPublications(publication, request);
 }
 export function resolvePublished(
 	inventory: Inventory,
-	request: Fetcher = fetch,
+	request: Fetcher = platformFetch,
 	context?: VerificationContext,
 ): Effect.Effect<Inventory> {
 	return managerRegistry.resolvePublished(inventory, request, context);
