@@ -24,7 +24,7 @@ export interface SigningKey {
 	dispose(): void;
 }
 
-export function signingKey(uid: string): SigningKey {
+function createSigningKey(uid: string): SigningKey {
 	const home = mkdtempSync(join(tmpdir(), 'beepboop-gpg-'));
 	gpg(home, ['--passphrase', '', '--quick-gen-key', uid, 'ed25519', 'sign', 'never']);
 	const fingerprint = gpg(home, ['--with-colons', '--list-secret-keys']).split('\n')
@@ -43,6 +43,18 @@ export function signingKey(uid: string): SigningKey {
 			rmSync(home, { recursive: true, force: true });
 		},
 	};
+}
+
+const shared = new Map<string, SigningKey>();
+
+export function signingKey(uid: string): SigningKey {
+	let key = shared.get(uid);
+	if (!key) {
+		const created = createSigningKey(uid);
+		process.once('exit', () => created.dispose());
+		shared.set(uid, key = created);
+	}
+	return { ...key, dispose: () => {} };
 }
 
 export interface FakeSigner extends TagSigner {
