@@ -11,6 +11,8 @@ import {
 	autoMergeSetup,
 	generatedFiles,
 	openSetupPull,
+	proposalScope,
+	revokeAutoMerge,
 	setupHead,
 	setupStatus,
 } from '@/automation/setup-pull-requests';
@@ -210,6 +212,13 @@ export function maintainSetup(
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
 			}
+			const canonical = canonicalConfiguration(raw, inventory.packages);
+			if ((yield* proposalScope(plan.edits, canonical)) !== 'format') {
+				yield* revokeAutoMerge(gateway, name, id, pull.number);
+			}
+			const format = outdatedConfiguration(raw, inventory.packages)
+				? yield* fromPromise(() => sha256Hex(JSON.stringify(canonical)))
+				: undefined;
 			const result = yield* pullRequest(gateway, {
 				snapshot,
 				branch: pull.branch,
@@ -240,6 +249,7 @@ export function maintainSetup(
 				options: setupOptions(plan),
 				inferred: plan.adoption !== undefined,
 				edits: [...generated.values()],
+				...(format === undefined ? {} : { formatMigration: format }),
 				maintenanceFingerprint: undefined,
 				...observationsKept,
 			});

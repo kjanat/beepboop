@@ -169,12 +169,64 @@ export function setupMerge(
 const configurationPath = '.github/beepboop.json';
 export const setupAutoMerge = {
 	workflows: 'This setup PR edits workflows, so it waits for your review. Beepboop left auto-merge off.',
+	revoked:
+		'Beepboop turned off auto-merge. The updated proposal changes more than the file format, so it waits for your review.',
 	settings:
 		'This setup PR changes settings beyond the file format, so it waits for your review. Beepboop left auto-merge off.',
 	disallowed: "Auto-merge is off in this repository's settings. Merge this setup PR yourself.",
 	enabled: (method: string) =>
 		`Beepboop turned on ${method} auto-merge. GitHub merges this setup PR once its required checks pass.`,
 };
+export function proposalScope(
+	edits: Edit[],
+	format: unknown,
+): Effect.Effect<'format' | 'workflows' | 'settings', DomainError> {
+	return Effect.gen(function*() {
+		if (edits.some(edit => edit.path !== configurationPath)) return 'workflows';
+		const rewritten = yield* fromSync((): unknown => JSON.parse(edits[0]?.after ?? 'null'));
+		return JSON.stringify(rewritten) === JSON.stringify(format) ? 'format' : 'settings';
+	});
+}
+const disableSchema = mutableStruct({
+	data: Schema.NullOr(mutableStruct({
+		disablePullRequestAutoMerge: Schema.NullOr(mutableStruct({
+			pullRequest: mutableStruct({ autoMergeRequest: Schema.NullOr(mutableStruct({ mergeMethod: Schema.String })) }),
+		})),
+	})),
+	errors: Schema.optional(mutableArray(mutableStruct({ message: Schema.String }))),
+});
+export function revokeAutoMerge(
+	gateway: RepositoryGateway,
+	name: string,
+	id: number,
+	number: number,
+): Effect.Effect<void, DomainError> {
+	return Effect.gen(function*() {
+		const token = yield* gateway.token(name, id, { contents: 'write', pull_requests: 'write' });
+		const pull = yield* gateway.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
+		const bot = yield* gateway.botIdentity;
+		if (pull.auto_merge?.enabled_by?.login !== bot.login) return;
+		const response = yield* gateway.read(disableSchema, '/graphql', token, 'POST', {
+			query:
+				'mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){pullRequest{autoMergeRequest{mergeMethod}}}}',
+			variables: { id: pull.node_id },
+		});
+		if (
+			!response.data?.disablePullRequestAutoMerge
+			|| response.data.disablePullRequestAutoMerge.pullRequest.autoMergeRequest
+		) {
+			return yield* precondition(
+				`Auto-merge stays on for ${name}#${number}: ${
+					response.errors?.map(error => error.message).join('; ') || 'GitHub kept the auto-merge request'
+				}`,
+			);
+		}
+		yield* gateway.call(`/repos/${name}/issues/${number}/comments`, token, 'POST', { body: setupAutoMerge.revoked })
+			.pipe(
+				Effect.ignore,
+			);
+	});
+}
 export function autoMergeSetup(
 	gateway: RepositoryGateway,
 	name: string,
@@ -190,9 +242,8 @@ export function autoMergeSetup(
 		const token = yield* gateway.token(name, id, { contents: 'write', pull_requests: 'write' });
 		const comment = (body: string) =>
 			gateway.call(`/repos/${name}/issues/${number}/comments`, token, 'POST', { body }).pipe(Effect.ignore);
-		if (edits.some(edit => edit.path !== configurationPath)) return yield* comment(setupAutoMerge.workflows);
-		const rewritten = yield* fromSync((): unknown => JSON.parse(edits[0]?.after ?? 'null'));
-		if (JSON.stringify(rewritten) !== JSON.stringify(format)) return yield* comment(setupAutoMerge.settings);
+		const scope = yield* proposalScope(edits, format);
+		if (scope !== 'format') return yield* comment(setupAutoMerge[scope]);
 		const settings = yield* gateway.read(repositorySchema, `/repos/${name}`, token);
 		const allowed = {
 			squash: settings.allow_squash_merge,

@@ -150,6 +150,69 @@ test('a format PR that restores declined setup input leaves auto-merge off', asy
 	expect(pulls[1]?.comments).toEqual([setupAutoMerge.settings]);
 });
 
+test('a format PR refreshed with workflow edits turns its auto-merge off', async () => {
+	const { repository } = await managed();
+	repository.allowAutoMerge = true;
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	const workflow = world.github.file(repository, '.github/workflows/release.yml') ?? '';
+	world.github.push(
+		repository,
+		{ '.github/workflows/release.yml': workflow.replace('    timeout-minutes: 90\n', '') },
+		'Workflow from an older generator',
+	);
+	await tick();
+	const [pull] = setupPulls(repository);
+	expect([pull?.state, pull?.autoMerge, pull?.comments]).toEqual([
+		'open',
+		undefined,
+		[setupAutoMerge.enabled('squash'), setupAutoMerge.revoked],
+	]);
+	expect(world.github.file(repository, '.github/workflows/release.yml', updateBranch)).toBe(workflow);
+});
+
+test('a format PR keeps its edits when GitHub refuses to turn auto-merge off', async () => {
+	const { repository, canonical } = await managed();
+	repository.allowAutoMerge = true;
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	world.network.serve('api.github.com', async request => {
+		const body = request.method === 'POST' ? await request.clone().text() : '';
+		return new URL(request.url).pathname === '/graphql' && body.includes('disablePullRequestAutoMerge')
+			? Response.json({ data: null, errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible' }] })
+			: world.github.handle(request);
+	});
+	const workflow = world.github.file(repository, '.github/workflows/release.yml') ?? '';
+	world.github.push(
+		repository,
+		{ '.github/workflows/release.yml': workflow.replace('    timeout-minutes: 90\n', '') },
+		'Workflow from an older generator',
+	);
+	await tick();
+	const [pull] = setupPulls(repository);
+	expect([pull?.autoMerge, pull?.comments]).toEqual(['SQUASH', [setupAutoMerge.enabled('squash')]]);
+	expect(pull?.body).toContain('Automatic update stopped: Auto-merge stays on');
+	expect(world.github.file(repository, configurationPath, updateBranch)).toBe(canonical);
+	expect(world.github.file(repository, '.github/workflows/release.yml', updateBranch)).toBe(workflow);
+});
+
+test('a refreshed format PR that is closed is not reopened', async () => {
+	const { repository } = await managed();
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	rewrite(repository, configuration => {
+		const parsed = decodeSync(streamStarts, configuration);
+		return { ...configuration, streams: { main: { ...parsed.streams.main, startFrom: [{ via: 'dashboard' }] } } };
+	});
+	await tick();
+	const [pull] = setupPulls(repository);
+	if (!pull) throw new Error('Missing format PR');
+	pull.state = 'closed';
+	repository.refs.delete(`heads/${updateBranch}`);
+	await tick();
+	expect(setupPulls(repository).map(entry => entry.state)).toEqual(['closed']);
+});
+
 function rateLimitAutoMerge(times: number): void {
 	let left = times;
 	world.network.serve('api.github.com', async request => {
