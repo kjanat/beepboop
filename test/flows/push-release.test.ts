@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { runCli, savedClient } from '@root/test/support/cli.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
-import type { Repository } from '@root/test/support/github.ts';
+import type { CheckRun, Repository } from '@root/test/support/github.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer, field, text } from '@root/test/support/http.ts';
 import { promotions } from '@root/test/support/releases.ts';
@@ -1217,6 +1217,7 @@ test.each(
 			'actions.yml',
 			1,
 			undefined,
+			true,
 		],
 		[
 			'waits for an unfinished job without an environment',
@@ -1226,6 +1227,7 @@ test.each(
 			'actions.yml',
 			0,
 			'Releases when the commit is verified and its checks pass: publish is still running',
+			true,
 		],
 		[
 			'waits for an unfinished job whose workflow file the commit lacks',
@@ -1235,6 +1237,7 @@ test.each(
 			'removed.yml',
 			0,
 			'Releases when the commit is verified and its checks pass: publish is still running',
+			true,
 		],
 		[
 			'stops at a failed job with an environment',
@@ -1244,9 +1247,30 @@ test.each(
 			'actions.yml',
 			0,
 			'Releases when the commit is verified and its checks pass: publish failure',
+			true,
+		],
+		[
+			'releases while its only check is a job with an environment that waits',
+			'    environment: tag\n',
+			'waiting',
+			null,
+			'actions.yml',
+			1,
+			undefined,
+			false,
+		],
+		[
+			'waits while only its release workflow has run',
+			'',
+			'waiting',
+			null,
+			'publish.yml',
+			0,
+			'Releases when the commit is verified and its checks pass: Only release workflows have run on this commit',
+			false,
 		],
 	] as const,
-)('a promotion %s', async (_case, environment, status, conclusion, file, dispatched, reason) => {
+)('a promotion %s', async (_case, environment, status, conclusion, file, dispatched, reason, verified) => {
 	const repository = widget(world.github, { configured: false });
 	world.github.push(repository, {
 		'.github/beepboop.json': JSON.stringify({
@@ -1292,10 +1316,9 @@ test.each(
 		title: 'Release widget 1.1.0',
 		inputs: {},
 	});
-	repository.checks.set(raised.sha, [
-		{ name: 'verify', status: 'completed', conclusion: 'success', runId: 77 },
-		{ name: 'publish', status, conclusion, runId: 77 },
-	]);
+	const checks: CheckRun[] = [{ name: 'publish', status, conclusion, runId: 77 }];
+	if (verified) checks.unshift({ name: 'verify', status: 'completed', conclusion: 'success', runId: 77 });
+	repository.checks.set(raised.sha, checks);
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(16_000);
 	const [promotion] = await promotions(api);

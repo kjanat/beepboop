@@ -28,13 +28,13 @@ const workflow = [
 
 test('checkJobs labels each job by name or id and marks matrices and environments', () => {
 	expect(checkJobs(workflow)).toEqual([
-		{ label: 'verify', matrix: false, deploys: false },
-		{ label: 'publish', matrix: true, deploys: true },
-		{ label: 'Deploy pages', matrix: false, deploys: true },
-		{ label: 'pages (integration)', matrix: false, deploys: false },
-		{ label: 'secrets', matrix: false, deploys: false },
-		{ label: 'Publish ${{ matrix.target }}.x', matrix: true, deploys: true },
-		{ label: 'Test ${{ matrix.os }}', matrix: true, deploys: false },
+		{ label: 'verify', matrix: false, deploys: false, calls: false },
+		{ label: 'publish', matrix: true, deploys: true, calls: false },
+		{ label: 'Deploy pages', matrix: false, deploys: true, calls: false },
+		{ label: 'pages (integration)', matrix: false, deploys: false, calls: false },
+		{ label: 'secrets', matrix: false, deploys: false, calls: false },
+		{ label: 'Publish ${{ matrix.target }}.x', matrix: true, deploys: true, calls: false },
+		{ label: 'Test ${{ matrix.os }}', matrix: true, deploys: false, calls: false },
 	]);
 });
 
@@ -92,4 +92,56 @@ test.each([
 	);
 	expect(deploys('publish (integration)', jobs)).toBe(false);
 	expect(deploys('publish (npm)', jobs)).toBe(name === "${{ format('}}', matrix.suite) }} (integration)");
+});
+
+test('checkJobs marks a reusable workflow caller as a job without an environment', () => {
+	expect(checkJobs(['jobs:', '  tests:', '    uses: ./.github/workflows/tests.yml', ''].join('\n'))).toEqual([
+		{ label: 'tests', matrix: false, deploys: false, calls: true },
+	]);
+});
+
+test.each([
+	['tests', 'tests / publish', false],
+	['tests', 'tests / inner / publish', false],
+	['tests', 'publish', true],
+	['Run ${{ matrix.suite }}', 'Run unit / publish', false],
+	['Run ${{ matrix.suite }}', 'Run unit (linux) / publish', false],
+	['Run ${{ matrix.suite }}', 'publish', true],
+])('deploys keeps a check that the caller %p of a reusable workflow can own: %p', (caller, check, expected) => {
+	const jobs = checkJobs(
+		[
+			'jobs:',
+			'  deployment:',
+			`    name: "${check}"`,
+			'    environment: tag',
+			'  tests:',
+			`    name: "${caller}"`,
+			'    uses: ./.github/workflows/tests.yml',
+			'    strategy: { matrix: { suite: [unit] } }',
+			'',
+		].join('\n'),
+	);
+	expect(deploys(check, jobs)).toBe(expected);
+});
+
+test.each([
+	['Ship npm to jsr', true],
+	['Ship npm jsr', false],
+	['Ship to', false],
+	['Ship n\npm to jsr', false],
+	['Ship npm to j\u2028sr', false],
+])('deploys matches %p against the literal text around each expression: %p', (check, expected) => {
+	const jobs = checkJobs(
+		['jobs:', '  ship:', '    name: Ship ${{ matrix.a }} to ${{ matrix.b }}', '    environment: tag', ''].join('\n'),
+	);
+	expect(deploys(check, jobs)).toBe(expected);
+});
+
+test('deploys rejects a check against many adjacent expressions in linear time', () => {
+	const jobs = checkJobs(
+		['jobs:', '  ship:', `    name: ${'${{ matrix.x }}'.repeat(12)}Z`, '    environment: tag', ''].join('\n'),
+	);
+	const started = performance.now();
+	expect(deploys('a'.repeat(24), jobs)).toBe(false);
+	expect(performance.now() - started).toBeLessThan(50);
 });
