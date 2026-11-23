@@ -120,7 +120,7 @@ function jsonBlocks(markdown: string): unknown[] {
 const widgetSchema = looseStruct({
 	streams: looseStruct({
 		main: looseStruct({
-			promote: looseStruct({ approval: Schema.String, workflow: looseStruct({ file: Schema.String }) }),
+			promote: looseStruct({ publishWhen: Schema.String, workflow: looseStruct({ file: Schema.String }) }),
 		}),
 	}),
 });
@@ -495,15 +495,15 @@ const workingConfigurations: Finding[] = [
 		name: 'a required publication no release group can cover',
 		codes: ['required-uncovered'],
 		edit: stream => {
-			stream.versioning = 'independent';
-			stream.required = ['pkg:npm/widget', 'pkg:npm/gadget'];
+			stream.versionScope = 'per-package';
+			stream.mustPublish = ['pkg:npm/widget', 'pkg:npm/gadget'];
 		},
 	},
 	{
 		name: 'a required publication only the promotion run reports',
 		codes: ['required-uncovered'],
 		edit: stream => {
-			stream.required = ['pkg:npm/widget', 'pkg:github/octo/widget'];
+			stream.mustPublish = ['pkg:npm/widget', 'pkg:github/octo/widget'];
 		},
 	},
 ];
@@ -575,7 +575,7 @@ test('setup preview blocks a proposal that refresh would refuse', async () => {
 test('setup preview names each schema problem in an invalid configuration', async () => {
 	const repository = widget(world.github);
 	const configuration = widgetDocument();
-	configuration.streams.main.promote.approval = 'sometimes';
+	configuration.streams.main.promote.publishWhen = 'sometimes';
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Bad approval');
 	const api = bearer(world, await world.cliSession());
 

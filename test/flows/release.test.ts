@@ -1234,8 +1234,8 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 	const configuration = editableConfiguration();
 	configuration.streams.main = {
 		...configuration.streams.main,
-		versioning: 'independent',
-		promote: { ...configuration.streams.main.promote, approval: 'merge' },
+		versionScope: 'per-package',
+		promote: { ...configuration.streams.main.promote, publishWhen: 'version-pr-merged' },
 	};
 	const head = world.github.push(
 		repository,

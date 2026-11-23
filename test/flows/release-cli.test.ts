@@ -27,7 +27,7 @@ import type { Client } from '@/cli/client';
 import { checkoutRepository } from '@/cli/release';
 import { routes } from '@/contract/routes';
 import { binaryProgress, planReview } from '@/contract/views';
-import { startFromEffect } from '@/domain/setup-terms.ts';
+import { publishWhenNames, startFromEffect } from '@/domain/setup-terms.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -89,7 +89,7 @@ async function delegated(packages = ['widget'], published: Record<string, string
 	const configuration = editableConfiguration();
 	configuration.streams.main.prepare = { strategy: 'workflow', workflow: { file: 'prepare.yml' } };
 	configuration.streams.main.packages = packages.map(name => `pkg:npm/${name}`);
-	configuration.streams.main.required = configuration.streams.main.packages;
+	configuration.streams.main.mustPublish = configuration.streams.main.packages;
 	configuration.streams.main.promote.workflow.publications = configuration.streams.main.packages;
 	const files: Record<string, string> = {
 		'.github/beepboop.json': JSON.stringify(configuration),
@@ -234,7 +234,10 @@ test('eligible streams are inferred and ambiguous stream choices describe their 
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	expect((await run(['release', 'patch', '--repository', repository.name, '--json'])).exitCode).toBe(0);
 	configuration.streams.second = withMain(configuration, {
-		promote: { approval: 'required', workflow: { file: 'second.yml', publications: ['pkg:npm/widget'] } },
+		promote: {
+			publishWhen: 'approved-in-beepboop',
+			workflow: { file: 'second.yml', publications: ['pkg:npm/widget'] },
+		},
 	});
 	world.github.push(repository, {
 		'.github/beepboop.json': JSON.stringify(configuration),
@@ -326,7 +329,7 @@ test('a version the manifests already carry gets its promotion, and independent 
 		expect.objectContaining({ version: '1.1.0', sourceSha: carried.sha, approvedBy: 'start' }),
 	]);
 	const configuration = widgetStreams();
-	configuration.streams.main = withMain(configuration, { versioning: 'independent' });
+	configuration.streams.main = withMain(configuration, { versionScope: 'per-package' });
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Use independent releases');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	const independent = await run([
@@ -402,7 +405,7 @@ test('delegated manifest preparation can promote when its prepared versions reac
 async function tagged(approval: 'required' | 'push' = 'required') {
 	const { repository, configuration } = await delegated();
 	configuration.streams.main.promote.workflow.refs = { phase: 'version', prefix: 'v' };
-	configuration.streams.main.promote.approval = approval;
+	configuration.streams.main.promote.publishWhen = publishWhenNames[approval];
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Tag each release');
 	const before = world.github.head(repository);
 	const merged = world.github.push(repository, {
@@ -567,7 +570,7 @@ async function uncheckedBesideGadget() {
 	const gadgetId = 'pkg:npm/gadget';
 	file.streams.main = withMain(file, {
 		packages: [widgetId],
-		required: [widgetId],
+		mustPublish: [widgetId],
 		promote: {
 			...configuration.streams.main.promote,
 			workflow: { ...configuration.streams.main.promote.workflow, publications: [widgetId] },
@@ -575,9 +578,9 @@ async function uncheckedBesideGadget() {
 	});
 	file.streams.gadget = withMain(file, {
 		packages: [gadgetId],
-		required: [gadgetId],
+		mustPublish: [gadgetId],
 		promote: {
-			approval: 'required',
+			publishWhen: 'approved-in-beepboop',
 			workflow: { file: 'gadget.yml', publications: [gadgetId], refs: { phase: 'version', prefix: 'gadget-v' } },
 		},
 	});
@@ -828,11 +831,11 @@ test('a version-file-only preparation does not promise or create publication aft
 			streams: {
 				main: {
 					packages: [packageId],
-					required: [packageId],
+					mustPublish: [packageId],
 					versionFiles: [{ path: 'VERSION', format: 'text', prefix: 'version=', suffix: '\n' }],
 					prepare: { strategy: 'managed' },
 					promote: {
-						approval: 'required',
+						publishWhen: 'approved-in-beepboop',
 						workflow: { file: 'publish.yml', publications: [packageId] },
 					},
 				},
@@ -885,7 +888,7 @@ test('workflow bump baselines use only the selected publishable package group', 
 	expect(explicit.exitCode).toBe(0);
 	expect(decodeSync(planReview, JSON.parse(explicit.stdout.join('')).plan).version).toBe('4.0.0');
 	configuration.streams.main.packages = ['pkg:npm/widget'];
-	configuration.streams.main.required = ['pkg:npm/widget'];
+	configuration.streams.main.mustPublish = ['pkg:npm/widget'];
 	configuration.streams.main.promote.workflow.publications = ['pkg:npm/widget'];
 	world.github.push(
 		repository,
@@ -967,8 +970,7 @@ async function cliStarts() {
 		looseStruct({ streams: looseStruct({ main: looseStruct({}) }) }),
 		JSON.parse(widgetConfiguration()),
 	);
-	configuration.streams.main.start = [{ via: 'cli' }];
-	configuration.streams.main.prepare = { strategy: 'managed', bump: 'commit' };
+	configuration.streams.main.prepare = { strategy: 'managed', versionLands: 'via-direct-commit' };
 	configuration.streams.main.credentials = [];
 	const head = world.github.push(
 		repository,
@@ -1281,8 +1283,8 @@ test('a release of a stream that publishes on merge starts anyway and asks to st
 	const repository = await seed();
 	const configuration = widgetStreams();
 	configuration.streams.main = withMain(configuration, {
-		prepare: { strategy: 'managed', bump: 'commit' },
-		promote: { ...decodeSync(looseStruct({}), withMain(configuration, {}).promote), approval: 'merge' },
+		prepare: { strategy: 'managed', versionLands: 'via-direct-commit' },
+		promote: { ...decodeSync(looseStruct({}), withMain(configuration, {}).promote), publishWhen: 'version-pr-merged' },
 	});
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Publish on merge');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
@@ -1363,7 +1365,7 @@ test('release shows the wait for checks and stops with the failing check', async
 test('release links the version PR of a started release and stops following for the merge', async () => {
 	const repository = await cliStarts();
 	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
-	configuration.streams.main.prepare = { strategy: 'managed', bump: 'pr' };
+	configuration.streams.main.prepare = { strategy: 'managed', versionLands: 'via-version-pr' };
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Bump through a PR');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	spyOn(client, 'pause').mockImplementation(() => Effect.promise(() => world.wait(16_000)));
@@ -1942,7 +1944,9 @@ test('--no-auto with --merge, or any merge flag on a release without a version P
 	};
 	await refused('INVALID_FLAGS', '--no-auto', '--merge', 'squash');
 	const configuration = widgetStreams();
-	configuration.streams.main = withMain(configuration, { prepare: { strategy: 'managed', bump: 'commit' } });
+	configuration.streams.main = withMain(configuration, {
+		prepare: { strategy: 'managed', versionLands: 'via-direct-commit' },
+	});
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Commit version bumps');
 	await Effect.runPromise(client.call(routes.repositoriesDiscover, { repository: repository.name }));
 	await refused('NO_VERSION_PR', '--auto');
@@ -1957,7 +1961,6 @@ test('merge flags refuse a release that prepares in its own workflow or already 
 	expect(workflow.stdout.join('')).toContain('NO_VERSION_PR');
 	const configuration = widgetStreams();
 	configuration.streams.main = withMain(configuration, {
-		start: [{ via: 'cli' }],
 		prepare: { strategy: 'managed' },
 		credentials: [],
 	});

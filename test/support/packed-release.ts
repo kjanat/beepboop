@@ -115,7 +115,7 @@ export async function packedRelease(
 			configuration.streams.sdk = {
 				...configuration.streams.main,
 				packages: [`pkg:golang/${companionModule}`],
-				required: [`pkg:golang/${companionModule}`],
+				mustPublish: [`pkg:golang/${companionModule}`],
 				companionModules: [],
 				versionSource: { kind: 'tags', prefix: 'go/v' },
 				promote: {
