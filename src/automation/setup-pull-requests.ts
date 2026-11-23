@@ -6,6 +6,7 @@ import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-b
 import { setupBranches } from '@/automation/setup-changes';
 import type { Edit } from '@/domain/inventory.ts';
 import { autoMergeMethods } from '@/domain/setup-terms.ts';
+import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
@@ -168,6 +169,8 @@ export function setupMerge(
 const configurationPath = '.github/beepboop.json';
 export const setupAutoMerge = {
 	workflows: 'This setup PR edits workflows, so it waits for your review. Beepboop left auto-merge off.',
+	settings:
+		'This setup PR changes settings beyond the file format, so it waits for your review. Beepboop left auto-merge off.',
 	disallowed: "Auto-merge is off in this repository's settings. Merge this setup PR yourself.",
 	enabled: (method: string) =>
 		`Beepboop turned on ${method} auto-merge. GitHub merges this setup PR once its required checks pass.`,
@@ -178,6 +181,7 @@ export function autoMergeSetup(
 	id: number,
 	url: string,
 	edits: Edit[],
+	format: unknown,
 ): Effect.Effect<void, DomainError> {
 	return Effect.gen(function*() {
 		const prefix = `https://github.com/${name}/pull/`;
@@ -185,8 +189,10 @@ export function autoMergeSetup(
 		if (!/^[1-9][0-9]*$/.test(number)) return yield* precondition('Invalid setup PR identity');
 		const token = yield* gateway.token(name, id, { contents: 'write', pull_requests: 'write' });
 		const comment = (body: string) =>
-			gateway.call(`/repos/${name}/issues/${number}/comments`, token, 'POST', { body }).pipe(Effect.asVoid);
+			gateway.call(`/repos/${name}/issues/${number}/comments`, token, 'POST', { body }).pipe(Effect.ignore);
 		if (edits.some(edit => edit.path !== configurationPath)) return yield* comment(setupAutoMerge.workflows);
+		const rewritten = yield* fromSync((): unknown => JSON.parse(edits[0]?.after ?? 'null'));
+		if (JSON.stringify(rewritten) !== JSON.stringify(format)) return yield* comment(setupAutoMerge.settings);
 		const settings = yield* gateway.read(repositorySchema, `/repos/${name}`, token);
 		const allowed = {
 			squash: settings.allow_squash_merge,

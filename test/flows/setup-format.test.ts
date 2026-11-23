@@ -129,6 +129,69 @@ test('a format PR that also regenerates a workflow leaves auto-merge off', async
 	expect(world.github.file(repository, '.github/workflows/release.yml', updateBranch)).toBe(workflow);
 });
 
+const revised = looseStruct({ actionsRevision: Schema.optional(Schema.String) });
+test('a format PR that restores declined setup input leaves auto-merge off', async () => {
+	const { repository } = await managed();
+	repository.allowAutoMerge = true;
+	rewrite(repository, configuration => {
+		const parsed = decodeSync(revised, configuration);
+		delete parsed.actionsRevision;
+		return parsed;
+	});
+	await tick();
+	const [declined] = setupPulls(repository);
+	if (!declined) throw new Error('Missing actions revision PR');
+	declined.state = 'closed';
+	repository.refs.delete(`heads/${updateBranch}`);
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	const pulls = setupPulls(repository);
+	expect(pulls.map(pull => [pull.state, pull.autoMerge])).toEqual([['closed', undefined], ['open', undefined]]);
+	expect(pulls[1]?.comments).toEqual([setupAutoMerge.settings]);
+});
+
+function rateLimitAutoMerge(times: number): void {
+	let left = times;
+	world.network.serve('api.github.com', async request => {
+		const body = request.method === 'POST' ? await request.clone().text() : '';
+		if (left > 0 && new URL(request.url).pathname === '/graphql' && body.includes('enablePullRequestAutoMerge')) {
+			left--;
+			return Response.json({
+				data: { enablePullRequestAutoMerge: null },
+				errors: [{ type: 'RATE_LIMITED', message: 'API rate limit exceeded for installation ID 1.' }],
+			});
+		}
+		return world.github.handle(request);
+	});
+}
+test('a rate-limited auto-merge request is retried', async () => {
+	const { repository } = await managed();
+	repository.allowAutoMerge = true;
+	rateLimitAutoMerge(1);
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	expect(setupPulls(repository).map(pull => [pull.autoMerge, pull.comments])).toEqual([
+		['SQUASH', [setupAutoMerge.enabled('squash')]],
+	]);
+});
+
+test('an auto-merge request that keeps failing leaves the format PR recorded', async () => {
+	const { repository } = await managed();
+	repository.allowAutoMerge = true;
+	rateLimitAutoMerge(Number.POSITIVE_INFINITY);
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	const [pull] = setupPulls(repository);
+	if (!pull) throw new Error('Missing format PR');
+	expect([pull.autoMerge, pull.comments]).toEqual([undefined, undefined]);
+	pull.state = 'closed';
+	repository.refs.delete(`heads/${updateBranch}`);
+	await tick();
+	expect(setupPulls(repository).map(entry => entry.state)).toEqual(['closed']);
+	const failed = await world.db.prepare("SELECT action FROM audit WHERE action='repository.setup.failed'").all();
+	expect(failed.results).toEqual([]);
+});
+
 const streamStarts = mutableStruct({
 	streams: mutableStruct({ main: looseStruct({ startFrom: Schema.optional(Schema.Unknown) }) }),
 });

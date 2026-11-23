@@ -28,6 +28,8 @@ import { fromJson, fromPromise, fromSync, toDomainError } from '@/kernel/errors/
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import { retryTransient } from '@/kernel/http/retry.ts';
+import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
 import { record } from '@/kernel/schema/result.ts';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
@@ -292,8 +294,9 @@ function migrateSetup(
 		const stored = yield* store.repository(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
 		const missing = saved.migration !== 'proposed' && setupMissing(raw, choices);
+		const canonical = canonicalConfiguration(raw, inventory.packages);
 		const format = outdatedConfiguration(raw, inventory.packages)
-			? yield* fromPromise(() => sha256Hex(JSON.stringify(canonicalConfiguration(raw, inventory.packages))))
+			? yield* fromPromise(() => sha256Hex(JSON.stringify(canonical)))
 			: undefined;
 		if (!missing && (format === undefined || saved.formatMigration === format)) return;
 		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
@@ -336,7 +339,10 @@ function migrateSetup(
 			...observationsKept,
 		});
 		yield* store.audit('beepboop', 'repository.setup.migrated', `${name} ${snapshot.sha} ${result.url}`);
-		yield* autoMergeSetup(gateway, name, id, result.url, plan.edits);
+		yield* autoMergeSetup(gateway, name, id, result.url, plan.edits, canonical).pipe(
+			retryTransient<DomainError>({ attempts: 3, delay: 1000, while: error => error.problem.code === 'upstream' }),
+			logRecovered('setup.auto-merge-failed', { repository: name, url: result.url }),
+		);
 	});
 }
 export function currentOptions(
