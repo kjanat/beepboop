@@ -70,20 +70,24 @@ Run in the background and wait for its notification:
 /home/kjanat/.bun/bin/bun .claude/skills/beepboop-ship/wait.ts <pr>
 ```
 
-It exits 0 when `verify`, `CodeQL` and `browser` have completed and Codex has a
-completed `code_review` for the head commit. It prints the check conclusions and
-the Codex state.
+It reads Codex state only from comments by `chatgpt-codex-connector[bot]`. When
+`verify`, `CodeQL` and `browser` have completed and Codex has a completed
+`code_review` for the head commit, it prints the check conclusions and the Codex
+state. It exits 0 when `code_review.has_any_findings` is `false` and 3
+otherwise. It exits 1 when a check failed before Codex finished, and 2 after an
+hour without a result.
 
 ## 7. Merge gate
 
 Merge only when all hold on the head commit:
 
 - `verify`, `CodeQL` and `browser` concluded `SUCCESS`.
-- Codex `code_review.has_any_findings` is `false`. If it is `true`, read the
-  inline review comments (`gh api repos/kjanat/beepboop/pulls/<pr>/comments`),
-  fix each real finding with a failing test, push, and wait again. Reply to a
-  finding you reject with evidence, prefixed by
-  `> [!NOTE]\n> 🤖 **<model> responding on behalf of kjanat**`.
+- `wait.ts` exited 0. On exit 3, read the inline review comments
+  (`gh api repos/kjanat/beepboop/pulls/<pr>/comments`), fix each real finding
+  with a failing test, push, and wait again. Reply to each finding, prefixed by
+  `> [!NOTE]\n> 🤖 **<model> responding on behalf of kjanat**`, naming the
+  fixing commit or giving the evidence for rejecting it, then resolve its thread
+  with the GraphQL `resolveReviewThread` mutation.
 - `gh pr view <pr> --repo kjanat/beepboop --json reviewDecision,mergeStateStatus`
   shows no `CHANGES_REQUESTED` and `CLEAN`. CodeRabbit may be rate limited;
   that does not block.
