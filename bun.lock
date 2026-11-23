@@ -68,6 +68,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@beepboopbot/domain": "workspace:*",
+        "@beepboopbot/github": "workspace:*",
         "@beepboopbot/kernel": "workspace:*",
         "@beepboopbot/persistence": "workspace:*",
         "effect": "^4.1.2",

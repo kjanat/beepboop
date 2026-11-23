@@ -119,3 +119,35 @@ export function runtimeGrant(grant: Grant, operation: string, repository: string
 	return isRuntimeGrant(grant) && grant.operation === operation && grant.repository === repository
 		&& matchesRef(grant.ref, ref);
 }
+
+export interface WorkflowRun {
+	readonly repository: string;
+	readonly ref: string;
+	readonly workflowRef: string;
+	readonly environment?: string;
+}
+export function allowsRun(grant: Grant, operation: string, run: WorkflowRun): boolean {
+	return runtimeGrant(grant, operation, run.repository, run.ref) && grant.environment === run.environment
+		&& run.workflowRef === `${run.repository}/.github/workflows/${grant.workflow}@${run.ref}`;
+}
+export interface WorkflowBinding {
+	readonly operation: string;
+	readonly file: string;
+	readonly ref: string;
+}
+export function coversBinding(
+	grants: readonly Grant[],
+	bindings: readonly WorkflowBinding[],
+	repository: string,
+): boolean {
+	return bindings.some(binding =>
+		grants.some(grant =>
+			grant.workflow === binding.file && runtimeGrant(grant, binding.operation, repository, binding.ref)
+		)
+	);
+}
+export function secretAliases(grants: readonly Grant[], workflow: string, secretNames: readonly string[]): string[] {
+	return grants.filter(grant =>
+		!isRuntimeGrant(grant) && grant.workflow === workflow && secretNames.includes(grant.secretName)
+	).map(grant => grant.alias);
+}
