@@ -71,7 +71,7 @@ async function badge(): Promise<string> {
 }
 
 async function stored(repository: Repository) {
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('Repository is not enrolled');
 	return record;
 }
@@ -211,7 +211,7 @@ test('a lost unsuspend webhook leaves refresh suspended until discover asks GitH
 		refreshed.updatedAt,
 	).run();
 	deployed.sqlite.run(readFileSync(join(migrationsDirectory, '0012_repository_access.sql'), 'utf8'));
-	const migrated = await Effect.runPromise(new Store(deployed).repository(repository.id));
+	const migrated = await Effect.runPromise(new Store(deployed).repositories.get(repository.id));
 	expect(migrated && readiness(migrated)).toEqual({ kind: 'suspended', since: refreshed.updatedAt });
 
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);

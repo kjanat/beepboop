@@ -173,7 +173,7 @@ test('an access read failure leaves work retryable and fails closed', async () =
 
 test('suspension during reconciliation prevents subsequent executions from advancing', async () => {
 	const { repository, app, execution, coordinator } = await observed();
-	const stored = await world.run(app.store.repository(repository.id));
+	const stored = await world.run(app.store.repositories.get(repository.id));
 	if (!stored) throw new Error('Expected repository');
 	const ready = await world.run(requireReady(stored));
 	const next = await world.run(
@@ -202,7 +202,7 @@ test('suspension during reconciliation prevents subsequent executions from advan
 	const pass = world.wait(20_000);
 	await entered.promise;
 	try {
-		await world.run(app.store.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+		await world.run(app.store.repositories.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
 	} finally {
 		resume.resolve();
 	}
@@ -217,10 +217,10 @@ test('suspension during reconciliation prevents subsequent executions from advan
 test('legacy continuation repair requires current inventory and can recover after discovery is restored', async () => {
 	const { repository, app, execution, coordinator, storage } = await observed();
 	await storage.put(`execution:${execution.id}`, { ...execution, state: 'succeeded' });
-	const record = await world.run(app.store.repository(repository.id));
+	const record = await world.run(app.store.repositories.get(repository.id));
 	if (!record) throw new Error('Expected repository');
 	await world.run(
-		app.store.saveDiscovery({
+		app.store.repositories.saveDiscovery({
 			...record,
 			sha: 'b'.repeat(40),
 			inventory: {
@@ -235,7 +235,7 @@ test('legacy continuation repair requires current inventory and can recover afte
 	expect(await storage.get(`quarantine:${execution.id}`)).toMatchObject({
 		error: expect.stringContaining('Workflow needs workflow_dispatch'),
 	});
-	await world.run(app.store.saveDiscovery(record));
+	await world.run(app.store.repositories.saveDiscovery(record));
 	await coordinator.recover(execution.id, 'reconcile', 'admin');
 	await world.wait(2_000);
 	expect((await executions(repository)).find(item => item.operation === 'follow0')).toMatchObject({

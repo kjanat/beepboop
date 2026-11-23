@@ -563,7 +563,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const missing = yield* this.pendingContinuations(observed);
 			if (!missing.length) return [];
-			const record = yield* (yield* this.store).repository(observed.repositoryId);
+			const record = yield* (yield* this.store).repositories.get(observed.repositoryId);
 			if (!record) return yield* precondition('Repository unavailable while completing observed operation');
 			const next: Execution[] = [];
 			for (const operation of missing) {
@@ -639,7 +639,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const work = Effect.gen({ self: this }, function*() {
 				const packages = frozen
 					? []
-					: (yield* (yield* this.store).repository(execution.repositoryId))?.inventory.packages ?? [];
+					: (yield* (yield* this.store).repositories.get(execution.repositoryId))?.inventory.packages ?? [];
 				const work = yield* this.packageTagWork(
 					execution.repository,
 					execution.repositoryId,
@@ -670,7 +670,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<PackageTagPage> {
 		return this.run(
 			Effect.gen({ self: this }, function*() {
-				const record = yield* (yield* this.store).repository(repositoryId);
+				const record = yield* (yield* this.store).repositories.get(repositoryId);
 				if (!record?.configuration) return yield* precondition('Repository not configured');
 				const configured = record.configuration.streams[stream];
 				if (!configured) return yield* precondition(`Unknown stream ${stream}`);
@@ -918,7 +918,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private suspended(repositoryId: number): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const enrollment = yield* (yield* this.store).enrollment(repositoryId);
+			const enrollment = yield* (yield* this.store).repositories.enrollment(repositoryId);
 			return enrollment?.access.kind !== 'active';
 		});
 	}
@@ -2287,7 +2287,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (stored !== undefined) {
 				return yield* this.acceptedUploads(yield* fromSync(() => decodeSync(ledgerSchema, stored)));
 			}
-			const repository = yield* (yield* this.store).repository(execution.repositoryId);
+			const repository = yield* (yield* this.store).repositories.get(execution.repositoryId);
 			if (!repository) return yield* precondition('Repository is not enrolled');
 			const version = execution.version;
 			if (!version) return yield* precondition('The execution has no version to publish');
@@ -2459,7 +2459,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		matches: (pkg: Package) => boolean,
 	): CoordinatorEffect<{ kind: PublishKind; allowedAt: number }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const inventory = (yield* (yield* this.store).repository(repositoryId))?.inventory;
+			const inventory = (yield* (yield* this.store).repositories.get(repositoryId))?.inventory;
 			const kind = reservation(inventory?.packages.find(matches)?.publicationStatus);
 			const allowedAt = yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').reserve(kind));
 			return { kind, allowedAt };
@@ -2635,7 +2635,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const stream = execution.configuration.streams[execution.stream];
 			if (!stream?.credentials.length) return undefined;
-			const record = yield* (yield* this.store).repository(execution.repositoryId);
+			const record = yield* (yield* this.store).repositories.get(execution.repositoryId);
 			const defaultBranch = record?.defaultBranch ?? execution.workflow?.ref ?? '';
 			const bindings = [
 				['promote', stream.promote.workflow] as const,
@@ -2659,7 +2659,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private upstream(execution: Execution, executions: Execution[]): CoordinatorEffect<string | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const record = yield* (yield* this.store).repository(execution.repositoryId);
+			const record = yield* (yield* this.store).repositories.get(execution.repositoryId);
 			if (!record) return undefined;
 			const file = execution.workflow?.file;
 			if (record.inventory.workflows.some(workflow => workflow.file === file && workflow.ledger)) return undefined;
@@ -2808,7 +2808,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	gates(repositoryId: number, stream: string): Promise<StreamGates> {
 		return this.run(
 			Effect.gen({ self: this }, function*() {
-				const record = yield* (yield* this.store).repository(repositoryId);
+				const record = yield* (yield* this.store).repositories.get(repositoryId);
 				const configuration = record?.configuration;
 				if (!record || !configuration || !Object.hasOwn(configuration.streams, stream)) {
 					return yield* notFound('stream', `Unknown stream ${stream}`, stream);
@@ -2948,7 +2948,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private metadataProblemsOf(subject: GateSubject): CoordinatorEffect<string[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const record = yield* (yield* this.store).repository(subject.repositoryId);
+			const record = yield* (yield* this.store).repositories.get(subject.repositoryId);
 			if (!record) return [];
 			const references = subject.configuration.streams[subject.stream]?.packages;
 			return metadataProblems(record.inventory, publishablePackages(record.inventory.packages, references));
@@ -2987,7 +2987,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<RefState[]> {
 		return this.run(
 			Effect.gen({ self: this }, function*() {
-				const record = yield* (yield* this.store).repository(repositoryId);
+				const record = yield* (yield* this.store).repositories.get(repositoryId);
 				if (!record) return [];
 				const probe = { repository: record.name, repositoryId: record.id, stream, version };
 				return yield* this.reclaimableTags(probe, conflicts, true, primary);
@@ -3031,7 +3031,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const owned = conflicts.filter(tag => pushed.includes(`${tag.name} ${tag.commit} ${tag.oid}`));
 			if (owned.length !== conflicts.length) return [];
-			const record = yield* (yield* this.store).repository(release.repositoryId);
+			const record = yield* (yield* this.store).repositories.get(release.repositoryId);
 			const stream = record?.configuration?.streams[release.stream];
 			const modulePrefixes = [
 				...streamModuleTagPrefixes(record?.inventory.packages ?? [], stream),
@@ -3136,7 +3136,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private modulePrefixes(execution: Execution): CoordinatorEffect<string[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (execution.moduleTags) return tagPrefixes(execution.moduleTags);
-			return yield* (yield* this.store).repository(execution.repositoryId).pipe(
+			return yield* (yield* this.store).repositories.get(execution.repositoryId).pipe(
 				Effect.map(repository =>
 					streamModuleTagPrefixes(
 						repository?.inventory.packages ?? [],
@@ -3155,7 +3155,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const token = yield* gateway.token(subject.repository, subject.repositoryId);
 			const base = `/repos/${subject.repository}`;
 			const manifest: string[] = [];
-			const repository = yield* (yield* this.store).repository(subject.repositoryId);
+			const repository = yield* (yield* this.store).repositories.get(subject.repositoryId);
 			const references = subject.configuration.streams[subject.stream]?.packages;
 			if (repository) {
 				manifest.push(...manifestProblems(
@@ -3363,7 +3363,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private versionKept(execution: Execution, sha: string): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const stream = execution.configuration.streams[execution.stream];
-			const record = yield* (yield* this.store).repository(execution.repositoryId);
+			const record = yield* (yield* this.store).repositories.get(execution.repositoryId);
 			if (!stream || !record) return false;
 			if (JSON.stringify(record.configuration?.streams[execution.stream]) !== JSON.stringify(stream)) return false;
 			const gateway = yield* this.gateway;
@@ -3529,7 +3529,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (execution.attempts === 0 && execution.approvedAt === undefined) {
 				return yield* precondition('Publish this promotion first; it never ran');
 			}
-			const record = yield* (yield* this.store).repository(execution.repositoryId);
+			const record = yield* (yield* this.store).repositories.get(execution.repositoryId);
 			const current = record
 				&& (record.configuration?.streams[execution.stream]?.promote.workflow?.ref ?? record.defaultBranch);
 			const workflow = execution.workflow && current && current !== execution.workflow.ref
@@ -3750,7 +3750,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		event: Decoded<typeof observation>,
 	): CoordinatorEffect<{ repository: ReadyRepository; run: WorkflowRun; token: string } | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const stored = yield* (yield* this.store).repository(event.repositoryId);
+			const stored = yield* (yield* this.store).repositories.get(event.repositoryId);
 			const state = stored && readiness(stored);
 			if (state?.kind !== 'ready') return undefined;
 			const repository = state.repository;
@@ -4108,7 +4108,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (!edit || edit.due > clock.currentTimeMillisUnsafe()) return;
 			const store = yield* this.store;
 			yield* Effect.gen({ self: this }, function*() {
-				const repository = yield* store.repository(edit.repositoryId);
+				const repository = yield* store.repositories.get(edit.repositoryId);
 				if (repository && readiness(repository).kind !== 'suspended') {
 					const gateway = yield* this.gateway;
 					const snapshot = yield* repositorySnapshot(gateway, repository.name, repository.id);

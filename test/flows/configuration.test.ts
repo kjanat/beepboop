@@ -10,6 +10,7 @@ import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/su
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
+import { decodeRepositoryV1 } from '@/discovery/repositories/codec-v1.ts';
 import { validateAgainst } from '@/discovery/validation/validate.ts';
 import type { ManagerName } from '@/domain/catalog.ts';
 import { parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
@@ -38,7 +39,6 @@ import {
 } from '@/kernel/schema/structs.ts';
 import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/package-url';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
-import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
 import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
 import { assertCurrent, schemaPath } from '@/tooling/schema/render';
 

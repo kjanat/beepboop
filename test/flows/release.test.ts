@@ -243,7 +243,7 @@ test('a finished run whose registry publication appears late is verified without
 	expect(settled.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
 	expect(world.github.dispatches).toHaveLength(1);
 	await api('/api/repositories/discover', { repository: repository.name });
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('No stored repository');
 	const unreported = { ...finished, state: 'awaiting-approval' as const, publications: [] };
 	expect(releaseSummaries([unreported]).map(release => [release.verified, release.publications])).toEqual([
@@ -288,7 +288,7 @@ test('a finished run whose registry publication appears late is verified without
 
 test('the overview counts only runs that still need the user and shows each version as one release', async () => {
 	const { finished, repository } = await finishedPromotion('pending');
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('No stored repository');
 	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
 		...finished,
@@ -366,7 +366,7 @@ test('the overview counts only runs that still need the user and shows each vers
 
 test('a run cancelled after a newer release started stays below the unfinished release', async () => {
 	const { finished, repository } = await finishedPromotion('pending');
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('No stored repository');
 	const run = (id: string, createdAt: number, updatedAt: number, changes: Partial<Execution>): Execution => ({
 		...finished,
@@ -1450,7 +1450,7 @@ async function removeCompanionModule(): Promise<void> {
 	);
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
-	const stored = await Effect.runPromise(new Store(world.db).repository(target.id));
+	const stored = await Effect.runPromise(new Store(world.db).repositories.get(target.id));
 	expect(stored?.inventory.packages.map(pkg => pkg.manager)).toEqual(['npm']);
 }
 
@@ -1885,7 +1885,7 @@ test('the parent publishes a companion tag and the module stream reuses it only 
 	expect(parent.state).toBe('succeeded');
 	const original = repository.refs.get('tags/go/v1.1.0');
 	expect(original).toBeDefined();
-	const record = await Effect.runPromise(store.repository(repository.id));
+	const record = await Effect.runPromise(store.repositories.get(repository.id));
 	if (!record) throw new Error('Missing repository');
 	const ready = await world.run(requireReady(record));
 	const identity = {
@@ -1935,10 +1935,10 @@ test('the parent publishes a companion tag and the module stream reuses it only 
 test('repository filters render only their own readable and unreadable runs even outside the global page', async () => {
 	const { finished, repository } = await finishedPromotion('pending');
 	const store = new Store(world.db);
-	const original = await Effect.runPromise(store.repository(repository.id));
+	const original = await Effect.runPromise(store.repositories.get(repository.id));
 	if (!original) throw new Error('Missing repository');
 	for (const [id, name] of [[99, 'octo/gadget'], [100, 'octo/broken']] as const) {
-		await Effect.runPromise(store.saveDiscovery({ ...original, id, name }));
+		await Effect.runPromise(store.repositories.saveDiscovery({ ...original, id, name }));
 	}
 	await world.db.prepare('DELETE FROM executions').run();
 	const insert = world.db.prepare(

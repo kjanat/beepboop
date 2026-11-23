@@ -16,7 +16,7 @@ import { executionStates } from '@/contract/views';
 import { managerDestinationIds, managerNames } from '@/domain/catalog.ts';
 import type { ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
 import { githubRunState } from '@/domain/github-run-state.ts';
-import type { DiscoveredWorkflow, Edit, Package, RepositoryRecord } from '@/domain/inventory.ts';
+import type { Edit, Package } from '@/domain/inventory.ts';
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { publicationSchema } from '@/domain/package-publication.ts';
 import type { RefPlan } from '@/domain/refs.ts';
@@ -28,12 +28,11 @@ import { stringsSchema as strings } from '@/kernel/schema/result.ts';
 import { decodeSync, mapped, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { PackageIdentity } from '@/package-url';
 import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
-import type { StoredInventory, StoredRepository } from '@/persistence/codecs/stored';
-import { identifyExecution, identifyRepository, normalizePublication } from '@/persistence/codecs/stored';
+import { identifyExecution, normalizePublication } from '@/persistence/codecs/stored';
 
-const managerName = Schema.Literals(managerNames);
-const shas = mutableRecord(Schema.String, Schema.String);
-const storedDiagnostic = mutableStruct({
+export const managerName = Schema.Literals(managerNames);
+export const shas = mutableRecord(Schema.String, Schema.String);
+export const storedDiagnostic = mutableStruct({
 	...diagnostic.fields,
 	...{
 		code: mapped(Schema.String, diagnostic.fields.code, code => isDiagnosticCode(code) ? code : 'legacy', code => code),
@@ -55,7 +54,7 @@ const _registryState = Schema.Union([
 	mutableStruct({ state: Schema.Literal('failed'), reason: Schema.String }),
 	mutableStruct({ state: Schema.Literal('unchecked') }),
 ]);
-const channel = Schema.Union([
+export const channel = Schema.Union([
 	mutableStruct({
 		destination: Schema.Literal('homebrew'),
 		kind: Schema.Literals(['cask', 'formula']),
@@ -81,7 +80,7 @@ function outcomeSchema<S extends Schema.Struct.Fields>(fields: S) {
 		mutableStruct({ ...fields, state: Schema.Literal('unchecked') }),
 	]);
 }
-const channelOutcome: Schema.Codec<ChannelOutcome, unknown> = Schema.Union([
+export const channelOutcome: Schema.Codec<ChannelOutcome, unknown> = Schema.Union([
 	outcomeSchema(channel.members[0].fields),
 	outcomeSchema(channel.members[1].fields),
 	outcomeSchema(channel.members[2].fields),
@@ -93,7 +92,7 @@ const registryOutcome: Schema.Codec<RegistryOutcome, unknown> = Schema.Union([
 	outcomeSchema({ destination: Schema.Literals(managerDestinationIds) }),
 	channelOutcome,
 ]);
-const storedPackage = mutableStruct({
+export const storedPackage = mutableStruct({
 	identity: Schema.optional(identity),
 	previousModule: Schema.optional(mutableStruct({ name: Schema.String, version: Schema.String })),
 	publicationStatus: Schema.optional(Schema.Literals(['published', 'missing', 'failed', 'unchecked'])),
@@ -117,45 +116,6 @@ const pkg: Schema.Codec<Package, unknown> = mapped(
 	normalizePublication,
 	value => value,
 );
-const discoveredWorkflow: Schema.Codec<DiscoveredWorkflow, unknown> = mutableStruct({
-	tagPatterns: Schema.optional(strings),
-	branchPatterns: Schema.optional(strings),
-	createsRelease: Schema.optional(Schema.Boolean),
-	ledger: Schema.optional(Schema.Boolean),
-	file: Schema.String,
-	name: Schema.String,
-	events: strings,
-	jobs: strings,
-	localActions: strings,
-	dispatchInputs: strings,
-	publication: Schema.Boolean,
-});
-const inventory: Schema.Codec<StoredInventory, unknown> = mutableStruct({
-	references: Schema.optional(
-		mutableArray(mutableStruct({ repository: Schema.String, path: Schema.String, ref: Schema.String })),
-	),
-	channels: Schema.optional(mutableArray(channel)),
-	destinations: Schema.optional(mutableArray(channelOutcome)),
-	packages: mutableArray(storedPackage),
-	workflows: mutableArray(discoveredWorkflow),
-	managers: mutableArray(managerName),
-	diagnostics: strings,
-	findings: Schema.optional(mutableArray(storedDiagnostic)),
-	publicationOrder: strings,
-});
-const repositorySchema: Schema.Codec<StoredRepository, unknown> = mutableStruct({
-	suspended: Schema.optional(Schema.Boolean),
-	id: Schema.Finite,
-	name: Schema.String,
-	defaultBranch: Schema.String,
-	sha: Schema.String,
-	configuration: Schema.optional(storedConfiguration),
-	presetShas: shas,
-	inventory,
-	diagnostics: strings,
-	findings: Schema.optional(mutableArray(storedDiagnostic)),
-	updatedAt: Schema.Finite,
-});
 
 const edit: Schema.Codec<Edit, unknown> = mutableStruct({
 	path: Schema.String,
@@ -376,9 +336,6 @@ const setupEditSchema: Schema.Codec<SetupEdit, unknown> = mutableStruct({
 	due: Schema.Finite,
 });
 
-export function decodeRepositoryV1(value: unknown): RepositoryRecord {
-	return identifyRepository(decodeSync(repositorySchema, value));
-}
 export function currentState(execution: Execution): Execution {
 	const actor = execution.reason?.match(/^Cancelled by (.+)$/)?.[1];
 	if (execution.state === 'cancelled' && execution.cancelledBy === undefined && actor !== undefined) {

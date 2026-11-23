@@ -18,7 +18,7 @@ async function fixture(state: 'running' | 'blocked' | 'verifying' | 'failed' | '
 	const repository = widget(world.github);
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('Repository missing');
 	const ready = await world.run(requireReady(record));
 	const source = world.github.head(repository);

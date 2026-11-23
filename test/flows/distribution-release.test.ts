@@ -127,7 +127,7 @@ async function fixture(
 	const api = bearer(world, await world.cliSession());
 	const discovered = await api('/api/repositories/discover', { repository: repository.name });
 	expect(discovered.status).toBe(200);
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('Repository missing');
 	const ready = await world.run(requireReady(record));
 	const coordinator = world.coordinator(repository);

@@ -250,7 +250,7 @@ export class AutomationService {
 
 	setAccess(id: number, access: Access): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			if (yield* this.store.setAccess(id, access)) yield* fromPromise(() => this.coordinator(id).wake());
+			if (yield* this.store.repositories.setAccess(id, access)) yield* fromPromise(() => this.coordinator(id).wake());
 		});
 	}
 	private access(name: string): Effect.Effect<Access, DomainError> {
@@ -272,9 +272,9 @@ export class AutomationService {
 				yield* this.setAccess(repositoryId, { kind: 'active' });
 				return yield* this.refresh(name, repositoryId);
 			}
-			const enrolled = (yield* this.store.enrollments())
+			const enrolled = (yield* this.store.repositories.enrollments())
 				.find(entry => entry.id === id || entry.name === name);
-			const stored = enrolled && (yield* this.store.repository(enrolled.id));
+			const stored = enrolled && (yield* this.store.repositories.get(enrolled.id));
 			if (!stored) {
 				return yield* installation === 'suspended'
 					? precondition(`GitHub App access to ${name} is suspended`)
@@ -336,7 +336,7 @@ export class AutomationService {
 			}
 			const verification = this.gateway.verification(name, id);
 			discovered.inventory = yield* resolvePublished(discovered.inventory, this.dependencies.transport, verification);
-			const { repository, document: saved } = yield* this.store.saveDiscovery(discovered);
+			const { repository, document: saved } = yield* this.store.repositories.saveDiscovery(discovered);
 			yield* this.releaseFromManifest(repository, saved).pipe(
 				this.store.auditFailure('beepboop', 'release.push.failed', name),
 			);
@@ -493,7 +493,7 @@ export class AutomationService {
 			const exit = yield* Effect.exit(this.releaseStreams(state.repository, tagged));
 			if (tagged.length) {
 				stored.diagnostics.push(...tagged);
-				yield* this.store.replaceDiscovery(saved, stored);
+				yield* this.store.repositories.replaceDiscovery(saved, stored);
 			}
 			return yield* exit;
 		});
@@ -815,7 +815,7 @@ export class AutomationService {
 				const removed = yield* ids(payload.repositories_removed);
 				const added = yield* ids(payload.action === 'created' ? payload.repositories : payload.repositories_added);
 				const all = payload.action === 'created' && payload.repository_selection === 'all';
-				for (const repository of yield* this.store.enrollments()) {
+				for (const repository of yield* this.store.repositories.enrollments()) {
 					const access: Access | undefined =
 						payload.action === 'deleted' || payload.action === 'suspend' || removed.has(repository.id)
 							? { kind: 'suspended', since: clock.currentTimeMillisUnsafe() }
@@ -834,7 +834,7 @@ export class AutomationService {
 				return new Response(null, { status: 204 });
 			}
 			const sourceId = yield* Effect.fromResult(integer(source.id));
-			const repository = yield* this.store.repository(sourceId);
+			const repository = yield* this.store.repositories.get(sourceId);
 			if (!repository || repository.name !== source.full_name) {
 				return new Response(null, { status: 204 });
 			}
@@ -886,7 +886,7 @@ export class AutomationService {
 	}
 	receive(delivery: string, repositoryId: number, event: InboxEvent): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const repository = yield* this.store.repository(repositoryId);
+			const repository = yield* this.store.repositories.get(repositoryId);
 			if (!repository) return;
 			if (event.kind === 'pull_request') return yield* this.setupEdited(repository, event.edit);
 			if (event.kind === 'setup_merged') return yield* this.setupMerged(repository, event.merge);
@@ -942,7 +942,7 @@ export class AutomationService {
 			]);
 			if (!generated.length || generated.some(edit => merged.files[edit.path] !== edit.after)) return;
 			yield* this.refresh(repository.name, repository.id);
-			const current = yield* this.store.repository(repository.id);
+			const current = yield* this.store.repositories.get(repository.id);
 			if (!current) return;
 			const ready = yield* requireReady(current);
 			const existing = yield* this.grants.list({ repositoryId: repository.id });
@@ -1040,8 +1040,8 @@ export class AutomationService {
 	private eventDelivery(): EventDelivery {
 		return {
 			events: this.releaseEvents(),
-			repositories: this.store.readableRepositories(),
-			repository: id => this.store.repository(id),
+			repositories: this.store.repositories.readable(),
+			repository: id => this.store.repositories.get(id),
 			packagePublished: (repositoryId, registry, name, version) =>
 				fromPromise(() => this.coordinator(repositoryId).packagePublished(registry, name, version)),
 			openIssue: (ready, deliveryId, issue) =>
@@ -1115,14 +1115,14 @@ export class AutomationService {
 		yield* this.changes.prune(clock.currentTimeMillisUnsafe() - changeRetention);
 		yield* this.deliverEvents;
 		yield* this.winget().reconcile();
-		for (const repository of yield* this.store.enrollments()) {
+		for (const repository of yield* this.store.repositories.enrollments()) {
 			// Next scheduled pass retries; preserve the last known configuration.
 			yield* this.scheduledRepository(repository).pipe(
 				logRecovered('repository.scheduled.failed', { repositoryId: repository.id, repository: repository.name }),
 			);
 		}
 		const notifications = this.notifications();
-		const readable = yield* this.store.readableRepositories();
+		const readable = yield* this.store.repositories.readable();
 		yield* pollPackages(
 			this.store.db,
 			readable,

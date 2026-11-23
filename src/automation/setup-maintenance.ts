@@ -139,7 +139,7 @@ export function maintainSetup(
 		const generated = yield* generatedFiles(gateway, name, id, pull.head);
 		if (!generated && saved.head !== pull.head) return;
 		const previous = generated ?? (yield* fromSync(() => setupEdits(saved)));
-		const stored = yield* store.repository(id);
+		const stored = yield* store.repositories.get(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
 		const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
 			+ 'Discovered packages:\n'
@@ -313,7 +313,7 @@ function migrateSetup(
 		if (source === undefined) return;
 		if (!choices) return yield* formatSetup(store, gateway, snapshot, saved, document);
 		const raw = yield* fromSync((): unknown => JSON.parse(source));
-		const stored = yield* store.repository(id);
+		const stored = yield* store.repositories.get(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
 		const missing = saved.migration !== 'proposed' && setupMissing(raw, choices);
 		const canonical = canonicalConfiguration(raw, inventory.packages);
@@ -381,7 +381,7 @@ const formatSetup = Effect.fn('formatSetup')(function*(
 	const parsed = Result.try((): unknown => JSON.parse(source));
 	if (Result.isFailure(parsed)) return;
 	const raw = parsed.success;
-	const stored = yield* store.repository(id);
+	const stored = yield* store.repositories.get(id);
 	const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
 	if (!outdatedConfiguration(raw, inventory.packages)) return;
 	const canonical = canonicalConfiguration(raw, inventory.packages);
@@ -441,7 +441,7 @@ export function currentOptions(
 ): Effect.Effect<ReturnType<typeof setupOptions>, DomainError> {
 	return Effect.gen(function*() {
 		const snapshot = yield* repositorySnapshot(gateway, repository.name, repository.id);
-		const stored = yield* store.repository(repository.id);
+		const stored = yield* store.repositories.get(repository.id);
 		const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
 		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
 			Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
