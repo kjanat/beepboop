@@ -182,7 +182,6 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 					permissions,
 				},
 			);
-			const issuedAt = yield* Clock.currentTimeMillis;
 			const repository = yield* read(repositorySchema, `/repos/${name}`, issued.token);
 			if (
 				(id !== undefined && repository.id !== id)
@@ -191,9 +190,10 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 			) {
 				return yield* precondition('Repository mismatch');
 			}
+			const now = yield* Clock.currentTimeMillis;
 			const remaining = Option.fromUndefinedOr(issued.expires_at).pipe(
 				Option.flatMap(DateTime.make),
-				Option.map(expiry => DateTime.toEpochMillis(expiry) - issuedAt - tokenMargin),
+				Option.map(expiry => DateTime.toEpochMillis(expiry) - now - tokenMargin),
 				Option.getOrElse(() => 0),
 			);
 			const lifetime = remaining > 0 ? Duration.millis(remaining) : Duration.zero;

@@ -43,6 +43,22 @@ test('requests in one isolate share an installation token until five minutes bef
 	expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(2);
 });
 
+test('a slow repository check counts against the five-minute margin', async () => {
+	let minted = false;
+	world.network.serve('api.github.com', request => {
+		const path = new URL(request.url).pathname;
+		if (path.endsWith('/access_tokens')) minted = true;
+		else if (minted && path === `/repos/${repository.name}`) {
+			minted = false;
+			world.advance(30_000);
+		}
+		return world.github.handle(request);
+	});
+	const first = await token();
+	world.advance(55 * minutes - 30_000 + 1000);
+	expect(await token()).not.toBe(first);
+});
+
 test('concurrent requests each fetch their own token instead of waiting on another request', async () => {
 	let checks = 0;
 	const { promise: bothChecked, resolve } = Promise.withResolvers<void>();
