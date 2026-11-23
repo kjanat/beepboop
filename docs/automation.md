@@ -886,8 +886,8 @@ license file`.
 
 A promotion for a stream with an incomplete package waits in
 `awaiting-approval`, which the runs page shows as waiting for you to publish. Its
-reason on the runs page starts with `Fix the package metadata before this
-release:` and names each package, its manifest and the missing items.
+reason on the runs page starts with `metadata incomplete:` and names each
+package, its manifest and the missing items.
 Publishing refuses it, also with `--force`. A push that completes
 the metadata creates a promotion for the new commit.
 

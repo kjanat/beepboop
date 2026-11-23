@@ -1045,7 +1045,7 @@ test('a push release waits for its credential grant and dispatches once the gran
 	expect([waiting?.state, waiting?.sourceSha, waiting?.reason]).toEqual([
 		'awaiting-approval',
 		merged.sha,
-		'Releases once npm-token has a runtime grant for publish.yml',
+		'no runtime grant for publish.yml: npm-token',
 	]);
 	expect(world.github.dispatches).toEqual([]);
 
@@ -1078,7 +1078,7 @@ test(
 		expect([blocked.state, blocked.sourceSha, blocked.reason]).toEqual([
 			'awaiting-approval',
 			unlicensed.sha,
-			'Fix the package metadata before this release: widget (package.json) lacks license',
+			'metadata incomplete: widget (package.json) lacks license',
 		]);
 		expect(world.github.dispatches).toEqual([]);
 		expect((await api('/api/executions/approval', { id: blocked.id })).body).toEqual({
@@ -1149,7 +1149,7 @@ test('a promotion waits for the promotion of the same commit that publishes its 
 	if (!main || !cli) throw new Error('Expected promotions for both streams');
 	expect([cli.state, cli.reason]).toEqual([
 		'awaiting-approval',
-		'Releases after the main release publishes pkg:npm/widget',
+		'waiting for main: pkg:npm/widget',
 	]);
 	expect(world.github.dispatches.map(dispatch => dispatch.inputs.beepboop_execution_id)).toEqual([main.id]);
 
@@ -1202,7 +1202,7 @@ test('a promotion waits for the pending release of its dependency from an earlie
 	expect([byStream.get('main')?.sourceSha, byStream.get('cli')?.sourceSha]).toEqual([raised.sha, gadget.sha]);
 	expect([byStream.get('cli')?.state, byStream.get('cli')?.reason]).toEqual([
 		'awaiting-approval',
-		'Releases after the main release publishes pkg:npm/widget',
+		'waiting for main: pkg:npm/widget',
 	]);
 	expect(world.github.dispatches).toEqual([]);
 }, 60_000);
@@ -1226,7 +1226,7 @@ test.each(
 			null,
 			'actions.yml',
 			0,
-			'Releases when the commit is verified and its checks pass: publish is still running',
+			'publish running',
 			true,
 		],
 		[
@@ -1236,7 +1236,7 @@ test.each(
 			null,
 			'removed.yml',
 			0,
-			'Releases when the commit is verified and its checks pass: publish is still running',
+			'publish running',
 			true,
 		],
 		[
@@ -1246,7 +1246,17 @@ test.each(
 			'failure',
 			'actions.yml',
 			0,
-			'Releases when the commit is verified and its checks pass: publish failure',
+			'checks failed: publish',
+			true,
+		],
+		[
+			'names the conclusion of a cancelled job',
+			'',
+			'completed',
+			'cancelled',
+			'actions.yml',
+			0,
+			'checks failed: publish (cancelled)',
 			true,
 		],
 		[
@@ -1256,7 +1266,7 @@ test.each(
 			null,
 			'actions.yml',
 			0,
-			'Releases when the commit is verified and its checks pass: No verification check has run on this commit',
+			'no verification check yet',
 			false,
 		],
 		[
@@ -1266,7 +1276,7 @@ test.each(
 			null,
 			'publish.yml',
 			0,
-			'Releases when the commit is verified and its checks pass: No verification check has run on this commit',
+			'no verification check yet',
 			false,
 		],
 	] as const,

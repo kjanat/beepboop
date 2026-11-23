@@ -37,7 +37,7 @@ import {
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import { loaders } from '@/server/loaders';
-import { needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
+import { checksPolicy, needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
 import { pipeline, runCard } from '@/server/views/runs';
 import { releaseStatus } from '@/server/views/tone';
@@ -328,11 +328,11 @@ test('the overview counts only runs that still need the user and shows each vers
 	expect(statuses).toEqual({
 		[finished.version ?? '']: [
 			['prepare-failed', 'prepare-done', 'promote-cancelled', 'promote-done'],
-			'Required publications verified',
+			`✓ ${finished.version}`,
 		],
 		'1.0.9': [['abandoned'], 'Needs attention'],
 		'2.0.0': [['waiting'], 'Waiting for you to publish'],
-		'2.1.0': [['next-prepared'], 'Prepared, no publication run yet'],
+		'2.1.0': [['next-prepared'], 'Prepared'],
 		'2.2.0': [['next-running'], 'In progress'],
 	});
 	expect(view.releases.find(release => release.version === finished.version)?.commit).toBe(finished.sourceSha);
@@ -674,7 +674,7 @@ test('the runs page filters by repository and folds a settled release', async ()
 	]);
 	expect(everything.releases).toEqual([
 		['octo/widget / main', 'cancelled', false],
-		['octo/widget / main', 'Required publications verified', false],
+		['octo/widget / main', `✓ ${finished.version}`, false],
 		['octo/gadget / main', 'In progress', true],
 	]);
 	expect(everything.text).toContain('Started on GitHub');
@@ -750,7 +750,7 @@ test('a stage whose run failed after publishing is green and says the run failed
 	if (!release) throw new Error('No release');
 	const view = pipeline(release, Date.now());
 	expect([view?.status.label, view?.stages.map(stage => [stage.operation, stage.tone, stage.note])]).toEqual([
-		'Required publications verified',
+		`✓ ${finished.version}`,
 		[['promote', 'ok', 'succeeded, workflow run failed']],
 	]);
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
@@ -761,6 +761,31 @@ test('a stage whose run failed after publishing is green and says the run failed
 	});
 	expect(html).toContain(runFailedNote);
 	expect(html).not.toContain('This operation completed.');
+});
+
+test('a verified release badge shows a check and its version with the count in the tooltip', async () => {
+	const { finished } = await finishedPromotion('pending');
+	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
+	const releases = releaseSummaries([{ ...finished, state: 'succeeded', publications: published }]);
+	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/ReleaseSummary.astro'));
+	const container = await experimental_AstroContainer.create();
+	const html = await container.renderToString(decodeSync(componentModule, loaded).default, { props: { releases } });
+	const page = new Window();
+	page.document.body.innerHTML = html;
+	const badge = page.document.querySelector('.section-heading .badge');
+	expect([badge?.textContent.trim(), badge?.getAttribute('data-tone'), badge?.getAttribute('title')]).toEqual([
+		`✓ ${finished.version}`,
+		'ok',
+		'1 of 1 required publications verified',
+	]);
+	expect(page.document.body.textContent).not.toContain('required publications verified');
+	await page.happyDOM.close();
+	const [release] = releases;
+	if (!release) throw new Error('No release');
+	expect(releaseStatus({ ...release, version: undefined }).label).toBe('✓');
+	expect(releaseStatus({ ...release, publications: [] }).detail).toBe(
+		'No required publications are configured for this stream. Workflow success alone does not establish release completeness.',
+	);
 });
 
 test('a stage with one execution per package stays unfinished until every package succeeds', async () => {
@@ -888,16 +913,25 @@ test('a release stays publishing until the observed workflow that owns its packa
 		if (!release) throw new Error('No release');
 		return [releaseStatus(release), release.unfinished, pipeline(release, Date.now())?.open];
 	};
-	expect(shown([promoted])).toEqual([{ tone: 'active', label: 'Publishing' }, true, true]);
+	const none = '0 of 1 required publications verified';
+	expect(shown([promoted])).toEqual([{ tone: 'active', label: 'Publishing', detail: none }, true, true]);
 	expect(shown([promoted, observed('succeeded', 'succeeded')])).toEqual([
-		{ tone: 'ok', label: 'Required publications verified' },
+		{ tone: 'ok', label: `✓ ${finished.version}`, detail: '1 of 1 required publications verified' },
 		false,
 		false,
 	]);
-	expect(shown([promoted, observed('failed', 'failed')])[0]).toEqual({ tone: 'warn', label: 'Needs attention' });
-	expect(shown([promoted, observed('cancelled', 'cancelled')])[0]).toEqual({ tone: 'warn', label: 'Needs attention' });
+	expect(shown([promoted, observed('failed', 'failed')])[0]).toEqual({
+		tone: 'warn',
+		label: 'Needs attention',
+		detail: none,
+	});
+	expect(shown([promoted, observed('cancelled', 'cancelled')])[0]).toEqual({
+		tone: 'warn',
+		label: 'Needs attention',
+		detail: none,
+	});
 	const alone = { ...promoted, configuration: configured({}) };
-	expect(shown([alone])[0]).toEqual({ tone: 'ok', label: 'succeeded' });
+	expect(shown([alone])[0]).toEqual({ tone: 'ok', label: 'succeeded', detail: none });
 });
 
 test('two releases of one repository with different tags both stay in the publication table', async () => {
@@ -981,12 +1015,25 @@ test('a run that publishes once its checks pass is not waiting for the user', as
 	const runs = [waiting, started, pushed];
 	expect(runs.map(entry => [entry.id, needingUser(runs).has(entry.id), runStateLabel(entry)])).toEqual([
 		['waiting', true, 'waiting for you to publish'],
-		['started', false, 'publishing once its checks pass'],
-		['pushed', false, 'publishing once its checks pass'],
+		['started', false, 'waiting for checks'],
+		['pushed', false, 'waiting for checks'],
 	]);
 	const [release] = releaseSummaries([started]);
 	if (!release) throw new Error('No release');
-	expect(releaseStatus(release).label).toBe('Publishing once its checks pass');
+	expect(releaseStatus(release)).toEqual({
+		tone: 'active',
+		label: 'waiting for checks',
+		detail: `${checksPolicy}\n0 of 1 required publications verified`,
+	});
+	const [checking] = releaseSummaries([{ ...started, reason: 'publish running' }]);
+	if (!checking) throw new Error('No release');
+	expect(releaseStatus(checking).label).toBe('publish running');
+	const [hashed] = releaseSummaries([{ ...started, reason: `commit check error: ${'f'.repeat(40)}` }]);
+	expect(hashed && releaseStatus(hashed).label).toBe(`commit check error: ${'f'.repeat(12)}`);
+	expect(runCard({ ...started, reason: 'publish running' }, Date.now()).wait).toEqual({
+		fact: 'publish running',
+		detail: `${checksPolicy}.`,
+	});
 	expect(runCard(started, Date.now()).automatic).toBe(true);
 });
 

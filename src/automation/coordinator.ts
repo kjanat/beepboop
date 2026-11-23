@@ -215,7 +215,7 @@ const projectionRetry = 10_000;
 const dependencyPoll = 30_000;
 const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
-const metadataReason = 'Fix the package metadata before this release: ';
+const metadataReason = 'metadata incomplete: ';
 const passingConclusions = ['success', 'neutral', 'skipped'];
 function missingReceipt(execution: Execution, record: LedgerRecord): boolean {
 	return released(record)
@@ -2576,12 +2576,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const forced = execution.started?.force === true;
 			const { pending, failed } = forced ? { pending: [], failed: [] } : yield* this.commitChecks(execution);
 			if (execution.approvedBy === 'start' && failed.length) {
-				yield* this.put({ ...execution, state: 'failed', reason: `The release stopped: ${failed.join('; ')}` });
+				yield* this.put({ ...execution, state: 'failed', reason: failed.join('; ') });
 				return true;
 			}
 			const problems = [...failed, ...pending];
 			if (problems.length) {
-				const reason = `Releases when the commit is verified and its checks pass: ${problems.join('; ')}`;
+				const reason = problems.join('; ');
 				if (execution.reason !== reason) yield* this.put({ ...execution, reason });
 				return false;
 			}
@@ -2629,7 +2629,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const workflow = stream.promote.workflow?.file ?? execution.workflow?.file;
 			return missing.length
-				? `Releases once ${missing.join(', ')} ${missing.length === 1 ? 'has' : 'have'} a runtime grant for ${workflow}`
+				? `no runtime grant for ${workflow}: ${missing.join(', ')}`
 				: undefined;
 		});
 	}
@@ -2657,7 +2657,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					&& (other.sourceSha === execution.sourceSha || pkg.version === other.version)
 				);
 				if (provided.length) {
-					return `Releases after the ${other.stream} release publishes ${provided.map(packageId).join(', ')}`;
+					return `waiting for ${other.stream}: ${provided.map(packageId).join(', ')}`;
 				}
 			}
 			return undefined;
@@ -3011,11 +3011,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				),
 				gateway.read(commitStatusSchema, `${base}/commits/${execution.sourceSha}/status`, token),
 			], { concurrency: 'unbounded' });
-			if (commit.commit.verification.verified !== true) {
-				problems.push('The commit signature is not verified');
-			}
+			if (commit.commit.verification.verified !== true) problems.push('signature unverified');
 			const runs = checks.check_runs;
-			if (checks.total_count !== runs.length) problems.push('The commit has more than 100 check runs');
+			if (checks.total_count !== runs.length) problems.push('over 100 check runs');
 			const releaseFiles = new Set(
 				Object.values(execution.configuration.streams).flatMap(stream =>
 					[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
@@ -3038,16 +3036,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (releaseFiles.has(path)) return false;
 				return run.status === 'completed' || !deploys(String(run.name), deploying.get(path) ?? []);
 			});
-			if (!runs.length) pending.push('No checks have run on this commit');
-			else if (!gating.length) pending.push('No verification check has run on this commit');
-			for (const run of gating) {
-				if (run.status !== 'completed') pending.push(`${String(run.name)} is still running`);
-				else if (!passingConclusions.includes(String(run.conclusion))) {
-					problems.push(`${String(run.name)} ${String(run.conclusion)}`);
-				}
-			}
+			if (!runs.length) pending.push('no checks yet');
+			else if (!gating.length) pending.push('no verification check yet');
+			const running = gating.filter(run => run.status !== 'completed').map(run => String(run.name));
+			if (running.length) pending.push(`${running.join(', ')} running`);
+			const failing = gating.flatMap(run =>
+				run.status !== 'completed' || passingConclusions.includes(String(run.conclusion))
+					? []
+					: [run.conclusion === 'failure' ? String(run.name) : `${String(run.name)} (${String(run.conclusion)})`]
+			);
+			if (failing.length) problems.push(`checks failed: ${failing.join(', ')}`);
 			if (Number(status.total_count) > 0 && status.state !== 'success') {
-				(status.state === 'pending' ? pending : problems).push(`Commit status is ${String(status.state)}`);
+				(status.state === 'pending' ? pending : problems).push(`commit status ${String(status.state)}`);
 			}
 			return { pending, failed: problems };
 		});
@@ -4300,7 +4300,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					),
 					recover(error =>
 						Effect.gen({ self: this }, function*() {
-							const reason = `Beepboop could not check this commit: ${decodeError(error)}`;
+							const reason = `commit check error: ${decodeError(error)}`;
 							if (current.reason !== reason) yield* this.put({ ...current, reason });
 							return 'continue' as const;
 						})

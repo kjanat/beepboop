@@ -1353,12 +1353,10 @@ test('release shows the wait for checks and stops with the failing check', async
 	const head = world.github.head(repository);
 	expect(result.activity).toContainEqual({
 		type: 'spinner:update',
-		text: `Waiting for checks on ${
-			head.slice(0, 12)
-		}: Releases when the commit is verified and its checks pass: test is still running`,
+		text: `${head.slice(0, 12)}: test running`,
 	});
 	expect(result.activity.map(event => event.type)).toContain('spinner:fail');
-	expect(result.stderr.join('')).toBe('The release stopped: test failure\n');
+	expect(result.stderr.join('')).toBe('checks failed: test\n');
 	expect(repository.runs).toEqual([]);
 });
 

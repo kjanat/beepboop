@@ -38,27 +38,16 @@ const { releases } = Astro.props;
 				/>
 			</Field>
 		</dl>
-		{release.publications.length ? (
-			<>
-				<p>
-					<strong>{release.verified} of {release.publications.length}</strong>
-					required publications verified.
-				</p>
-				<ul class="publication-list">
-					{release.publications.map(p => (
-						<li>
-							{packageLabel(p.id)}
-							<Badge tone={publicationTone[p.outcome]} label={p.outcome} />
-						</li>
-					))}
-				</ul>
-			</>
-		) : (
-			 <p class="hint">
-				 No required publications are configured for this stream. Workflow
-				 success alone does not establish release completeness.
-			 </p>
-		 )}
+		{!!release.publications.length && (
+			<ul class="publication-list">
+				{release.publications.map(p => (
+					<li>
+						{packageLabel(p.id)}
+						<Badge tone={publicationTone[p.outcome]} label={p.outcome} />
+					</li>
+				))}
+			</ul>
+		)}
 		<ul class="run-links">
 			{release.runs.map(run => (
 				<li class="run-link">

@@ -4,7 +4,8 @@ import type { Tone } from '@/contract/views';
 interface Props {
 	tone: Tone;
 	label: string;
+	detail?: string;
 }
-const { tone, label } = Astro.props;
+const { tone, label, detail } = Astro.props;
 ---
-<span class="badge" data-tone={tone}>{label}</span>
+<span class="badge" data-tone={tone} title={detail}>{label}</span>

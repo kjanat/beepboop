@@ -6,7 +6,7 @@ import type { RepositoryRecord } from '@/domain/inventory.ts';
 import type { Readiness } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';
-import { activeStates, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
+import { activeStates, checksPolicy, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
 
 export const executionTone = {
 	pending: 'waiting',
@@ -66,21 +66,35 @@ export function deliveryStatus(delivery: NotificationDelivery): Status {
 	return { tone: deliveryTone[delivery.state], label };
 }
 
-export function releaseStatus(release: ReturnType<typeof releaseSummaries>[number]): Status {
+export function shownReason(reason: string | undefined): string | undefined {
+	return reason?.replace(/\b[0-9a-f]{32,64}\b/g, id => id.slice(0, 12));
+}
+
+function releaseState(release: ReturnType<typeof releaseSummaries>[number]): Status {
 	const { latest } = release;
-	if (publishesAutomatically(latest)) return { tone: 'active', label: 'Publishing once its checks pass' };
+	if (publishesAutomatically(latest)) {
+		return { tone: 'active', label: shownReason(latest.reason) ?? runStateLabel(latest), detail: checksPolicy };
+	}
 	if (latest.state === 'awaiting-approval') return { tone: 'warn', label: 'Waiting for you to publish' };
 	if (release.attention) return { tone: 'warn', label: 'Needs attention' };
 	if (activeStates.includes(latest.state)) return { tone: 'active', label: 'In progress' };
 	if (latest.state === 'pending') return { tone: 'waiting', label: 'Waiting to start' };
 	if (release.publications.length && release.verified === release.publications.length) {
-		return { tone: 'ok', label: 'Required publications verified' };
+		return { tone: 'ok', label: release.version ? `✓ ${release.version}` : '✓' };
 	}
 	if (release.publishing) return { tone: 'active', label: 'Publishing' };
 	if (latest.state === 'succeeded' && latest.operation === 'prepare') {
-		return { tone: 'waiting', label: 'Prepared, no publication run yet' };
+		return { tone: 'waiting', label: 'Prepared', detail: 'No publication run yet' };
 	}
 	return { tone: executionTone[latest.state], label: runStateLabel(latest) };
+}
+
+export function releaseStatus(release: ReturnType<typeof releaseSummaries>[number]): Status {
+	const status = releaseState(release);
+	const count = release.publications.length
+		? `${release.verified} of ${release.publications.length} required publications verified`
+		: 'No required publications are configured for this stream. Workflow success alone does not establish release completeness.';
+	return { ...status, detail: status.detail ? `${status.detail}\n${count}` : count };
 }
 
 export function runLabel(operation: string): string {

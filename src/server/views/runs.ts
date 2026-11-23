@@ -5,14 +5,15 @@ import type { Status, Tone } from '@/contract/views';
 import { managerSpec } from '@/domain/catalog.ts';
 import { matchesPublication } from '@/domain/package-identity.ts';
 import { packageLabel } from '@/domain/package-label';
+import { startLabels } from '@/domain/release-start.ts';
 import { versionPrMergeSentences } from '@/domain/setup-terms.ts';
 import { defaultTagPolicy, semVer, tagFor } from '@/domain/version.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import { formatTime } from '@/kernel/time.ts';
 import { packageDisplayName } from '@/server/package-name.ts';
 import type { releaseSummaries } from '@/server/releases.ts';
-import { byAge, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
-import { executionTone, releaseStatus } from '@/server/views/tone.ts';
+import { byAge, checksPolicy, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
+import { executionTone, releaseStatus, shownReason } from '@/server/views/tone.ts';
 
 export function waitingUntil(run: Execution, now: number): string | undefined {
 	return run.notBefore !== undefined && run.notBefore > now && ['pending', 'ready'].includes(run.state)
@@ -65,6 +66,12 @@ export function runCard(run: Execution, now: number) {
 		!run.publications.some(p => matchesPublication(id, p) && p.outcome === 'succeeded')
 	);
 	const preparation = run.managed?.result ?? run.prepared?.result;
+	const reason = shownReason(run.reason);
+	const origin = run.started
+		? [`Started from ${startLabels[run.started.via]}.`]
+		: run.approvedBy === 'merge'
+		? ['You merged the preparation PR.']
+		: [];
 	return {
 		name: [run.repository, run.stream, run.operation, run.version].filter(Boolean).join(' '),
 		until: waitingUntil(run, now),
@@ -73,7 +80,10 @@ export function runCard(run: Execution, now: number) {
 		missing: !approving && run.state !== 'verifying' && run.operation !== 'prepare' && run.state !== 'cancelled'
 			? missing
 			: [],
-		reason: run.reason?.replace(/\b[0-9a-f]{32,64}\b/g, id => id.slice(0, 12)),
+		reason,
+		wait: automatic
+			? { fact: reason ?? runStateLabel(run), detail: [...origin, `${checksPolicy}.`].join(' ') }
+			: undefined,
 		workflowCommit: run.workflowSha
 			? undefined
 			: run.eventId.startsWith('observed:')

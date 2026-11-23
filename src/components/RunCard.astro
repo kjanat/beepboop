@@ -9,7 +9,6 @@ import RecoverForm from '@/components/RecoverForm.astro';
 import Time from '@/components/Time.astro';
 import { githubHref } from '@/contract/links';
 import { packageLabel } from '@/domain/package-label';
-import { startLabels } from '@/domain/release-start.ts';
 import { runStateLabel } from '@/server/releases';
 import { runCard } from '@/server/views/runs.ts';
 import { executionTone, publicationTone } from '@/server/views/tone.ts';
@@ -36,17 +35,11 @@ const card = runCard(run, now);
 		</div>
 		<Badge tone={executionTone[run.state]} label={runStateLabel(run)} />
 	</div>
-	<p>
-		{card.approving
-			? card.automatic
-				? `${
-					run.started
-						? `Started from ${startLabels[run.started.via]}. `
-						: run.approvedBy === 'merge'
-						? 'You merged the preparation PR. '
-						: ''
-				}Beepboop releases this commit once it is verified and its checks pass.`
-				: 'Waiting for you to publish it.'
+	<p title={card.wait?.detail}>
+		{card.wait
+			? card.wait.fact
+			: card.approving
+			? 'Waiting for you to publish it.'
 			: ((run.state !== 'succeeded' || run.reason === runFailedNote) && card.reason)
 				|| (run.state === 'verifying'
 					? 'The workflow finished. Beepboop is waiting for the registries to show every publication.'
