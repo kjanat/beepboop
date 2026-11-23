@@ -1,78 +1,49 @@
-import { Effect } from 'effect';
+import type { AutomationService } from '@/automation/service';
 import { routes } from '@/contract/routes';
-import { configuredGrant } from '@/credentials/access.ts';
-import type { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
-import { grantRow } from '@/credentials/grant.ts';
-import { validCredential } from '@/credentials/vault.ts';
+import type { CredentialEndpoints } from '@/credentials/http/credentials.ts';
+import {
+	grantCredential,
+	listCredentials,
+	replaceCredential,
+	revealCredential,
+	revokeGrant,
+	syncCredential,
+} from '@/credentials/http/credentials.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
-import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { admin, elevated, readyRepository } from '@/server/handlers/kit';
 
-function stored(credentials: CredentialStore, alias: string): Effect.Effect<void, DomainError> {
-	return credentials.activeVersion(alias).pipe(
-		Effect.filterOrFail(
-			version => version !== undefined,
-			() => notFound('credential', 'No stored value under this name', alias),
-		),
-		Effect.asVoid,
-	);
+function endpoints(service: AutomationService): CredentialEndpoints {
+	return {
+		credentials: service.credentials,
+		grants: service.grants,
+		deliveries: service.secretDeliveries,
+		vault: service.vault(),
+		writer: service.gateway,
+		readyRepository: id => readyRepository(service, id, 'Repository is not enrolled'),
+		wake: repositoryId => fromPromise(() => service.coordinator(repositoryId).wake()),
+	};
 }
 
 export const credentialEndpoints = {
-	credentialsList: admin(routes.credentialsList, (_, { service }) =>
-		Effect.all({
-			credentials: service.credentials.list(),
-			grants: service.grants.list().pipe(Effect.map(grants => grants.map(grantRow))),
-			deliveries: service.secretDeliveries.list(),
-		})),
-	credentialsReplace: elevated(routes.credentialsReplace, (input, { service, actor }) =>
-		Effect.gen(function*() {
-			yield* validCredential(input.alias, input.value);
-			if (input.expectedVersion !== undefined) {
-				const current = (yield* service.credentials.activeVersion(input.alias)) ?? null;
-				if (current !== input.expectedVersion) {
-					return yield* conflict('stale-version', `${input.alias} changed since you checked it; review it again`);
-				}
-			}
-			return {
-				commit: service.vault().replace(input.alias, input.value, actor).pipe(Effect.map(version => ({ version }))),
-			};
-		})),
+	credentialsList: admin(routes.credentialsList, (_, { service }) => listCredentials(endpoints(service))),
+	credentialsReplace: elevated(
+		routes.credentialsReplace,
+		(input, { service, actor }) => replaceCredential(endpoints(service), input, actor),
+	),
 	credentialsReveal: elevated(
 		routes.credentialsReveal,
-		(input, { service, actor }) =>
-			stored(service.credentials, input.alias).pipe(
-				Effect.as({ commit: service.vault().reveal(input.alias, actor) }),
-			),
+		(input, { service, actor }) => revealCredential(endpoints(service), input.alias, actor),
 	),
 	credentialsSync: elevated(
 		routes.credentialsSync,
-		(input, { service, actor }) =>
-			stored(service.credentials, input.alias).pipe(
-				Effect.as({ commit: service.vault().synchronize(input.alias, service.gateway, actor) }),
-			),
+		(input, { service, actor }) => syncCredential(endpoints(service), input.alias, actor),
 	),
-	credentialsGrant: elevated(routes.credentialsGrant, (input, { service, actor }) =>
-		Effect.gen(function*() {
-			const { repositoryId } = input.selection;
-			const ready = yield* readyRepository(service, repositoryId, 'Repository is not enrolled');
-			const grant = yield* configuredGrant(ready, input.selection);
-			if ((yield* service.credentials.activeVersion(grant.alias)) === undefined) {
-				return yield* precondition('Store a value under this name before granting access');
-			}
-			return {
-				commit: service.vault().grant(grant, actor).pipe(
-					Effect.andThen(fromPromise(() => service.coordinator(grant.repositoryId).wake())),
-					Effect.as({ granted: true }),
-				),
-			};
-		})),
-	credentialsRevoke: elevated(routes.credentialsRevoke, (input, { service, actor }) =>
-		Effect.gen(function*() {
-			if (!(yield* service.grants.has(input.grantId))) {
-				return yield* notFound('grant', 'Unknown grant', input.grantId);
-			}
-			return { commit: service.vault().revoke(input.grantId, actor).pipe(Effect.as({ revoked: true })) };
-		})),
+	credentialsGrant: elevated(
+		routes.credentialsGrant,
+		(input, { service, actor }) => grantCredential(endpoints(service), input.selection, actor),
+	),
+	credentialsRevoke: elevated(
+		routes.credentialsRevoke,
+		(input, { service, actor }) => revokeGrant(endpoints(service), input.grantId, actor),
+	),
 } as const;
