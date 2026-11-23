@@ -2,7 +2,6 @@ import { Effect, Schema } from 'effect';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { RepositoryRecord } from '@/automation/inventory';
 import { discover } from '@/automation/managers';
-import { encodeRepository } from '@/automation/package-identity';
 import { streamReleases } from '@/automation/release-capability';
 import { repositoryName, repositoryReference } from '@/automation/repository-name';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
@@ -14,6 +13,7 @@ import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, domainError, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
+import { encodeRepository } from '@/persistence/codecs/stored';
 import type { Context } from '@/server/handlers/kit';
 import { admin } from '@/server/handlers/kit';
 

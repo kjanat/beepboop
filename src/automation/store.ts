@@ -1,7 +1,6 @@
 import { Clock, Effect, Schema } from 'effect';
 import { executionOrderSql, newestActiveFirst, validJson } from '@/automation/execution-order';
 import type { RepositoryRecord } from '@/automation/inventory';
-import { encodeRepository, identifyRepository } from '@/automation/package-identity';
 import { documentRow, rowDocument } from '@/automation/schemas';
 import type { ActivityEntry, AutomationEvent, Execution, SubscriptionDelivery } from '@/automation/types';
 import type { ExecutionFilter } from '@/contract/routes';
@@ -24,6 +23,7 @@ import {
 	repositoryColumns,
 	repositoryRow,
 } from '@/persistence/codecs/repository';
+import { encodeRepository, identifyRepository } from '@/persistence/codecs/stored';
 import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { AuditStore } from '@/persistence/d1/audit';
 import { backfillPage, drainBackfill } from '@/persistence/d1/backfill-page';

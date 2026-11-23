@@ -1,5 +1,5 @@
+import type { ResolvedInput } from '@/automation/execution-outputs';
 import type { Edit, Package } from '@/automation/inventory';
-import type { ResolvedInput } from '@/automation/outputs';
 import type { FrozenPackageTag } from '@/automation/package-tags';
 import type { ModuleTag, RefPlan, RefState } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
