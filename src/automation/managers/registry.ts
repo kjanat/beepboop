@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Result } from 'effect';
-import type { VerificationContext } from '@/automation/github';
+import type { VerificationContext } from '@/automation/gateway.ts';
 import { checkChannel, pkgbuildChannels } from '@/automation/managers/channels';
 import type { Publication } from '@/automation/types';
 import type { ManagerDestinationId, ManagerName } from '@/domain/catalog.ts';

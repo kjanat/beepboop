@@ -3,7 +3,7 @@ import { Effect, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import type { DistributionFile } from '@/automation/distribution';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
-import { RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 

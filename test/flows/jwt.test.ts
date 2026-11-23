@@ -5,7 +5,7 @@ import { Effect, Result } from 'effect';
 import type { JWTPayload } from 'jose';
 import { decodeJwt, exportJWK, exportPKCS8, generateKeyPair, jwtVerify, SignJWT } from 'jose';
 import { administrator, workflowIdentity } from '@/automation/auth';
-import { RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import { Automation } from '@/automation/service';
 
 let world: World;

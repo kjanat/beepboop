@@ -7,7 +7,7 @@ import { virtualTime } from '@root/test/support/time.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import { RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import { Automation } from '@/automation/service';
 
 let world: World;

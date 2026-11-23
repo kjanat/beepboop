@@ -1,5 +1,5 @@
 import { Effect, Result } from 'effect';
-import type { VerificationContext } from '@/automation/github';
+import type { VerificationContext } from '@/automation/gateway.ts';
 import { cargoManager } from '@/automation/managers/cargo';
 import { object } from '@/automation/managers/helpers';
 import { registryRequest } from '@/automation/managers/verification';

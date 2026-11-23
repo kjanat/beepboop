@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import type { RepositoryGateway } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { placeBlock, setupBlock } from '@/automation/setup-body';
 import { previousRender } from '@/automation/setup-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';

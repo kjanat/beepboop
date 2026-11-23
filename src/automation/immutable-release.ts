@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import type { RepositoryGateway } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { mutableStruct } from '@/kernel/schema/structs.ts';

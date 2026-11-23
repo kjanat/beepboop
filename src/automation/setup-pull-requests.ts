@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import type { RepositoryGateway } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { enableAutoMerge } from '@/automation/preparation-pull-requests';
 import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import type { Edit } from '@/domain/inventory.ts';

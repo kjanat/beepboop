@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { alreadyPrepared, applyVersionFiles, fileEdits } from '@/automation/editors';
-import type { VerificationContext } from '@/automation/github';
+import type { VerificationContext } from '@/automation/gateway.ts';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { ManagerRegistry } from '@/automation/managers/registry';
 import { metadataDiagnostics } from '@/automation/package-metadata';

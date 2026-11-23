@@ -1,5 +1,5 @@
 import { Clock, Effect, Schema } from 'effect';
-import type { RepositoryGateway } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import type { DistributionEvidence, TagSigner } from '@/domain/refs.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';

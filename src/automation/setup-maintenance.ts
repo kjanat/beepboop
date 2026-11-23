@@ -1,5 +1,5 @@
 import { Effect, Result, Schema } from 'effect';
-import type { RepositoryGateway } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { discover } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { pullRequest } from '@/automation/preparation-pull-requests';
