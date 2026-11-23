@@ -2,17 +2,20 @@ import { chmod } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Effect } from 'effect';
 import { build } from 'tsdown';
-import { packageManifest } from '@/tooling/cli/manifest';
-import { attemptPromise, main, parse, readJson, refuse } from '@/tooling/runtime';
+import { generatedJsr, packageManifest } from '@/tooling/cli/manifest';
+import { attemptPromise, main, parse, readJson } from '@/tooling/runtime';
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = resolve(root, 'packages/cli');
 
 await main(Effect.gen(function*() {
 	const npm = yield* parse(packageManifest, yield* readJson(`${directory}/package.json`));
-	const jsr = yield* parse(packageManifest, yield* readJson(`${directory}/jsr.json`));
-	if (npm.name !== jsr.name || npm.version !== jsr.version) {
-		return yield* refuse('npm and JSR must share a name and version');
+	const jsrPath = `${directory}/jsr.json`;
+	const source = yield* attemptPromise(() => Bun.file(jsrPath).text());
+	const generated = yield* generatedJsr(npm, source);
+	if (generated !== source) {
+		yield* attemptPromise(() => Bun.write(jsrPath, generated));
+		console.log(`Wrote version ${npm.version} from package.json to jsr.json`);
 	}
 	yield* attemptPromise(() =>
 		build({

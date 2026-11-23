@@ -143,6 +143,7 @@ await main(Effect.gen(function*() {
 					'--unstable-sloppy-imports',
 					'--unstable-byonm',
 					'--no-check',
+					'--allow-dirty',
 					'--config',
 					'packages/cli/jsr.json',
 				], {

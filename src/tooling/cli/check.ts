@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { Effect } from 'effect';
-import { packageManifest } from '@/tooling/cli/manifest';
+import { leakedSpecifiers, packageManifest } from '@/tooling/cli/manifest';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, capture, main, parse, readJson, refuse, temporaryDirectory } from '@/tooling/runtime';
 
@@ -16,6 +16,8 @@ await main(Effect.scoped(Effect.gen(function*() {
 		packageManifest,
 		yield* readJson(`${directory}/package.json`),
 	);
+	const leaked = leakedSpecifiers(yield* attemptPromise(() => Bun.file(`${directory}/cli.js`).text()));
+	yield* expect(!leaked.length, `cli.js imports workspace modules: ${leaked.join(', ')}`);
 	const temporary = yield* temporaryDirectory('beepboop-package-');
 	const tarball = join(temporary, 'cli.tgz');
 	yield* capture(['bun', 'pm', 'pack', '--ignore-scripts', '--filename', tarball], { cwd: directory });
@@ -58,6 +60,6 @@ await main(Effect.scoped(Effect.gen(function*() {
 		"const {run} = await import('@kjanat/beepboop'); if(typeof run !== 'function') throw Error('missing run export')",
 	], { cwd: temporary });
 	console.log(
-		`Verified installed ${manifest.name}@${manifest.version}: executable, manifest, completions and module export`,
+		`Verified installed ${manifest.name}@${manifest.version}: bundle without workspace imports, executable, manifest, completions and module export`,
 	);
 })));
