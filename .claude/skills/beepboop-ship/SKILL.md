@@ -89,8 +89,10 @@ Merge only when all hold on the head commit:
   fixing commit or giving the evidence for rejecting it, then resolve its thread
   with the GraphQL `resolveReviewThread` mutation.
 - `gh pr view <pr> --repo kjanat/beepboop --json reviewDecision,mergeStateStatus`
-  shows no `CHANGES_REQUESTED` and `CLEAN`. CodeRabbit may be rate limited;
-  that does not block.
+  shows no `CHANGES_REQUESTED` and `CLEAN`. `UNSTABLE` also passes when the
+  CodeRabbit check, pending or `NEUTRAL`, is its only cause and the required
+  checks and the Codex `code_review` are clean. Never wait for CodeRabbit. A
+  Codex `security_review` that is still running does not block either.
 
 Run the check and the merge as separate commands:
 `gh pr merge <pr> --repo kjanat/beepboop --squash --match-head-commit <sha>`.
