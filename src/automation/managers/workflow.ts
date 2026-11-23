@@ -31,7 +31,8 @@ export const workflowManager: Adapter<'workflow'> = {
 				return Array.isArray(steps) && steps.some(step => {
 					const { uses, run } = object(step);
 					return (typeof uses === 'string'
-						&& /^(?:softprops\/action-gh-release|ncipollo\/release-action)@/.test(uses))
+						&& /^(?:softprops\/action-gh-release|ncipollo\/release-action|kjanat\/beepboop\/actions\/publish-tagged-release)@/
+							.test(uses))
 						|| (typeof run === 'string' && /\bgh release create\b/.test(run));
 				});
 			});

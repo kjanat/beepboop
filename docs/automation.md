@@ -1566,6 +1566,13 @@ asks GitHub to generate them, then drops each `by @<name>[bot]` attribution and
 each bot entry under `New Contributors`. The notes replace the whole release
 body. A retried publication leaves one copy.
 
+### Releases triggered by a tag
+
+If a tag-triggered workflow already builds its release assets, use
+[`actions/publish-tagged-release`](../actions/publish-tagged-release/README.md).
+It publishes the existing workflow tag as the Beepboop App and can read notes
+from a Keep a Changelog section. It does not need a tracked execution.
+
 ### Binary builds
 
 A publication workflow can build binaries for its GitHub release. Setup

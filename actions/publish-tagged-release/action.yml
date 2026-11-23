@@ -1,0 +1,42 @@
+name: Publish tagged GitHub release
+description: Publish a GitHub release for the workflow tag as the Beepboop App
+inputs:
+  changelog:
+    description: Keep a Changelog file with a section for the tag
+  notes-file:
+    description: Release notes file. Omit both notes inputs to use GitHub's generated notes.
+  asset-directory:
+    description: Directory of release assets already downloaded or built by the job
+  title:
+    description: Release title. Defaults to the tag name.
+  prerelease:
+    description: Mark this release as a prerelease
+    default: "false"
+  latest:
+    description: Set Latest explicitly (true or false), or let GitHub decide (auto)
+    default: auto
+  service:
+    description: Beepboop service origin
+    default: https://beepboop.kjanat.dev
+runs:
+  using: composite
+  steps:
+    - name: Get Beepboop token
+      id: token
+      uses: $/actions/token
+      with:
+        service: ${{ inputs.service }}
+        permission-contents: write
+    - name: Publish tagged release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.token.outputs.token }}
+        GH_REPO: ${{ github.repository }}
+        GH_PROMPT_DISABLED: "1"
+        RELEASE_CHANGELOG: ${{ inputs.changelog }}
+        RELEASE_NOTES_FILE: ${{ inputs.notes-file }}
+        RELEASE_ASSET_DIRECTORY: ${{ inputs.asset-directory }}
+        RELEASE_TITLE: ${{ inputs.title }}
+        RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+        RELEASE_LATEST: ${{ inputs.latest }}
+      run: bash "${GITHUB_ACTION_PATH}/publish.sh"

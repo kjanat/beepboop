@@ -1137,6 +1137,22 @@ describe('release streams', () => {
 		expect(prefixed.graph.omissions).toEqual([]);
 	});
 
+	test('discovers the standalone tag release action as a GitHub release target', () => {
+		const release = plan(inMemory({
+			'go.mod': 'module github.com/octo/tool\n\ngo 1.27.0\n',
+			'.github/workflows/release.yml': [
+				"name: Publish binaries",
+				"on: { push: { tags: ['v*'] } }",
+				'jobs:',
+				'  release:',
+				'    runs-on: ubuntu-latest',
+				'    steps:',
+				'      - uses: kjanat/beepboop/actions/publish-tagged-release@v1',
+			].join('\n'),
+		}, 1, 'octo/tool'));
+		expect(target(stream(release.graph, 'main'), 'github-release').packages).toEqual(['pkg:github/octo/tool']);
+	});
+
 	test('rehearsals, staging registries and release tooling', async () => {
 		const tool = releaseManifest('tool');
 		const planned = (files: Record<string, string>, id = 1) => plan(inMemory(files, id, 'octo/tool'));
