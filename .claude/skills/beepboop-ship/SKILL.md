@@ -10,6 +10,11 @@ Pipe every command that may print configuration through `envctl redact`.
 Never hide output with `head`, `tail` or `>/dev/null`; write long output to a
 file in the scratchpad and search it with `rg`.
 
+Every agent shares the scratchpad. Start the name of every scratch file with
+the branch name, with each `/` replaced by `-`: branch `fix/release-status`
+writes `fix-release-status-msg.txt`, `fix-release-status-gate.log` and
+`fix-release-status-pr.md`.
+
 ## 1. Branch
 
 Start from `origin/master` on a new branch named for the change:
@@ -23,8 +28,8 @@ Never stash. Never use `git checkout --` or `git restore`.
   and restoring it with Edit.
 - Format: `bunx @kjanat/fmt`. Organize imports: `bunx biome check --write <files>`.
   Unused imports: `bunx biome check --write --unsafe <files>`.
-- Gate: `run gate 2>&1 | envctl redact > <scratch>/gate.log`, then
-  `rg -n "finished in|^\[test *\] +[0-9]+ (pass|fail)|\(fail\)|Ran [0-9]+ tests|exit [1-9]|×" <scratch>/gate.log`.
+- Gate: `run gate 2>&1 | envctl redact > <scratch>/<branch>-gate.log`, then
+  `rg -n "finished in|^\[test *\] +[0-9]+ (pass|fail)|\(fail\)|Ran [0-9]+ tests|exit [1-9]|×" <scratch>/<branch>-gate.log`.
   Every task must exit 0 and `0 fail`.
 - Worker build: `run deploy:dry` when `src/` changed.
 - Browser: `run test:browser` when `src/components`, `src/ui` or styles changed.
@@ -33,18 +38,24 @@ Never stash. Never use `git checkout --` or `git restore`.
 
 ## 3. Commit
 
-Write the message to a scratch file. Subject at most 50 characters, imperative,
-active voice. Body says what the change does in plain sentences. Then lint it:
+Write the message to `<scratch>/<branch>-msg.txt`. Subject at most 50
+characters, imperative, active voice. Body says what the change does in plain
+sentences. Set `msg` to that path, then lint it:
 
 ```sh
-node .claude/skills/beepboop-ship/cop/run.mjs <msgfile>
+node .claude/skills/beepboop-ship/cop/run.mjs "$msg"
 ```
 
 `[]` means clean. Fix every finding (stock words such as "Keep", "named",
 "latest", "records", "no longer", and participial post-modifiers) and lint
 again. Stage named files with `git add <files>` in its own command, then
-`git commit --file <msgfile>` in its own command. The pre-commit hook reruns
-the gate; send its output to a file. Never name an AI model in the commit.
+`git commit --file <scratch>/<branch>-msg.txt` in its own command. The
+pre-commit hook reruns the gate; send its output to a file. Never name an AI
+model in the commit.
+
+Run `git log -1` and compare its subject and body with your message file. If
+the commit carries another message, amend it with
+`git commit --amend --file <scratch>/<branch>-msg.txt` before you push.
 
 ## 4. Rebase and push
 
@@ -56,18 +67,18 @@ rerun `run check` and the tests, then push. First push:
 
 ## 5. Pull request
 
-Body file in the scratchpad: the problem in one or two sentences, the fix, a
+Body file `<scratch>/<branch>-pr.md`: the problem in one or two sentences, the fix, a
 `Proof:` line naming the gate result and each test that fails without the
 change, and a last line `Created with <model> in Claude Code.` No bare `@name`.
 Open it with
-`gh pr create --repo kjanat/beepboop --base master --head <branch> --title "<subject>" --body-file <file>`.
+`gh pr create --repo kjanat/beepboop --base master --head <branch> --title "<subject>" --body-file <scratch>/<branch>-pr.md`.
 
 ## 6. Wait
 
-Run in the background and wait for its notification:
+Set `pr` to the PR number. Run in the background and wait for its notification:
 
 ```sh
-/home/kjanat/.bun/bin/bun .claude/skills/beepboop-ship/wait.ts <pr>
+/home/kjanat/.bun/bin/bun .claude/skills/beepboop-ship/wait.ts "$pr"
 ```
 
 It reads Codex state only from comments by `chatgpt-codex-connector[bot]`. When
@@ -102,6 +113,5 @@ Run the check and the merge as separate commands:
 Return the PR URL, the merge state, the merge time, the test names that prove
 the change, and any decision the caller must know about. Nothing else.
 
-The caller owns the CodeRabbit follow-up. Fifteen minutes after the merge, it
-reads the PR comments for a CodeRabbit "Big if true" comment and ships each
-worthwhile item through this skill.
+The caller owns the CodeRabbit follow-up and runs
+`.claude/skills/beepboop-post-merge/SKILL.md` after the merge.
