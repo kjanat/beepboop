@@ -58,6 +58,7 @@ const refCommit = Effect.fnUntraced(
 	function*(transport: Fetcher, repository: string, ref: string | undefined) {
 		if (ref !== undefined && shaPattern.test(ref)) return Option.some(ref);
 		const names = ref === undefined ? ['HEAD'] : [`refs/heads/${ref}`, `refs/tags/${ref}`];
+		const listed = ref === undefined ? names : [...names, ref, `refs/${ref}`];
 		const response = yield* scopedResponse(
 			Effect.tryPromise(signal =>
 				transport(`https://github.com/${repository.split('/').map(encodeURIComponent).join('/')}.git/git-upload-pack`, {
@@ -75,20 +76,24 @@ const refCommit = Effect.fnUntraced(
 						packetLine('object-format=sha1'),
 						'0001',
 						packetLine('peel'),
-						...names.map(name => packetLine(`ref-prefix ${name}`)),
+						...listed.map(name => packetLine(`ref-prefix ${name}`)),
 						'0000',
 					].join(''),
 				})
 			),
 		);
 		if (response.status !== 200) return Option.none<string>();
-		const commits = packetLines(yield* responseBytes(response, { maxBytes: refsLimit })).flatMap(line => {
+		const bytes = yield* responseBytes(response, { maxBytes: refsLimit + 1 });
+		if (bytes.byteLength > refsLimit) return Option.none<string>();
+		const matches = packetLines(bytes).flatMap(line => {
 			const [, oid, name = '', attributes = ''] = advertisedRef.exec(line) ?? [];
-			if (oid === undefined || !names.includes(name)) return [];
-			return [/ peeled:([0-9a-f]{40})(?: |$)/.exec(attributes)?.[1] ?? oid];
+			if (oid === undefined || !listed.includes(name)) return [];
+			return [{ name, commit: / peeled:([0-9a-f]{40})(?: |$)/.exec(attributes)?.[1] ?? oid }];
 		});
-		const [commit] = commits;
-		return commits.length === 1 && commit !== undefined ? Option.some(commit) : Option.none<string>();
+		const [match] = matches;
+		return matches.length === 1 && match !== undefined && names.includes(match.name)
+			? Option.some(match.commit)
+			: Option.none<string>();
 	},
 	Effect.scoped,
 	Effect.timeout('10 seconds'),

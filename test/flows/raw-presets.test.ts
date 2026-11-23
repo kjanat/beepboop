@@ -85,11 +85,11 @@ for (
 		['a 401', () => new Response('Repository not found.', { status: 401 })],
 		['a 503', () => new Response('Service Unavailable', { status: 503 })],
 		['a malformed packet length', () => new Response(`0zz\n${packet(`${world.github.head(presets)} HEAD`)}0000`)],
-		['a reference past 64 KiB', () => {
+		['a listing over 64 KiB after the reference', () => {
 			const filler = `${'0'.repeat(40)} refs/heads/${'x'.repeat(200)}`;
-			const head = world.github.head(presets);
-			return new Response(`${packet(filler).repeat(400)}${packet(`${head} HEAD`)}0000`);
+			return new Response(`${packet(`${world.github.head(presets)} HEAD`)}${packet(filler).repeat(400)}0000`);
 		}],
+		['a packet longer than the answer', () => new Response(`0100${world.github.head(presets)} HEAD\n`)],
 		['a network error', () => {
 			throw new TypeError('connection reset');
 		}],
@@ -115,14 +115,31 @@ test('ref discovery falls back to the API when a branch and a tag share the name
 	expect(apiCalls(mark)).toEqual(lookups);
 });
 
-test('ref discovery ignores a reference that the 64 KiB cut leaves as a shorter name', async () => {
-	const head = world.github.head(presets);
-	presets.refs.set('tags/v1', head);
-	const filler = `${'0'.repeat(40)} refs/heads/${'x'.repeat(65_536 - 57 - 57)}`;
-	const attempts = failing('github.com', () => new Response(`${packet(filler)}${packet(`${head} refs/tags/v10`)}0000`));
+for (const ref of ['refs/heads/main', 'heads/main']) {
+	test(`ref discovery leaves ${ref} to the API when a branch carries that name`, async () => {
+		const head = world.github.head(presets);
+		presets.refs.set('heads/shadow', head);
+		const shadow = world.github.push(
+			presets,
+			{ 'release.json': jsonFile({ managers: ['cargo'] }) },
+			'Shadow',
+			'shadow',
+		);
+		presets.refs.set(`heads/${ref}`, shadow.sha);
+		const mark = world.network.mark();
+		expect(await load(`github>octo/presets:release#${ref}`)).toEqual({ value: policy, sha: head });
+		expect(exchanges(mark, 'github.com')).toEqual(['github.com 200 /octo/presets.git/git-upload-pack']);
+		expect(apiCalls(mark)).toEqual(lookups);
+	});
+}
+
+test('ref discovery leaves a ref that only its qualified name matches to the API', async () => {
 	const mark = world.network.mark();
-	expect(await load('github>octo/presets:release#v1')).toEqual({ value: policy, sha: head });
-	expect(attempts()).toBe(1);
+	expect(await load('github>octo/presets:release#heads/main')).toEqual({
+		value: policy,
+		sha: world.github.head(presets),
+	});
+	expect(exchanges(mark, 'github.com')).toEqual(['github.com 200 /octo/presets.git/git-upload-pack']);
 	expect(apiCalls(mark)).toEqual(lookups);
 });
 

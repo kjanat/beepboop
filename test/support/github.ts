@@ -945,8 +945,9 @@ export class FakeGitHub {
 	resolve(repository: Repository, reference: string): Commit {
 		const sha = /^[0-9a-f]{40}$/.test(reference)
 			? reference
-			: repository.refs.get(`heads/${reference.replace(/^refs\/heads\//, '')}`)
-				?? repository.refs.get(`tags/${reference.replace(/^refs\/tags\//, '')}`);
+			: repository.refs.get(reference.replace(/^refs\//, ''))
+				?? repository.refs.get(`heads/${reference}`)
+				?? repository.refs.get(`tags/${reference}`);
 		const commit = sha === undefined ? undefined : repository.commits.get(sha);
 		if (!commit) throw new HttpError(404, 'No commit found');
 		return commit;
