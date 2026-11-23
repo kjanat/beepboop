@@ -28,6 +28,7 @@ import {
 import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
 import type { PublishingAccess } from '@/automation/setup-publishing';
+import { openSetupPull, setupMerge, setupStatus } from '@/automation/setup-pull-requests';
 import { workflowCredentials } from '@/automation/setup-workflows';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
@@ -301,7 +302,7 @@ export class AutomationService {
 				discovered.diagnostics.push({
 					code: 'unconfigured',
 					severity: 'blocking',
-					message: (yield* this.gateway.openSetupPull(name, id))
+					message: (yield* openSetupPull(this.gateway, name, id))
 						? 'The setup pull request is open. Merge it to enable releases.'
 						: 'Not configured yet. Configure releases opens a setup pull request.',
 				});
@@ -699,7 +700,7 @@ export class AutomationService {
 			if (document === undefined) return undefined;
 			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
 			if (typeof saved.url !== 'string') return undefined;
-			return yield* this.gateway.setupMerge(repository.name, repository.id, saved.url);
+			return yield* setupMerge(this.gateway, repository.name, repository.id, saved.url);
 		});
 	}
 	private backfill(
@@ -1010,7 +1011,7 @@ export class AutomationService {
 				)
 			);
 			if (scheduled) {
-				yield* this.gateway.setupStatus(repository.name, repository.id, pull.number, rebuildingStatus(body));
+				yield* setupStatus(this.gateway, repository.name, repository.id, pull.number, rebuildingStatus(body));
 			}
 		});
 	}

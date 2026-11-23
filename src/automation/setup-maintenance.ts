@@ -6,6 +6,7 @@ import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryS
 import { marked } from '@/automation/setup-body';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { PublishingAccess } from '@/automation/setup-publishing';
+import { generatedFiles, openSetupPull, setupHead, setupStatus } from '@/automation/setup-pull-requests';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
 import { setupChoicesSchema } from '@/contract/setup';
@@ -108,12 +109,12 @@ export function maintainSetup(
 		);
 		if (!row) return;
 		const saved = yield* Effect.fromResult(record(yield* fromJson(row.document)));
-		const pull = yield* gateway.openSetupPull(name, id);
+		const pull = yield* openSetupPull(gateway, name, id);
 		if (!pull && !requested) return yield* migrateSetup(store, gateway, snapshot, saved, row.document, publishing);
 		if (!pull || (requested && pull.number !== requested.number)) return;
-		const generatedFiles = yield* gateway.generatedFiles(name, id, pull.head);
-		if (!generatedFiles && saved.head !== pull.head) return;
-		const previous = generatedFiles ?? (yield* fromSync(() => setupEdits(saved)));
+		const generated = yield* generatedFiles(gateway, name, id, pull.head);
+		if (!generated && saved.head !== pull.head) return;
+		const previous = generated ?? (yield* fromSync(() => setupEdits(saved)));
 		const stored = yield* store.repository(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
 		const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
@@ -176,7 +177,8 @@ export function maintainSetup(
 			};
 			if (plan.blockers.length || !plan.edits.length) {
 				yield* current;
-				yield* gateway.setupStatus(
+				yield* setupStatus(
+					gateway,
 					name,
 					id,
 					pull.number,
@@ -193,13 +195,7 @@ export function maintainSetup(
 			// Even an unchanged source may need a newer generator's output. An identical proposal needs no commit.
 			if (saved.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)) {
 				yield* current;
-				yield* gateway.setupStatus(
-					name,
-					id,
-					pull.number,
-					`${summary}\n\n${settled}`,
-					proposal,
-				);
+				yield* setupStatus(gateway, name, id, pull.number, `${summary}\n\n${settled}`, proposal);
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
 			}
@@ -244,7 +240,8 @@ export function maintainSetup(
 		}).pipe(
 			Effect.catchIf(error => decodeError(error) === superseded, () => Effect.void),
 			Effect.tapError(error =>
-				gateway.setupStatus(
+				setupStatus(
+					gateway,
 					name,
 					id,
 					pull.number,
@@ -289,7 +286,7 @@ function migrateSetup(
 		);
 		const stored = yield* store.repository(id);
 		const branch = setupBranch(snapshot);
-		const head = yield* gateway.setupHead(name, id, branch);
+		const head = yield* setupHead(gateway, name, id, branch);
 		const workflowPermission = yield* gateway.canEditWorkflows(name, id);
 		const plan = yield* previewSetup(snapshot, withRegistryStatus(discover(snapshot), stored?.inventory), undefined, {
 			publishing,
