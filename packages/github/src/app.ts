@@ -1,4 +1,4 @@
-import { Cache, Clock, Context, DateTime, Duration, Effect, Equal, Exit, Hash, Option } from 'effect';
+import { Cache, Clock, Context, DateTime, Duration, Effect, Equal, Exit, Hash, Option, Schema } from 'effect';
 import { signJwt } from 'micro509/jose';
 import { importPkcs8Pem } from 'micro509/keys';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
@@ -30,6 +30,12 @@ export type InstallationState = 'active' | 'suspended' | 'uninstalled';
 export const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
 
 const tokenMargin = 5 * 60_000;
+const tokenLifetime = 60 * 60_000;
+const identityLifetime = Duration.hours(1);
+const installationsPerPage = 100;
+
+const expiryTimestamp = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/));
+const decodeExpiry = Schema.decodeUnknownOption(expiryTimestamp);
 
 class TokenKey implements Equal.Equal {
 	readonly canonical: string;
@@ -147,10 +153,18 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 
 	const ownerInstallation = (jwt: string) =>
 		Effect.gen(function*() {
-			const installation = (yield* read(mutableArray(installationSchema), '/app/installations?per_page=100', jwt))
-				.find(installation => installation.account.id === ownerId);
-			if (!installation) return yield* precondition('The GitHub App is not installed on the owner account');
-			return installation;
+			for (let page = 1;; page++) {
+				const installations = yield* read(
+					mutableArray(installationSchema),
+					`/app/installations?per_page=${installationsPerPage}&page=${page}`,
+					jwt,
+				);
+				const installation = installations.find(installation => installation.account.id === ownerId);
+				if (installation) return installation;
+				if (installations.length < installationsPerPage) {
+					return yield* precondition('The GitHub App is not installed on the owner account');
+				}
+			}
 		});
 
 	const authorize = (name: string, permissions: Permissions) =>
@@ -198,9 +212,9 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 				return yield* precondition('Repository mismatch');
 			}
 			const now = yield* Clock.currentTimeMillis;
-			const remaining = Option.fromUndefinedOr(issued.expires_at).pipe(
+			const remaining = decodeExpiry(issued.expires_at).pipe(
 				Option.flatMap(DateTime.make),
-				Option.map(expiry => DateTime.toEpochMillis(expiry) - now - tokenMargin),
+				Option.map(expiry => Math.min(DateTime.toEpochMillis(expiry) - now, tokenLifetime) - tokenMargin),
 				Option.getOrElse(() => 0),
 			);
 			const lifetime = remaining > 0 ? Duration.millis(remaining) : Duration.zero;
@@ -211,9 +225,21 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 		authorize(name, permissions).pipe(
 			Effect.flatMap(({ installation, suspended }) => {
 				const key = new TokenKey(installation, name, id, permissions);
-				return reuse && !suspended ? remembered(tokens, key, issue(key)) : issue(key);
+				if (suspended) return evict(cached => cached.installation === installation).pipe(Effect.andThen(issue(key)));
+				return reuse && id !== undefined ? remembered(tokens, key, issue(key)) : issue(key);
 			}),
 			Effect.map(issued => issued.token),
+		);
+
+	const evict = (matches: (key: TokenKey, issued: IssuedToken) => boolean) =>
+		Cache.entries(tokens).pipe(
+			Effect.flatMap(entries =>
+				Effect.forEach(
+					Array.from(entries).filter(([key, issued]) => matches(key, issued)),
+					([key]) => Cache.invalidate(tokens, key),
+					{ discard: true },
+				)
+			),
 		);
 
 	const tokens = yield* Cache.makeWith(issue, {
@@ -222,16 +248,7 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 		timeToLive: exit => Exit.isSuccess(exit) ? exit.value.lifetime : Duration.zero,
 	});
 
-	const rejected = (token: string) =>
-		Cache.entries(tokens).pipe(
-			Effect.flatMap(entries =>
-				Effect.forEach(
-					Array.from(entries).filter(([, issued]) => issued.token === token),
-					([key]) => Cache.invalidate(tokens, key),
-					{ discard: true },
-				)
-			),
-		);
+	const rejected = (token: string) => evict((_, issued) => issued.token === token);
 
 	const ownerLogin = Effect.gen(function*() {
 		return (yield* ownerInstallation(yield* appToken)).account.login;
@@ -256,16 +273,16 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 		return { login, id, email: `${id}+${login}@users.noreply.github.com` } satisfies BotIdentity;
 	});
 
-	const forever = (exit: Exit.Exit<unknown, unknown>) => Exit.isSuccess(exit) ? Duration.infinity : Duration.zero;
+	const bounded = (exit: Exit.Exit<unknown, unknown>) => Exit.isSuccess(exit) ? identityLifetime : Duration.zero;
 	const owners = yield* Cache.makeWith((_: number) => ownerLogin, {
 		capacity: 1,
 		requireServicesAt: 'lookup',
-		timeToLive: forever,
+		timeToLive: bounded,
 	});
 	const bots = yield* Cache.makeWith((_: string) => botIdentity, {
 		capacity: 1,
 		requireServicesAt: 'lookup',
-		timeToLive: forever,
+		timeToLive: bounded,
 	});
 
 	return GitHubApp.of({
