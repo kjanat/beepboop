@@ -140,6 +140,10 @@
 		"specifier": "@/contract/views"
 	},
 	{
+		"file": "packages/notifications/src/notification.ts",
+		"specifier": "@/contract/links"
+	},
+	{
 		"file": "packages/persistence/src/codecs/stored.ts",
 		"specifier": "@/automation/types"
 	},

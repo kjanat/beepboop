@@ -8,7 +8,6 @@ import {
 	publishReportRequest,
 	reportStep,
 } from '@/contract/ledger';
-import { destinationInput, subscriptionInput, watchInput } from '@/contract/notifications';
 import {
 	acknowledged,
 	approvalReadiness,
@@ -16,7 +15,6 @@ import {
 	credentialsView,
 	executionStates,
 	executionView,
-	notificationsView,
 	packageTagPage,
 	planReview,
 	repositoryView,
@@ -37,6 +35,7 @@ import {
 	numberFromInput,
 	refined,
 } from '@/kernel/schema/structs.ts';
+import { destinationInput, notificationsView, subscriptionInput, watchInput } from '@/notifications/contract.ts';
 
 export type Method = 'GET' | 'POST';
 export type Auth = 'admin' | 'elevated' | 'workflow' | 'workflow-token';

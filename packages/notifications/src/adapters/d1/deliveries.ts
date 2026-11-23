@@ -2,12 +2,10 @@ import { Effect, Schema } from 'effect';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import type { DeliveryOutcome, VersionChangedPayload } from '@/notifications/notification.ts';
 import type { Sql } from '@/persistence/d1/database';
 import { optionalColumn, parse } from '@/persistence/d1/database';
 
-export const deliveryStates = ['pending', 'sending', 'delivered', 'failed'] as const;
-export type DeliveryState = (typeof deliveryStates)[number];
-export type DeliveryOutcome = { state: 'delivered' } | { state: 'pending' | 'failed'; error: string };
 export const deliveryLeaseDuration = 60_000;
 export const maximumDeliveryAttempts = 5;
 
@@ -44,6 +42,20 @@ export class NotificationDeliveries {
 		return this.sql.all('SELECT * FROM notification_deliveries ORDER BY updated_at DESC LIMIT 50').pipe(
 			Effect.flatMap(rows => parse(mutableArray(delivery), rows)),
 		);
+	}
+
+	enqueue(payload: VersionChangedPayload): Effect.Effect<void, DomainError> {
+		return Effect.clockWith(clock => {
+			return this.sql.run(
+				"INSERT OR IGNORE INTO notification_deliveries (id, event_id, destination_id, document, state, attempts, updated_at) SELECT ? || ':' || d.id, ?, d.id, ?, 'pending', 0, ? FROM notification_destinations d JOIN notification_subscriptions s ON s.destination_id = d.id WHERE d.enabled=1 AND s.registry=? AND s.name=?",
+				payload.id,
+				payload.id,
+				JSON.stringify(payload),
+				clock.currentTimeMillisUnsafe(),
+				payload.package.registry,
+				payload.package.name,
+			).pipe(Effect.asVoid);
+		});
 	}
 
 	available(): Effect.Effect<string[], DomainError> {

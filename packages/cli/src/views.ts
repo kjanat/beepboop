@@ -3,9 +3,10 @@ import { Effect, Schema } from 'effect';
 import type { Look, State } from '@/cli/look';
 import { lookOf, registryOf, table } from '@/cli/look';
 import { emit } from '@/cli/output';
-import type { CredentialsView, ExecutionView, NotificationsView, RepositoryView } from '@/contract/views';
+import type { CredentialsView, ExecutionView, RepositoryView } from '@/contract/views';
 import { planReview } from '@/contract/views';
 import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/kernel/schema/structs.ts';
+import type { NotificationsView } from '@/notifications/contract.ts';
 
 const executionStates: Record<string, State> = {
 	succeeded: 'published',

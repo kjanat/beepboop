@@ -2,8 +2,6 @@ import { Clock, Effect, Schema } from 'effect';
 import { jsrLatest } from '@/automation/managers/jsr';
 import { npmLatest } from '@/automation/managers/npm';
 import type { RegistryVersion } from '@/automation/managers/registry';
-import type { Notifications } from '@/automation/notifications';
-import { versionChanged } from '@/automation/notifications';
 import type { Store } from '@/automation/store';
 import type { AutomationEvent } from '@/automation/types';
 import type { WatchedPackage } from '@/automation/watchlist';
@@ -16,6 +14,8 @@ import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import type { Notifications } from '@/notifications/delivery.ts';
+import { versionChanged } from '@/notifications/notification.ts';
 import { parse, sql } from '@/persistence/d1/database';
 
 const watchedRow = mutableStruct({
