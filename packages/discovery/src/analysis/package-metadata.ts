@@ -1,6 +1,6 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata';
+import { filled, lacking, licenseFile, readmeFile } from '@/discovery/analysis/metadata-fields.ts';
 import { glob, object } from '@/discovery/managers/manifest-editing.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';

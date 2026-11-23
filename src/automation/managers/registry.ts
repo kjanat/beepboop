@@ -1,32 +1,23 @@
-import { Context, Effect, Layer, Result } from 'effect';
+import { Context, Effect, Layer } from 'effect';
 import type { VerificationContext } from '@/automation/gateway.ts';
-import { checkChannel, pkgbuildChannels } from '@/automation/managers/channels';
+import { checkChannel } from '@/automation/managers/channels';
 import type { Publication } from '@/automation/types';
+import type { Discoverer } from '@/discovery/managers/registry.ts';
+import { DiscoveryRegistry, uniqueDiagnostics } from '@/discovery/managers/registry.ts';
 import type { ManagerDestinationId, ManagerName } from '@/domain/catalog.ts';
 import { destinationsOf, managerSpec } from '@/domain/catalog.ts';
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
-import { channelKey, isChannelOutcome } from '@/domain/destinations.ts';
-import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
+import { isChannelOutcome } from '@/domain/destinations.ts';
+import type { Inventory, Package } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
-import { publicationOrder } from '@/domain/publication-order.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
-import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
-import type { PackageIdentity } from '@/package-url';
-import { invalidPackageUrl, parsePackageIdentity } from '@/package-url';
 
-export interface Manager {
-	readonly name: ManagerName;
-	discover(snapshot: Snapshot): Inventory;
-	identity?(pkg: Package, snapshot: Snapshot): PackageIdentity;
-	ownsVersionSource?(source: string): boolean;
-	editVersion?(context: VersionEdit): Effect.Effect<string, DomainError>;
-	updateDependencies?(context: DependencyEdit): Effect.Effect<void, DomainError>;
+export interface Manager extends Discoverer {
 	verifyPublication?(
 		publication: Publication,
 		request: Fetcher,
@@ -50,47 +41,12 @@ export type RegistryVersion =
 		| { kind: 'failed'; url: string; reason: string }
 	)
 	& { previousModule?: { name: string; version: string } };
-export interface VersionEdit {
-	source: string;
-	before: string;
-	version: string;
-	packages: Package[];
-}
-export interface DependencyEdit {
-	snapshot: Snapshot;
-	packages: Package[];
-	version: string;
-	changed: Map<string, string>;
-}
-function unique(diagnostics: Diagnostic[]): Diagnostic[] {
-	return [...new Map(diagnostics.map(entry => [entry.message, entry])).values()];
-}
-export function emptyInventory(): Inventory {
-	return { packages: [], workflows: [], managers: [], diagnostics: [], publicationOrder: [] };
-}
 export type Adapters = { readonly [M in ManagerName]: Adapter<M> };
-export class ManagerRegistry {
+export class ManagerRegistry extends DiscoveryRegistry {
 	private readonly managers: ReadonlyMap<ManagerName, Manager>;
-	constructor(private readonly adapters: Adapters) {
+	constructor(adapters: Adapters) {
+		super(adapters);
 		this.managers = new Map(Object.values(adapters).map(manager => [manager.name, manager]));
-	}
-	names(): ManagerName[] {
-		return [...this.managers.keys()];
-	}
-	editVersion(context: VersionEdit): Effect.Effect<string, DomainError> {
-		const managers = [...this.managers.values()].filter(manager => manager.ownsVersionSource?.(context.source));
-		const [manager] = managers;
-		return managers.length === 1 && manager?.editVersion
-			? manager.editVersion(context)
-			: Effect.fail(precondition(`Expected exactly one version editor for ${context.source}`));
-	}
-	updateDependencies(context: DependencyEdit): Effect.Effect<void, DomainError> {
-		return Effect.forEach(this.managers.values(), manager => {
-			const packages = context.packages.filter(pkg => pkg.manager === manager.name);
-			return packages.length && manager.updateDependencies
-				? manager.updateDependencies({ ...context, packages })
-				: Effect.void;
-		}, { discard: true });
 	}
 	verifyPublication(
 		publication: Publication,
@@ -193,65 +149,12 @@ export class ManagerRegistry {
 				...rest,
 				...(destinations.length ? { destinations } : {}),
 				packages,
-				diagnostics: unique([...inventory.diagnostics, ...diagnostics]),
+				diagnostics: uniqueDiagnostics([...inventory.diagnostics, ...diagnostics]),
 			};
 		});
 	}
 	canVerify(name: ManagerName): boolean {
 		return Boolean(this.managers.get(name)?.verifyPublication);
-	}
-	discover(snapshot: Snapshot, enabled = this.names()): Inventory {
-		const result = emptyInventory();
-		for (const name of new Set(enabled)) {
-			const manager: Manager = this.adapters[name];
-			const inventory = manager.discover(snapshot);
-			for (const pkg of inventory.packages) {
-				const identified = pkg.identity ?? manager.identity?.(pkg, snapshot);
-				const identity = identified === undefined
-					? Result.fail(invalidPackageUrl(`Manager ${name} did not identify package ${pkg.name}`))
-					: parsePackageIdentity(identified);
-				if (Result.isFailure(identity)) {
-					result.diagnostics.push(fileProblem(pkg.manifest, 'invalid-manifest', identity.failure.message));
-					continue;
-				}
-				pkg.identity = identity.success;
-				result.packages.push(pkg);
-			}
-			result.workflows.push(...inventory.workflows);
-			result.managers.push(...inventory.managers);
-			result.diagnostics.push(...inventory.diagnostics);
-			if (inventory.references) {
-				result.references ??= [];
-				result.references.push(...inventory.references);
-			}
-		}
-		const pkgbuilds = pkgbuildChannels(snapshot);
-		const claimed = new Set(result.packages.flatMap(pkg => pkg.channels ?? []).map(channelKey));
-		const channels = pkgbuilds.channels.filter(channel => !claimed.has(channelKey(channel)));
-		if (channels.length) result.channels = channels;
-		result.diagnostics.push(...pkgbuilds.diagnostics);
-		const identities = new Set<string>();
-		for (const pkg of result.packages) {
-			const identity = packageId(pkg);
-			if (identities.has(identity)) {
-				result.diagnostics.push({
-					code: 'duplicate-identity',
-					severity: 'blocking',
-					subject: { kind: 'package', key: identity },
-					message: `Duplicate package identity: ${identity}`,
-				});
-			}
-			identities.add(identity);
-			pkg.dependencies = pkg.dependencies.filter(name =>
-				result.packages.some(other => other.manager === pkg.manager && other.name === name)
-			);
-		}
-		const ordering = publicationOrder(result.packages);
-		if (ordering.kind === 'ordered') result.publicationOrder = ordering.order;
-		else result.diagnostics.push({ code: 'cycle', severity: 'blocking', message: `Error: ${ordering.message}` });
-		result.managers = [...new Set(result.managers)].filter(name => enabled.includes(name)).sort();
-		result.diagnostics = unique(result.diagnostics);
-		return result;
 	}
 }
 function unchecked<T extends object>(target: T): T & { state: 'unchecked' } {

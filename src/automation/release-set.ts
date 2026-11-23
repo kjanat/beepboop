@@ -1,7 +1,7 @@
 import { Effect, Result } from 'effect';
 import { deriveExecution } from '@/automation/execution';
-import { discover } from '@/automation/managers';
 import type { Execution } from '@/automation/types';
+import { discover } from '@/discovery/discover.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { packageId, selectorKey, soleMatch } from '@/domain/package-identity.ts';
 import { tagPrefix } from '@/domain/version-tags.ts';

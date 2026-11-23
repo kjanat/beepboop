@@ -1,12 +1,12 @@
 import { Result } from 'effect';
-import type { Adapter } from '@/automation/managers/registry';
-import { emptyInventory } from '@/automation/managers/registry';
 import { object } from '@/discovery/managers/manifest-editing.ts';
+import type { DiscovererOf } from '@/discovery/managers/registry.ts';
+import { emptyInventory } from '@/discovery/managers/registry.ts';
 import { workflowEvents } from '@/discovery/release-graph/calls.ts';
 import { actionRole, workflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
-export const workflowManager: Adapter<'workflow'> = {
+export const workflowDiscoverer: DiscovererOf<'workflow'> = {
 	name: 'workflow',
 	discover(snapshot) {
 		const inventory = emptyInventory();

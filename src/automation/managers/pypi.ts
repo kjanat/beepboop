@@ -1,62 +1,14 @@
-import { Effect, Result } from 'effect';
-import { parse as parseToml } from 'smol-toml';
+import { Effect } from 'effect';
 import type { Adapter } from '@/automation/managers/registry';
-import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
-import { editTomlVersion, object } from '@/discovery/managers/manifest-editing.ts';
-import { isPyproject, privateProject } from '@/discovery/managers/pyproject.ts';
-import { excluded, registry } from '@/domain/package-publication.ts';
-import { fileProblem } from '@/kernel/errors/diagnostics.ts';
-import { precondition } from '@/kernel/errors/domain-error.ts';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import { normalizedProject, projectName, pypiDiscoverer } from '@/discovery/managers/pypi.ts';
 import { responseJson } from '@/kernel/http/body.ts';
-import { packageIdentity } from '@/package-url';
 
-const projectName = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const projectVersion = /^[0-9A-Za-z.+!-]+$/;
 
-export function normalizedProject(name: string): string {
-	return name.toLowerCase().replace(/[-_.]+/g, '-');
-}
-
 export const pypiManager: Adapter<'pypi'> = {
-	name: 'pypi',
-	identity: pkg => packageIdentity({ type: 'pypi', name: pkg.name, version: pkg.version }),
-	discover(snapshot) {
-		const inventory = emptyInventory();
-		for (const [path, source] of Object.entries(snapshot.files)) {
-			if (!isPyproject(path)) continue;
-			const document = Result.try(() => object(parseToml(source)));
-			if (Result.isFailure(document)) {
-				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', 'invalid TOML'));
-				continue;
-			}
-			const project = object(document.success.project);
-			if (typeof project.name !== 'string') continue;
-			inventory.managers = ['pypi'];
-			if (!projectName.test(project.name)) {
-				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', 'invalid Python project name'));
-				continue;
-			}
-			const hidden = privateProject(document.success);
-			inventory.packages.push({
-				manager: 'pypi',
-				name: normalizedProject(project.name),
-				manifest: path,
-				...(typeof project.version === 'string' ? { version: project.version } : {}),
-				versionSource: `${path}#project.version`,
-				publication: hidden ? excluded('private') : registry,
-				dependencies: [],
-			});
-		}
-		return inventory;
-	},
-	ownsVersionSource: source => /(?:^|\/)pyproject\.toml#project\.version$/.test(source),
-	editVersion({ before, version }) {
-		const after = editTomlVersion(before, heading => heading.trim() === 'project', version);
-		return after === undefined
-			? Effect.fail(precondition('Cannot safely edit [project].version'))
-			: Effect.succeed(after);
-	},
+	...pypiDiscoverer,
 	latest: (pkg, request) =>
 		latestVersion(
 			request,

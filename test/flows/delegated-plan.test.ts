@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { widgetConfiguration } from '@root/test/support/repositories.ts';
 import { Effect } from 'effect';
-import { discover } from '@/automation/managers';
+import { discover } from '@/discovery/discover.ts';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { decodeSync } from '@/kernel/schema/structs.ts';
