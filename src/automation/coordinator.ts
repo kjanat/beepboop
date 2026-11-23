@@ -79,7 +79,6 @@ import {
 } from '@/automation/preparation-pull-requests';
 import type { PublishBudget } from '@/automation/publish-budget';
 import { ReleaseHistory } from '@/automation/release-history';
-import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems, releasePaths } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
@@ -138,6 +137,7 @@ import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/domain/version.ts';
 import { tagPrefix } from '@/domain/version-tags.ts';
+import { releaseNotes } from '@/github/release-notes.ts';
 import type { GitHubRelease, WorkflowRun } from '@/github/resources.ts';
 import {
 	checkRunsSchema,

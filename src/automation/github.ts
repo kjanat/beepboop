@@ -7,6 +7,8 @@ import type { Snapshot } from '@/domain/inventory.ts';
 import { parsePresetReference } from '@/domain/preset.ts';
 import type { RefState } from '@/domain/refs.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import { downloadWorkflowArtifact } from '@/github/artifacts.ts';
+import { copyReleaseAsset } from '@/github/releases.ts';
 import type { GitObject } from '@/github/resources.ts';
 import {
 	accessTokenSchema,
@@ -14,8 +16,6 @@ import {
 	commitSchema,
 	comparisonSchema,
 	contentSchema,
-	createdTagSchema,
-	gitTagSchema,
 	installationSchema,
 	issueEventSchema,
 	matchingRefSchema,
@@ -24,18 +24,19 @@ import {
 	userSchema,
 	workflowRunSchema,
 } from '@/github/resources.ts';
+import type { TagRequest } from '@/github/tags.ts';
+import { createTag, peelTag, tagRefs } from '@/github/tags.ts';
 import type { GitHubTransport } from '@/github/transport.ts';
-import { GitHubRejection, gitHubRequest, githubApiVersion, rateLimited } from '@/github/transport.ts';
+import { gitHubRequest } from '@/github/transport.ts';
 import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { precondition, upstream } from '@/kernel/errors/domain-error.ts';
-import { responseBytes, scopedResponse } from '@/kernel/http/body.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
-import { decode, sha, textSchema } from '@/kernel/schema/result.ts';
+import { decode, sha } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
-import { looseStruct, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import { looseStruct, mutableArray } from '@/kernel/schema/structs.ts';
 
 type Permission = Record<string, 'read' | 'write'>;
 const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
@@ -57,37 +58,6 @@ export interface SnapshotSource {
 	read(path: string): Effect.Effect<string | null, DomainError>;
 	tags(prefixes: readonly string[]): Effect.Effect<string[], DomainError>;
 }
-interface TagTarget {
-	__typename: string;
-	oid: string;
-	target?: TagTarget | undefined;
-}
-const tagTargetSchema: Schema.Codec<TagTarget, unknown> = mutableStruct({
-	__typename: textSchema,
-	oid: textSchema,
-	target: Schema.optional(Schema.suspend(() => tagTargetSchema)),
-});
-const graphqlEnvelope = looseStruct({
-	errors: Schema.optional(mutableArray(looseStruct({ message: Schema.String, type: Schema.optional(Schema.String) }))),
-});
-const tagRefsSchema = mutableStruct({
-	data: mutableStruct({
-		repository: mutableStruct({
-			refs: mutableStruct({
-				pageInfo: mutableStruct({ hasNextPage: Schema.Boolean, endCursor: Schema.NullOr(Schema.String) }),
-				nodes: mutableArray(mutableStruct({ name: textSchema, target: tagTargetSchema })),
-			}),
-		}),
-	}),
-});
-const tagPeelDepth = 8;
-function tagTargetSelection(depth: number): string {
-	return depth === 0 ? '__typename oid' : `__typename oid ... on Tag{target{${tagTargetSelection(depth - 1)}}}`;
-}
-const tagRefsQuery =
-	`query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){refs(refPrefix:"refs/tags/",first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{name target{${
-		tagTargetSelection(tagPeelDepth)
-	}}}}}}`;
 export class RepositoryGateway {
 	constructor(
 		private credentials: Credentials,
@@ -133,63 +103,10 @@ export class RepositoryGateway {
 		});
 	}
 	peelTag(repository: string, object: GitObject, token: string): Effect.Effect<GitObject, DomainError> {
-		if (object.type !== 'tag') return Effect.succeed(object);
-		return this.read(gitTagSchema, `/repos/${repository}/git/tags/${object.sha}`, token).pipe(
-			Effect.map(tag => tag.object),
-		);
+		return peelTag(this, repository, object, token);
 	}
 	downloadWorkflowArtifact(repository: string, id: number, token: string): Effect.Effect<Uint8Array, DomainError> {
-		return fromPromise(async signal => {
-			const redirected = await this.transport(
-				`https://api.github.com/repos/${repository}/actions/artifacts/${id}/zip`,
-				{
-					headers: {
-						Authorization: `Bearer ${token}`,
-						'X-GitHub-Api-Version': githubApiVersion,
-						'User-Agent': 'beepboop',
-					},
-					signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-					redirect: 'manual',
-				},
-			);
-			const location = redirected.headers.get('location');
-			await redirected.body?.cancel();
-			if (redirected.status !== 302 || !location) {
-				throw precondition('GitHub did not provide a distribution artifact download URL');
-			}
-			const url = new URL(location);
-			if (url.protocol !== 'https:' || url.username || url.password) {
-				throw precondition('Invalid distribution artifact download URL');
-			}
-			const response = await this.transport(url.href, {
-				signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-				redirect: 'error',
-			});
-			if (!response.ok || !response.body) {
-				throw precondition(`GitHub HTTP ${response.status} downloading distribution artifact`);
-			}
-			const reader = response.body.getReader();
-			const chunks: Uint8Array[] = [];
-			let size = 0;
-			try {
-				for (;;) {
-					const next = await reader.read();
-					if (next.done) break;
-					size += next.value.byteLength;
-					if (size > 8 * 1024 * 1024) throw precondition('Distribution artifact exceeds 8 MiB');
-					chunks.push(next.value);
-				}
-			} finally {
-				await reader.cancel();
-			}
-			const bytes = new Uint8Array(size);
-			let offset = 0;
-			for (const chunk of chunks) {
-				bytes.set(chunk, offset);
-				offset += chunk.byteLength;
-			}
-			return bytes;
-		});
+		return downloadWorkflowArtifact(this.transport, repository, id, token);
 	}
 	copyReleaseAsset(
 		repository: string,
@@ -197,44 +114,7 @@ export class RepositoryGateway {
 		releaseId: number,
 		token: string,
 	): Effect.Effect<void, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const headers = {
-				Authorization: `Bearer ${token}`,
-				'X-GitHub-Api-Version': githubApiVersion,
-				'User-Agent': 'beepboop',
-			};
-			const download = yield* scopedResponse(
-				fromPromise(signal =>
-					self.transport(`https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, {
-						headers: { ...headers, Accept: 'application/octet-stream' },
-						signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-					})
-				),
-			);
-			if (!download.ok) {
-				const message = `GitHub HTTP ${download.status} downloading release asset ${asset.name}`;
-				return yield* (download.status >= 500 ? upstream('github', message) : precondition(message));
-			}
-			const content = yield* responseBytes(download).pipe(Effect.mapError(({ cause }) => toDomainError(cause)));
-			const upload = yield* scopedResponse(fromPromise(signal =>
-				self.transport(
-					`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${
-						encodeURIComponent(asset.name)
-					}`,
-					{
-						method: 'POST',
-						headers: { ...headers, Accept: 'application/vnd.github+json', 'Content-Type': asset.contentType },
-						body: content,
-						signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-					},
-				)
-			));
-			if (!upload.ok) {
-				const message = `GitHub HTTP ${upload.status} uploading release asset ${asset.name}`;
-				return yield* (upload.status >= 500 ? upstream('github', message) : precondition(message));
-			}
-		}).pipe(Effect.scoped);
+		return copyReleaseAsset(this.transport, repository, asset, releaseId, token);
 	}
 	token(
 		name: string,
@@ -345,75 +225,13 @@ export class RepositoryGateway {
 			return { title: run.display_title, path: run.path };
 		});
 	}
-	/** GitHub builds the tag object from these fields; a signature appended to the message verifies when the fields reproduce the signed payload. */
-	createTag(
-		name: string,
-		id: number,
-		tag: {
-			name: string;
-			commit: string;
-			message: string;
-			tagger: { name: string; email: string; date: string };
-			signed: boolean;
-		},
-	): Effect.Effect<void, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(name, id, { contents: 'write', workflows: 'write' });
-			const created = yield* self.read(createdTagSchema, `/repos/${name}/git/tags`, token, 'POST', {
-				tag: tag.name,
-				message: tag.message,
-				object: tag.commit,
-				type: 'commit',
-				tagger: tag.tagger,
-			});
-			if (tag.signed && !created.verification.verified) {
-				return yield* precondition(
-					`GitHub did not verify the signature of ${tag.name} (${created.verification.reason ?? 'unknown reason'})`,
-				);
-			}
-			yield* self.call(`/repos/${name}/git/refs`, token, 'POST', { ref: `refs/tags/${tag.name}`, sha: created.sha });
-		});
+	createTag(name: string, id: number, tag: TagRequest): Effect.Effect<void, DomainError> {
+		return this.token(name, id, { contents: 'write', workflows: 'write' }).pipe(
+			Effect.flatMap(token => createTag(this, name, token, tag)),
+		);
 	}
 	tagRefs(name: string, id: number): Effect.Effect<RefState[], DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(name, id, { contents: 'read' });
-			const [owner = '', repository = ''] = name.split('/');
-			const result: RefState[] = [];
-			let after: string | null = null;
-			for (let page = 1; page <= 100; page++) {
-				const raw: unknown = yield* self.call('/graphql', token, 'POST', {
-					query: tagRefsQuery,
-					variables: { owner, name: repository, after },
-				}, true);
-				const envelope = yield* Effect.fromResult(decode(graphqlEnvelope, raw));
-				if (envelope.errors?.length) {
-					const reason = `GitHub tag discovery failed: ${envelope.errors.map(error => error.message).join('; ')}`;
-					if (envelope.errors.some(error => rateLimited(error.message, error.type))) {
-						const clock = yield* Clock.Clock;
-						return yield* new GitHubRejection(429, reason, clock.currentTimeMillisUnsafe() + 60_000);
-					}
-					return yield* precondition(reason);
-				}
-				const response: Decoded<typeof tagRefsSchema> = yield* Effect.fromResult(decode(tagRefsSchema, raw)).pipe(
-					Effect.mapError(() => precondition('GitHub tag discovery returned missing or invalid repository/ref data')),
-				);
-				const { nodes, pageInfo } = response.data.repository.refs;
-				for (const { name: tag, target } of nodes) {
-					let peeled = target;
-					while (peeled.target) peeled = peeled.target;
-					if (peeled.__typename !== 'Commit') return yield* precondition('Tag does not resolve to a commit');
-					result.push({ name: tag, oid: target.oid, commit: peeled.oid });
-				}
-				if (!pageInfo.hasNextPage) return result;
-				if (pageInfo.endCursor === null || pageInfo.endCursor === after) {
-					return yield* precondition('Tag discovery cursor did not advance');
-				}
-				after = pageInfo.endCursor;
-			}
-			return yield* precondition('Tag discovery limit exceeded');
-		});
+		return this.token(name, id, { contents: 'read' }).pipe(Effect.flatMap(token => tagRefs(this, name, token)));
 	}
 	verification(name: string, id: number, permissions?: Permission): VerificationContext {
 		const installation = Effect.runSync(
