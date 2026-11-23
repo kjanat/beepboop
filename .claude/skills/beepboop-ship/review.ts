@@ -2,7 +2,19 @@ import { Option, Schema } from 'effect';
 
 export const codexLogin = 'chatgpt-codex-connector[bot]';
 
-const CommentPages = Schema.fromJsonString(Schema.Array(Schema.Array(Schema.Struct({
+export const PullRequestView = Schema.fromJsonString(Schema.Struct({
+	headRefOid: Schema.String,
+	mergeable: Schema.String,
+	statusCheckRollup: Schema.Array(Schema.Struct({
+		name: Schema.optional(Schema.String),
+		context: Schema.optional(Schema.String),
+		status: Schema.optional(Schema.String),
+		conclusion: Schema.optional(Schema.String),
+		state: Schema.optional(Schema.String),
+	})),
+}));
+
+export const CommentPages = Schema.fromJsonString(Schema.Array(Schema.Array(Schema.Struct({
 	body: Schema.String,
 	user: Schema.NullOr(Schema.Struct({ login: Schema.String })),
 }))));
@@ -24,8 +36,18 @@ export type Outcome =
 	| { _tag: 'Failed'; exit: 1 }
 	| { _tag: 'Reviewed'; exit: 0 | 3; codex: CodexState };
 
-export function completedReviews(pages: string, head: string): CodexState[] {
-	return Schema.decodeSync(CommentPages)(pages)
+export function checkStates(
+	rollup: typeof PullRequestView.Type['statusCheckRollup'],
+	required: readonly string[],
+): CheckState[] {
+	return required.map(name => {
+		const check = rollup.find(c => (c.name ?? c.context) === name);
+		return { name, status: check?.status ?? check?.state ?? 'missing', conclusion: check?.conclusion ?? '' };
+	});
+}
+
+export function completedReviews(pages: typeof CommentPages.Type, head: string): CodexState[] {
+	return pages
 		.flat()
 		.filter(comment => comment.user?.login === codexLogin)
 		.flatMap(comment => [...comment.body.matchAll(/codex-review-state:v1\s*(\{.*?\})\s*-->/gs)])
