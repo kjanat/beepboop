@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import type { RunJob } from '@/automation/job-gate';
 import { gateJobs, gateState, workflowJobs } from '@/automation/job-gate';
+import type { RunJob } from '@/github/run-state.ts';
 
 const workflow = `on:
   push:

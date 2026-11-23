@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
-import { comparisonSchema } from '@/automation/github-resources';
 import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/automation/release-graph/calls';
+import { comparisonSchema } from '@/github/resources.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { sha } from '@/kernel/schema/result.ts';
 

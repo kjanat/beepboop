@@ -1,4 +1,4 @@
-import type { GitHubJobKind, GitHubRunState } from '@/contract/github';
+import type { GitHubJobKind, GitHubRunState } from '@/domain/github-run-state.ts';
 
 export function githubRunLabel(state: GitHubRunState): string {
 	switch (state.kind) {

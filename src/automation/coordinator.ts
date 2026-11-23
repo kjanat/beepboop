@@ -27,26 +27,10 @@ import {
 	verifiableCancellation,
 } from '@/automation/execution';
 import { mergeArtifacts, resolveInputs } from '@/automation/execution-outputs';
-import type { GitHubRelease, WorkflowRun } from '@/automation/github-resources';
-import {
-	checkRunsSchema,
-	commitSchema,
-	commitStatusSchema,
-	comparisonSchema,
-	dispatchSchema,
-	gitRefSchema,
-	releaseNotesSchema,
-	releaseSchema,
-	workflowJobsSchema,
-	workflowRunSchema,
-	workflowRunsSchema,
-} from '@/automation/github-resources';
-import type { GitHubRunResult } from '@/automation/github-state';
-import { classifyJob, classifyRun, jobProgressState } from '@/automation/github-state';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
-import type { RunJob, WorkflowJobs } from '@/automation/job-gate';
+import type { WorkflowJobs } from '@/automation/job-gate';
 import { gateState, resolvable, workflowJobs } from '@/automation/job-gate';
 import type { Ledger, LedgerRecord } from '@/automation/ledger';
 import {
@@ -154,6 +138,22 @@ import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/domain/version.ts';
 import { tagPrefix } from '@/domain/version-tags.ts';
+import type { GitHubRelease, WorkflowRun } from '@/github/resources.ts';
+import {
+	checkRunsSchema,
+	commitSchema,
+	commitStatusSchema,
+	comparisonSchema,
+	dispatchSchema,
+	gitRefSchema,
+	releaseNotesSchema,
+	releaseSchema,
+	workflowJobsSchema,
+	workflowRunSchema,
+	workflowRunsSchema,
+} from '@/github/resources.ts';
+import type { GitHubRunResult, RunJob } from '@/github/run-state.ts';
+import { classifyJob, classifyRun, jobProgressState } from '@/github/run-state.ts';
 import { GitHubRejection } from '@/github/transport.ts';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/kernel/errors/classify.ts';
 import { decodeError, isDecodingFailure } from '@/kernel/errors/decoding.ts';

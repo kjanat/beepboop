@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 import { parseDocument } from 'yaml';
+import type { RunJob } from '@/github/run-state.ts';
 import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/kernel/schema/structs.ts';
 
 const jobSchema = looseStruct({
@@ -15,15 +16,6 @@ export interface GateJob {
 	plain: boolean;
 }
 export type WorkflowJobs = ReadonlyMap<string, GateJob>;
-export interface RunJob {
-	name: string;
-	status: string;
-	conclusion: string | null;
-	started_at?: string | null | undefined;
-	completed_at?: string | null | undefined;
-	runner_id?: number | null | undefined;
-	steps?: readonly unknown[] | null | undefined;
-}
 export type GateState = 'ready' | 'blocked' | 'waiting';
 type JobStatus = 'passed' | 'failed' | 'pending';
 

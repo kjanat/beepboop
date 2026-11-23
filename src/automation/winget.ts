@@ -1,18 +1,18 @@
 import { Clock, Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
-import {
-	checkRunsSchema,
-	commitStatusSchema,
-	createdSchema,
-	gitCommitSchema,
-	gitRefSchema,
-} from '@/automation/github-resources';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { readiness } from '@/domain/repository';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import {
+	checkRunsSchema,
+	commitStatusSchema,
+	createdSchema,
+	gitCommitSchema,
+	gitRefSchema,
+} from '@/github/resources.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

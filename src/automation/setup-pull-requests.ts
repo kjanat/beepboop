@@ -1,11 +1,11 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
-import { comparisonSchema, gitRefSchema, pullSchema, repositorySchema } from '@/automation/github-resources';
 import { enableAutoMerge } from '@/automation/preparation-pull-requests';
 import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import { setupBranches } from '@/automation/setup-changes';
 import type { Edit } from '@/domain/inventory.ts';
 import { autoMergeMethods } from '@/domain/setup-terms.ts';
+import { comparisonSchema, gitRefSchema, pullSchema, repositorySchema } from '@/github/resources.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

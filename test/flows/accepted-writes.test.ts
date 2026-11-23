@@ -12,9 +12,9 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { RepositoryGateway } from '@/automation/github';
-import { pullSchema } from '@/automation/github-resources';
 import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
+import { pullSchema } from '@/github/resources.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
