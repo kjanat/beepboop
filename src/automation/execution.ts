@@ -6,7 +6,6 @@ import type { Configuration, Execution, ReleaseReference, WorkflowBinding } from
 import { managerSpec } from '@/domain/catalog.ts';
 import type { DiscoveredWorkflow, Package, RepositoryRecord } from '@/domain/inventory.ts';
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/domain/package-identity.ts';
-import { streamModuleTags } from '@/domain/refs.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import type { GitHubRunResult } from '@/github/run-state.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
@@ -15,6 +14,7 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import { executionId } from '@/persistence/identity-keys';
 import type { Publication } from '@/publication/publication.ts';
 import { freezePackageTags, packageTagGroups } from '@/release/domain/package-tags.ts';
+import { streamModuleTags } from '@/release/domain/refs.ts';
 
 export interface ExecutionRequest {
 	stream: string;

@@ -9,8 +9,8 @@ import type { Package } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { registry } from '@/domain/package-publication.ts';
 import type { RefPolicy } from '@/domain/refs.ts';
-import { moduleTagPrefixes, planRefs, versionTagged } from '@/domain/refs.ts';
 import { semVer } from '@/domain/version.ts';
+import { moduleTagPrefixes, planRefs, versionTagged } from '@/release/domain/refs.ts';
 
 const commit = 'a'.repeat(40), other = 'b'.repeat(40), oid = 'c'.repeat(40);
 const policy: RefPolicy = { phase: 'version', prefix: 'rshellcheck-v', aliases: [], signed: false };

@@ -11,7 +11,6 @@ import type { Inventory, Package, RepositoryRecord, Snapshot } from '@/domain/in
 import { packageId } from '@/domain/package-identity.ts';
 import { registry } from '@/domain/package-publication.ts';
 import type { RefPolicy } from '@/domain/refs.ts';
-import { planRefs, refsLanded, streamModuleTagPrefixes } from '@/domain/refs.ts';
 import { requireReady } from '@/domain/repository';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -27,6 +26,7 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
+import { planRefs, refsLanded, streamModuleTagPrefixes } from '@/release/domain/refs.ts';
 import type { SetupChoices } from '@/setup/types.ts';
 
 const commit = 'a'.repeat(40);
