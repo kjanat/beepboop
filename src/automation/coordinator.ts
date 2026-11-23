@@ -1,7 +1,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
-import { deploymentJobs, deploys } from '@/automation/deployment-jobs';
+import type { CheckJob } from '@/automation/deployment-jobs';
+import { checkJobs, deploys } from '@/automation/deployment-jobs';
 import type { DistributionFile } from '@/automation/distribution';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
 import type { DistributionArtifact } from '@/automation/distribution-artifact';
@@ -3023,11 +3024,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const pathOf = (run: (typeof runs)[number]) =>
 				paths.get(/\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1] ?? '');
 			const unfinished = runs.filter(run => run.status !== 'completed');
-			const deploying = new Map<string, string[]>();
+			const deploying = new Map<string, CheckJob[]>();
 			for (const path of new Set(unfinished.flatMap(run => pathOf(run) ?? []))) {
 				if (releaseFiles.has(path)) continue;
 				const source = yield* gateway.file(execution.repository, path, execution.sourceSha, token);
-				deploying.set(path, source === null ? [] : deploymentJobs(source));
+				deploying.set(path, source === null ? [] : checkJobs(source));
 			}
 			const gating = runs.filter(run => {
 				const path = pathOf(run);

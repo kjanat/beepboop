@@ -2,16 +2,26 @@ import { Result } from 'effect';
 import { object } from '@/automation/managers/helpers';
 import { yaml } from '@/kernel/parse/yaml.ts';
 
-export function deploymentJobs(source: string): string[] {
+export interface CheckJob {
+	label: string;
+	matrix: boolean;
+	deploys: boolean;
+}
+
+export function checkJobs(source: string): CheckJob[] {
 	const parsed = yaml(source);
 	if (Result.isFailure(parsed)) return [];
-	return Object.entries(object(parsed.success.jobs)).flatMap(([id, value]) => {
+	return Object.entries(object(parsed.success.jobs)).map(([id, value]) => {
 		const job = object(value);
-		if (job.environment === undefined || job.environment === null) return [];
-		return [typeof job.name === 'string' ? job.name : id];
+		return {
+			label: typeof job.name === 'string' ? job.name : id,
+			matrix: object(job.strategy).matrix !== undefined,
+			deploys: job.environment !== undefined && job.environment !== null,
+		};
 	});
 }
 
-export function deploys(check: string, jobs: readonly string[]): boolean {
-	return jobs.some(job => check === job || check.startsWith(`${job} (`));
+export function deploys(check: string, jobs: readonly CheckJob[]): boolean {
+	const matched = jobs.filter(job => check === job.label || (job.matrix && check.startsWith(`${job.label} (`)));
+	return matched.length > 0 && matched.every(job => job.deploys);
 }
