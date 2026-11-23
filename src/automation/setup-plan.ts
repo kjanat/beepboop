@@ -1,8 +1,9 @@
 import { Effect, Schema } from 'effect';
 import { publicationSchema } from '@/automation/package-publication';
 import type { SetupOperation, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
+import { binaries, binaryBuild, binaryTargets } from '@/contract/binary-platforms';
 import { startChannel, versionBump } from '@/contract/release-start';
-import { actionRelease, binaries, binaryBuild, binaryTargets } from '@/contract/setup';
+import { actionRelease } from '@/contract/setup';
 import { versionPrMerge } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

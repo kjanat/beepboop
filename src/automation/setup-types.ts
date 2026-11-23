@@ -1,6 +1,7 @@
 import type { PackagePublication } from '@/automation/package-publication';
+import type { BinaryBuild, BinaryCandidate, BinaryTarget } from '@/contract/binary-platforms';
 import type { ConfigurableStart, VersionBump } from '@/contract/release-start';
-import type { BinaryBuild, BinaryCandidate, BinaryTarget, SetupChoices } from '@/contract/setup';
+import type { SetupChoices } from '@/contract/setup';
 import type { VersionPrMerge } from '@/contract/setup-terms';
 
 export type { SetupChoices } from '@/contract/setup';

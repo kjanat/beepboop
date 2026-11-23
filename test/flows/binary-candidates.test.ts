@@ -2,8 +2,7 @@ import { expect, test } from 'bun:test';
 import { binaryCandidates, unixDependencies } from '@/automation/binary-candidates';
 import { discover } from '@/automation/managers';
 import type { Snapshot } from '@/automation/types';
-import { supportedTargets } from '@/contract/binary-platforms';
-import { leftOut } from '@/contract/setup';
+import { leftOut, supportedTargets } from '@/contract/binary-platforms';
 
 function snapshot(files: Record<string, string>, extra: string[] = []): Snapshot {
 	return {

@@ -18,7 +18,6 @@ import {
 	workflowFilePattern,
 } from '@/contract/catalog';
 import { releaseStarts, versionBump } from '@/contract/release-start';
-import { actionsRevisionPattern, workflowSetup } from '@/contract/setup';
 import {
 	approvalOfPublishWhen,
 	bumpOfVersionLands,
@@ -36,6 +35,7 @@ import {
 	versionScopeDescription,
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
+import { actionsRevisionPattern, workflowSetup } from '@/contract/workflow-setup';
 import {
 	bindingValue,
 	configurationValue,

@@ -12,8 +12,9 @@ import { app } from '@/cli/cli';
 import { Client } from '@/cli/client';
 import { describedSetupFlags, setupFlagRecord } from '@/cli/setup-flag-builders';
 import { choicesFlagKinds, setupFlagPaths, streamFlagKinds, workflowFlagKinds } from '@/cli/setup-flags';
+import { binaryTargets } from '@/contract/binary-platforms';
 import { configurableStarts } from '@/contract/release-start';
-import { binaryTargets, setupChoicesSchema } from '@/contract/setup';
+import { setupChoicesSchema } from '@/contract/setup';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import {
 	existingTriggerChoices,

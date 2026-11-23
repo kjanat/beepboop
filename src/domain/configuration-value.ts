@@ -2,9 +2,9 @@ import { Effect, Schema } from 'effect';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { managerNames } from '@/contract/catalog';
 import { releaseStart, versionBump } from '@/contract/release-start';
-import { workflowSetupValue } from '@/contract/setup';
 import { versionPrMerges } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
+import { workflowSetupValue } from '@/contract/workflow-setup';
 import { stringsSchema as strings } from '@/kernel/schema/result.ts';
 import { mutableArray, mutableRecord, mutableStruct, refined, strictStruct } from '@/kernel/schema/structs.ts';
 

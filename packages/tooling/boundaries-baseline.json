@@ -113,6 +113,10 @@
 	},
 	{
 		"file": "packages/cli/src/setup-choices.ts",
+		"specifier": "@/contract/workflow-setup"
+	},
+	{
+		"file": "packages/cli/src/setup-choices.ts",
 		"specifier": "@/domain/package-label"
 	},
 	{
@@ -129,6 +133,10 @@
 	},
 	{
 		"file": "packages/cli/src/setup-flag-builders.ts",
+		"specifier": "@/contract/binary-platforms"
+	},
+	{
+		"file": "packages/cli/src/setup-flag-builders.ts",
 		"specifier": "@/contract/release-start"
 	},
 	{
@@ -140,12 +148,20 @@
 		"specifier": "@/contract/setup-terms"
 	},
 	{
+		"file": "packages/cli/src/setup-flag-builders.ts",
+		"specifier": "@/contract/workflow-setup"
+	},
+	{
 		"file": "packages/cli/src/setup-flags.ts",
 		"specifier": "@/automation/setup-defaults"
 	},
 	{
 		"file": "packages/cli/src/setup-flags.ts",
 		"specifier": "@/automation/setup-types"
+	},
+	{
+		"file": "packages/cli/src/setup-flags.ts",
+		"specifier": "@/contract/binary-platforms"
 	},
 	{
 		"file": "packages/cli/src/setup-flags.ts",

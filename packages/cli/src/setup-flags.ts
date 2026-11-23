@@ -4,8 +4,9 @@ import type { Selection } from '@/automation/setup-defaults';
 import { suggestedCommands, ungenerated } from '@/automation/setup-defaults';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { failure } from '@/cli/output';
-import type { BinaryBuild } from '@/contract/setup';
-import { defaultBinaryTargets, setupChoicesSchema, setupStream } from '@/contract/setup';
+import type { BinaryBuild } from '@/contract/binary-platforms';
+import { defaultBinaryTargets } from '@/contract/binary-platforms';
+import { setupChoicesSchema, setupStream } from '@/contract/setup';
 import type { ChoicesField, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import {

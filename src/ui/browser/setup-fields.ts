@@ -8,10 +8,11 @@ import {
 	suggestedWorkflowFile,
 } from '@/automation/setup-defaults';
 import type { SetupPlan, SetupWorkflow } from '@/automation/setup-types';
-import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/contract/setup';
-import { binaryTargets, defaultBinaryTargets, leftOut, setupWorkflow } from '@/contract/setup';
+import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/contract/binary-platforms';
+import { binaryTargets, defaultBinaryTargets, leftOut } from '@/contract/binary-platforms';
 import type { Editors, WorkflowField } from '@/contract/setup-fields';
 import { existingTriggersNames, existingTriggersQuestion, existingTriggersSentences } from '@/contract/setup-terms';
+import { setupWorkflow } from '@/contract/workflow-setup';
 import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 import { node, Refused } from '@/ui/browser/dom';
 

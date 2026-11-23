@@ -15,9 +15,8 @@ import { jobObstacles } from '@/automation/setup-workflows';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
-import { supportedTargets } from '@/contract/binary-platforms';
+import { binaryTargets, defaultBinaryTargets, supportedTargets } from '@/contract/binary-platforms';
 import { routes } from '@/contract/routes';
-import { binaryTargets, defaultBinaryTargets } from '@/contract/setup';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import {
 	publishWhenQuestion,
