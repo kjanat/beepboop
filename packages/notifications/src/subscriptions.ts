@@ -1,4 +1,5 @@
-import type { AutomationEvent, Subscription } from '@/automation/types';
+import type { AutomationEvent } from '@/automation/types';
+import type { Subscription } from '@/domain/configuration/schema.ts';
 import { matchesPublication } from '@/domain/package-identity.ts';
 
 export function matchesSubscription(subscription: Subscription, event: AutomationEvent): boolean {

@@ -1,6 +1,6 @@
-import { Clock, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { executionOrderSql, newestActiveFirst, validJson } from '@/automation/execution-order';
-import type { ActivityEntry, AutomationEvent, Execution, SubscriptionDelivery } from '@/automation/types';
+import type { ActivityEntry, Execution } from '@/automation/types';
 import type { ExecutionFilter } from '@/contract/routes';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import type { Access, RepositoryDiscovery } from '@/domain/repository';
@@ -8,7 +8,6 @@ import { fromJson, fromSync, recover } from '@/kernel/errors/classify.ts';
 import type { Readable } from '@/kernel/errors/decoding.ts';
 import { decodeError, isDecodingFailure, readEach } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { precondition } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
@@ -23,14 +22,14 @@ import {
 	repositoryRow,
 } from '@/persistence/codecs/repository';
 import { encodeRepository, identifyRepository } from '@/persistence/codecs/stored';
-import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { AuditStore } from '@/persistence/d1/audit';
 import { backfillPage, drainBackfill } from '@/persistence/d1/backfill-page';
 import type { CompletionCandidate } from '@/persistence/d1/completions';
 import { CompletionStore } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
-import { documentRow, rowDocument } from '@/persistence/d1/document-row';
+import { rowDocument } from '@/persistence/d1/document-row';
 import { GateSkipStore } from '@/persistence/d1/gate-skips';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import { readyRead } from '@/persistence/d1/ready-read';
@@ -363,65 +362,14 @@ export class Store {
 			}),
 		);
 	}
-	event(id: string): Effect.Effect<AutomationEvent | undefined, DomainError> {
-		return this.document('release_events', id, decodeEventV1);
-	}
 	private document<T>(
-		table: 'executions' | 'release_events',
+		table: 'executions',
 		id: string,
 		decode: (value: unknown) => T,
 	): Effect.Effect<T | undefined, DomainError> {
 		return this.sql.first(`SELECT document FROM ${table} WHERE id=?`, id).pipe(
 			Effect.flatMap(row => row ? fromSync(() => decode(rowDocument(row))) : Effect.undefined),
 		);
-	}
-	queueEvent(event: AutomationEvent, deliveries: SubscriptionDelivery[]): Effect.Effect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const serialized = JSON.stringify(event);
-			yield* this.sql.batch([
-				this.sql.statement(
-					'INSERT OR IGNORE INTO release_events(id,document,created_at) VALUES(?,?,?)',
-					event.id,
-					serialized,
-					clock.currentTimeMillisUnsafe(),
-				),
-				...deliveries.map(delivery =>
-					this.sql.statement(
-						"INSERT OR IGNORE INTO subscription_deliveries(id,event_id,repository_id,document,state,updated_at) SELECT ?,?,?,?,'pending',? WHERE EXISTS (SELECT 1 FROM release_events WHERE id=? AND document=?)",
-						delivery.id,
-						event.id,
-						delivery.repositoryId,
-						JSON.stringify(delivery),
-						clock.currentTimeMillisUnsafe(),
-						event.id,
-						serialized,
-					)
-				),
-			]);
-			const saved = yield* parse(
-				Schema.NullOr(documentRow),
-				yield* this.sql.first('SELECT document FROM release_events WHERE id=?', event.id),
-			);
-			if (saved?.document !== serialized) return yield* precondition('Event identity changed');
-		});
-	}
-	pendingDeliveries(): Effect.Effect<SubscriptionDelivery[], DomainError> {
-		return this.sql.all(
-			"SELECT document FROM subscription_deliveries WHERE state='pending' ORDER BY updated_at,id LIMIT 100",
-		).pipe(Effect.flatMap(rows => fromSync(() => rows.map(row => decodeDeliveryV1(rowDocument(row))))));
-	}
-	deliveryResult(id: string, succeeded: boolean): Effect.Effect<void, DomainError> {
-		return Effect.clockWith(clock => {
-			return this.sql.run(
-				'UPDATE subscription_deliveries SET state=?,error=?,updated_at=? WHERE id=?',
-				succeeded ? 'delivered' : 'pending',
-				succeeded ? null : 'Delivery awaiting retry',
-				clock.currentTimeMillisUnsafe(),
-				id,
-			).pipe(Effect.asVoid);
-		});
 	}
 	activity(): Effect.Effect<ActivityEntry[], DomainError> {
 		return this.auditLog.recent();

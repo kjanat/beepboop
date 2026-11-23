@@ -1,0 +1,22 @@
+import { Schema } from 'effect';
+import type { SubscriptionDelivery } from '@/automation/types';
+import { decodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
+import { identifyExecution } from '@/persistence/codecs/stored';
+import { currentState, executionSchema } from '@/persistence/codecs/v1';
+
+const deliveryFields = {
+	id: Schema.String,
+	eventId: Schema.String,
+	repositoryId: Schema.Finite,
+};
+const deliverySchema: Schema.Codec<SubscriptionDelivery, unknown> = Schema.Union([
+	mutableStruct({ ...deliveryFields, execution: executionSchema }),
+	mutableStruct({ ...deliveryFields, issue: mutableStruct({ title: Schema.String, body: Schema.String }) }),
+]);
+
+export function decodeDeliveryV1(value: unknown): SubscriptionDelivery {
+	const delivery = decodeSync(deliverySchema, value);
+	return 'execution' in delivery
+		? { ...delivery, execution: currentState(identifyExecution(delivery.execution)) }
+		: delivery;
+}

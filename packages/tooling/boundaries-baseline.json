@@ -140,6 +140,22 @@
 		"specifier": "@/contract/views"
 	},
 	{
+		"file": "packages/notifications/src/adapters/d1/events.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/notifications/src/codecs.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/notifications/src/event-delivery.ts",
+		"specifier": "@/automation/execution"
+	},
+	{
+		"file": "packages/notifications/src/event-delivery.ts",
+		"specifier": "@/automation/types"
+	},
+	{
 		"file": "packages/notifications/src/notification.ts",
 		"specifier": "@/contract/links"
 	},
@@ -157,6 +173,10 @@
 	},
 	{
 		"file": "packages/notifications/src/package-watch.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/notifications/src/subscriptions.ts",
 		"specifier": "@/automation/types"
 	},
 	{
