@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
 import { canVerifyPublication, discover } from '@/automation/managers';
@@ -36,7 +36,7 @@ import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
 import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/domain/binary-platforms.ts';
 import { isLockfile } from '@/domain/catalog.ts';
-import { configurationDrift } from '@/domain/configuration';
+import { configurationDiagnostics } from '@/domain/configuration';
 import { legacyConfiguration, readableConfiguration } from '@/domain/configuration-names.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, packageId, selectorKey } from '@/domain/package-identity.ts';
@@ -918,13 +918,13 @@ function drafted(
 			});
 			return {
 				configuration: legacy,
-				drift: configurationDrift(proposal, legacy).map(entry => entry.message),
 				found: blocking(found).map(entry => entry.message),
 			};
 		});
 		if (Result.isSuccess(validated)) {
-			notes.push(...validated.success.drift);
 			blockers.push(...validated.success.found);
+		} else if (validated.failure instanceof Schema.SchemaError) {
+			blockers.push(...configurationDiagnostics(validated.failure).map(entry => entry.message));
 		} else {
 			blockers.push(validated.failure.message);
 		}

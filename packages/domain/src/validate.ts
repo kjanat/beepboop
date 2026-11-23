@@ -45,6 +45,14 @@ export function validateAgainst(
 	const paths = new Set(snapshot.paths);
 	for (const [name, stream] of Object.entries(configuration.streams)) {
 		const subject: DiagnosticSubject = { kind: 'stream', name };
+		if (stream.prepare.strategy === 'workflow' && !stream.prepare.workflow) {
+			report(
+				'warning',
+				'binding-missing',
+				subject,
+				`Stream ${name} uses the workflow preparation strategy without prepare.workflow`,
+			);
+		}
 		const operations = [...operationsOf(stream)];
 		const dispatched = releaseDispatches(stream);
 		const references: [string, string][] = [

@@ -57,7 +57,6 @@ import {
 	mutableArray,
 	mutableRecord,
 	refined,
-	safeDecode,
 	schemaIssues,
 	strictStruct,
 	withValidation,
@@ -131,7 +130,11 @@ const refPolicyInput = Schema.Union([
 		signed: Schema.Literal(true),
 		immutable: Schema.Literal(true),
 		distribution: strictStruct({
-			files: mutableArray(nonempty).check(Schema.isMinLength(1)),
+			files: refined(
+				mutableArray(nonempty).check(Schema.isMinLength(1)),
+				files => new Set(files).size === files.length,
+				'Distribution files must be a nonempty unique list',
+			),
 			ancestry: Schema.Literal('ours'),
 		}),
 	}),
@@ -280,15 +283,7 @@ function streamSchema() {
 			Schema.withDecodingDefault(Effect.succeed('queue')),
 		),
 	});
-	const checked = withValidation(shape, (stream, ctx) => {
-		if (stream.prepare.strategy === 'workflow' && !stream.prepare.workflow) {
-			issue(ctx, 'binding-missing', 'The workflow preparation strategy needs prepare.workflow', [
-				'prepare',
-				'workflow',
-			]);
-		}
-	});
-	return mapped(checked, Schema.toType(streamValue), stream => ({
+	return mapped(shape, Schema.toType(streamValue), stream => ({
 		...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
 		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 		...(stream.packages === undefined ? {} : { packages: stream.packages }),
@@ -467,7 +462,9 @@ export const configurationSchema = mapped(
 				}
 				ids.add(subscription.id);
 				if ('issue' in subscription) return;
-				const stream = configuration.streams[subscription.stream];
+				const stream = Object.hasOwn(configuration.streams, subscription.stream)
+					? configuration.streams[subscription.stream]
+					: undefined;
 				if (!stream || !Object.hasOwn(stream.workflows, subscription.operation)) {
 					issue(ctx, 'unknown-reference', 'Subscription references an unknown operation', [
 						'subscriptions',
@@ -510,20 +507,4 @@ export function configurationProblem(message: string, code: DiagnosticCode = 'in
 
 export function configurationDiagnostics(error: Schema.SchemaError): Diagnostic[] {
 	return schemaIssues(error).map(issue => configurationProblem(issueMessage(issue), codeOf(issue)));
-}
-
-export function configurationDrift(value: unknown, legacy: Configuration): Diagnostic[] {
-	const parsed = safeDecode(configurationSchema, value);
-	const drift = (message: string): Diagnostic => ({
-		code: 'configuration-drift',
-		severity: 'warning',
-		subject: { kind: 'file', path: configurationPath },
-		message,
-	});
-	if (!parsed.success) {
-		return schemaIssues(parsed.error).map(issue => drift(`The configuration schema rejects ${issueMessage(issue)}`));
-	}
-	return JSON.stringify(parsed.data) === JSON.stringify(legacy)
-		? []
-		: [drift('The configuration schema reads this file differently from the current parser')];
 }

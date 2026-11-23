@@ -286,7 +286,6 @@ export class AutomationService {
 					const resolved = yield* resolveConfiguration(raw, ref => this.gateway.preset(ref));
 					discovered.configuration = resolved.configuration;
 					discovered.presetShas = resolved.presetShas;
-					discovered.diagnostics.push(...resolved.drift);
 				}).pipe(
 					Effect.catch(error =>
 						Effect.sync(() => {
