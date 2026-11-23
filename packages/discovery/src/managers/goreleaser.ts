@@ -7,11 +7,11 @@ import { goreleaserConfig } from '@/domain/catalog.ts';
 import type { Channel } from '@/domain/destinations.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
+import { packageIdentity } from '@/domain/purl/index.ts';
 import { latestTag, tagSource } from '@/domain/version-tags.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
-import { packageIdentity } from '@/package-url';
 
 function cargoName(snapshot: Snapshot): unknown {
 	return Result.try(() => parseToml(snapshot.files['Cargo.toml'] ?? '')).pipe(

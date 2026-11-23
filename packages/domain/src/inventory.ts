@@ -2,9 +2,9 @@ import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration } from '@/domain/configuration/schema.ts';
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
 import type { PackagePublication } from '@/domain/package-publication.ts';
+import type { PackageIdentity } from '@/domain/purl/index.ts';
 import type { Access } from '@/domain/repository';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
-import type { PackageIdentity } from '@/package-url';
 
 export interface HookReference {
 	repository: string;

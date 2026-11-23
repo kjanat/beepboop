@@ -22,6 +22,7 @@ import {
 	parseReleaseIdentity,
 	releaseIdentity,
 } from '@/domain/package-identity.ts';
+import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/domain/purl/index.ts';
 import { workflowSetup } from '@/domain/workflow-setup.ts';
 import { record } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
@@ -37,7 +38,6 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/package-url';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
 import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
 import { assertCurrent, schemaPath } from '@/tooling/schema/render';

@@ -7,7 +7,7 @@ import {
 	legacyJsrIdentity,
 	managerSpec,
 } from '@/domain/catalog.ts';
-import { parsePackageIdentity } from '@/package-url';
+import { parsePackageIdentity } from '@/domain/purl/index.ts';
 
 interface PackageName {
 	name: string;

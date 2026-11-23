@@ -7,8 +7,6 @@
 			"@root/*": ["./*"],
 			"@/kernel/*": ["./packages/kernel/src/*"],
 			"@/host/*": ["./packages/host/src/*"],
-			"@/package-url": ["./packages/domain/src/purl/index.ts"],
-			"@/package-url/*": ["./packages/domain/src/purl/*"],
 			"@/persistence/*": ["./packages/persistence/src/*"],
 			"@/cli/*": ["./packages/cli/src/*"],
 			"@/domain/*": ["./packages/domain/src/*"],

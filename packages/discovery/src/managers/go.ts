@@ -2,10 +2,10 @@ import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import type { Package } from '@/domain/inventory.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
+import { packageIdentity } from '@/domain/purl/index.ts';
 import { latestTag, majorSuffix, tagSource } from '@/domain/version-tags.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
-import { packageIdentity } from '@/package-url';
 
 const pseudoVersion =
 	/^v[0-9]+\.(?:0\.0-|\d+\.\d+-(?:[^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;

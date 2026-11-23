@@ -1,7 +1,7 @@
 import { Validator } from '@cfworker/json-schema';
 import { Data, Result } from 'effect';
-import type { PackageURLTypeDefinition, PURLComponentDefinition } from '@/package-url/definition.generated';
-import schema from '@/package-url/type-definition.schema.json';
+import type { PackageURLTypeDefinition, PURLComponentDefinition } from '@/domain/purl/definition.generated.ts';
+import schema from '@/domain/purl/type-definition.schema.json';
 
 export type TypeDefinition = PackageURLTypeDefinition;
 export type ComponentDefinition = PURLComponentDefinition & { requirement?: 'required' | 'optional' | 'prohibited' };

@@ -1,13 +1,13 @@
 import { Result } from 'effect';
 import { PackageURL } from 'packageurl-js';
+import type { ComponentDefinition, TypeDefinition } from '@/domain/purl/definition.ts';
+import { parseTypeDefinition } from '@/domain/purl/definition.ts';
+import definitions from '@/domain/purl/definitions/index.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { attemptWith, rejectWith } from '@/kernel/errors/refusal.ts';
-import type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
-import { parseTypeDefinition } from '@/package-url/definition';
-import definitions from '@/package-url/definitions';
 
-export type { ComponentDefinition, TypeDefinition } from '@/package-url/definition';
+export type { ComponentDefinition, TypeDefinition } from '@/domain/purl/definition.ts';
 export type {
 	KnownPackageIdentity,
 	KnownPackageType,
@@ -15,7 +15,7 @@ export type {
 	ProposedPackageType,
 	RegisteredPackageIdentity,
 	RegisteredPackageType,
-} from '@/package-url/identity.generated';
+} from '@/domain/purl/identity.generated.ts';
 
 export interface PackageIdentity {
 	type: string;

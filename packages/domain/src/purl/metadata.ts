@@ -1,6 +1,6 @@
-import type { PackageIdentity } from '@/package-url';
-import { packageIdentity, purlDefinitions } from '@/package-url';
-import type { TypeDefinition } from '@/package-url/definition';
+import type { TypeDefinition } from '@/domain/purl/definition.ts';
+import type { PackageIdentity } from '@/domain/purl/index.ts';
+import { packageIdentity, purlDefinitions } from '@/domain/purl/index.ts';
 
 export interface PackageMetadata {
 	identity: PackageIdentity;

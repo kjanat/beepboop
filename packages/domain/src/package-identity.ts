@@ -2,8 +2,8 @@ import { Result } from 'effect';
 import { identifiedManagers, legacyJsrIdentity } from '@/domain/catalog.ts';
 import type { Package } from '@/domain/inventory.ts';
 import { publishable } from '@/domain/package-publication.ts';
-import type { InvalidPackageUrl, PackageIdentity } from '@/package-url';
-import { invalidPackageUrl, packageIdentity, parsePackageIdentity, purl } from '@/package-url';
+import type { InvalidPackageUrl, PackageIdentity } from '@/domain/purl/index.ts';
+import { invalidPackageUrl, packageIdentity, parsePackageIdentity, purl } from '@/domain/purl/index.ts';
 
 export type PackageRecord = Pick<Package, 'manager' | 'name' | 'version' | 'identity'>;
 /** Legacy records acquire a typed identity at the boundary; adapters stay independent of purl types. */

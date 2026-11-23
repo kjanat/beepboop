@@ -5,12 +5,12 @@ import { channelKey } from '@/domain/destinations.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { publicationOrder } from '@/domain/publication-order.ts';
+import type { PackageIdentity } from '@/domain/purl/index.ts';
+import { invalidPackageUrl, parsePackageIdentity } from '@/domain/purl/index.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
-import type { PackageIdentity } from '@/package-url';
-import { invalidPackageUrl, parsePackageIdentity } from '@/package-url';
 
 export interface Discoverer {
 	readonly name: ManagerName;

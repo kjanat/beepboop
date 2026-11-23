@@ -90,6 +90,7 @@ import {
 	selectorKey,
 } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
+import { purl } from '@/domain/purl/index.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
 import type { RefChange, RefPlan, RefState, TagSigner } from '@/domain/refs.ts';
 import {
@@ -140,7 +141,6 @@ import { approvalShaPattern, sha256DigestPattern } from '@/kernel/schema/ids.ts'
 import { matches, sha } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
-import { purl } from '@/package-url';
 import { identifyExecution } from '@/persistence/codecs/stored';
 import { decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
