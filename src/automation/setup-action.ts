@@ -1,6 +1,6 @@
 import { Result } from 'effect';
-import { object } from '@/automation/managers/helpers';
 import type { SetupPlan } from '@/automation/setup-types';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 

@@ -1,4 +1,5 @@
 import type { SetupChoices } from '@/contract/setup';
+import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { BinaryBuild, BinaryCandidate, BinaryTarget } from '@/domain/binary-platforms.ts';
 import type { PackagePublication } from '@/domain/package-publication.ts';
 import type { ConfigurableStart, VersionBump } from '@/domain/release-start.ts';
@@ -32,20 +33,6 @@ export interface SetupEdit {
 	body: string;
 	choices: SetupChoices;
 	due: number;
-}
-export interface WorkflowEvidence {
-	tagPatterns?: string[];
-	file: string;
-	jobs: string[];
-	steps: { job: string; id: string; label: string }[];
-	events: string[];
-	roles: { job: string; stream: string; operation: string }[];
-	preparationJobs: string[];
-	reportingJobs: string[];
-	jobObstacles?: Record<string, string[]>;
-	prepares: boolean;
-	reports: boolean;
-	publishes: boolean;
 }
 export interface SetupPlan {
 	actionRelease?: { manifests: string[]; files: string[]; missing: string[]; commands: string };

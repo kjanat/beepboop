@@ -1,4 +1,4 @@
-import { object } from '@/automation/managers/helpers';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 import {
 	disabled,
 	forwardInput,
@@ -6,10 +6,10 @@ import {
 	literalBindings,
 	matrixCombinations,
 	staticGuard,
-} from '@/automation/release-graph/bindings';
-import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/automation/release-graph/calls';
-import type { Job } from '@/automation/release-graph/workflows';
-import { buildJob } from '@/automation/release-graph/workflows';
+} from '@/discovery/release-graph/bindings.ts';
+import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/discovery/release-graph/calls.ts';
+import type { Job } from '@/discovery/release-graph/workflows.ts';
+import { buildJob } from '@/discovery/release-graph/workflows.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 
 export interface PublishingJob {

@@ -14,7 +14,8 @@
 			"@/domain/*": ["./packages/domain/src/*"],
 			"@/github/*": ["./packages/github/src/*"],
 			"@/credentials/*": ["./packages/credentials/src/*"],
-			"@/auth/*": ["./packages/auth/src/*"]
+			"@/auth/*": ["./packages/auth/src/*"],
+			"@/discovery/*": ["./packages/discovery/src/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",

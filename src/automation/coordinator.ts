@@ -2,8 +2,6 @@ import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
-import type { CheckJob } from '@/automation/deployment-jobs';
-import { checkJobs, deploys } from '@/automation/deployment-jobs';
 import type { DistributionFile } from '@/automation/distribution';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
 import type { DistributionArtifact } from '@/automation/distribution-artifact';
@@ -31,8 +29,6 @@ import { mergeArtifacts, resolveInputs } from '@/automation/execution-outputs';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
-import type { WorkflowJobs } from '@/automation/job-gate';
-import { gateState, resolvable, workflowJobs } from '@/automation/job-gate';
 import type { Ledger, LedgerRecord } from '@/automation/ledger';
 import {
 	availability,
@@ -106,6 +102,10 @@ import type { ClaimStep, LedgerManager, LedgerPackage, NextStep, PublishReport, 
 import { ledgerManagers } from '@/contract/ledger';
 import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
 import { coversBinding } from '@/credentials/grant.ts';
+import type { CheckJob } from '@/discovery/workflow-analysis/deployment-jobs.ts';
+import { checkJobs, deploys } from '@/discovery/workflow-analysis/deployment-jobs.ts';
+import type { WorkflowJobs } from '@/discovery/workflow-analysis/job-gate.ts';
+import { gateState, resolvable, workflowJobs } from '@/discovery/workflow-analysis/job-gate.ts';
 import { identifiedManagers, isManagerName, managerSpec } from '@/domain/catalog.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
 import {

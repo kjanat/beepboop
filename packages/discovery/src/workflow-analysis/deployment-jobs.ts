@@ -1,5 +1,5 @@
 import { Result } from 'effect';
-import { object } from '@/automation/managers/helpers';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 
 export interface CheckJob {

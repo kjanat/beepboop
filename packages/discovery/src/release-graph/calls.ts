@@ -1,5 +1,5 @@
 import { Result } from 'effect';
-import { object } from '@/automation/managers/helpers';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 import {
 	disabled,
 	forwardInput,
@@ -8,7 +8,7 @@ import {
 	matrixCombinations,
 	matrixLimit,
 	staticGuard,
-} from '@/automation/release-graph/bindings';
+} from '@/discovery/release-graph/bindings.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';
 

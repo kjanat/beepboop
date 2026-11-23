@@ -1,6 +1,6 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { object } from '@/automation/managers/helpers';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { BinaryCandidate } from '@/domain/binary-platforms.ts';
 import { supportedTargets } from '@/domain/binary-platforms.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';

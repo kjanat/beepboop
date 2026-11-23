@@ -1,10 +1,10 @@
 import { Effect } from 'effect';
 import type { ParseError } from 'jsonc-parser';
 import { applyEdits, modify, parse } from 'jsonc-parser';
-import { jsonIndent, object } from '@/automation/managers/helpers';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory, Registry } from '@/automation/managers/registry';
 import { latestVersion, publicationResult, unconfirmed, unpublished } from '@/automation/managers/verification';
+import { jsonIndent, object } from '@/discovery/managers/manifest-editing.ts';
 import { jsrManifest, jsrPackageNamePattern } from '@/domain/catalog.ts';
 import { identityOf } from '@/domain/package-identity.ts';
 import { registry } from '@/domain/package-publication.ts';

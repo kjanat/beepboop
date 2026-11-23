@@ -1,12 +1,8 @@
 import { Effect, Result, Schema } from 'effect';
-import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
 import { canVerifyPublication, discover } from '@/automation/managers';
-import { object } from '@/automation/managers/helpers';
 import { newVersionStartRefusal } from '@/automation/release-capability';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
-import type { ReleaseGraph } from '@/automation/release-graph/graph';
-import { inferReleaseGraph } from '@/automation/release-graph/graph';
 import { actionReleaseOffer } from '@/automation/setup-action';
 import { behaviourChanges, changeDetails } from '@/automation/setup-changes';
 import { completeTaggedStreams } from '@/automation/setup-completion';
@@ -15,24 +11,22 @@ import type { PublishingAccess } from '@/automation/setup-publishing';
 import { checkPublishing } from '@/automation/setup-publishing';
 import { startWorkflow } from '@/automation/setup-start';
 import { streamSummary } from '@/automation/setup-summary';
-import type {
-	SetupChoices,
-	SetupOption,
-	SetupPlan,
-	SetupWorkflow,
-	TriggerHandover,
-	WorkflowEvidence,
-} from '@/automation/setup-types';
+import type { SetupChoices, SetupOption, SetupPlan, SetupWorkflow, TriggerHandover } from '@/automation/setup-types';
 import { approvals, triggerHandovers, versionings } from '@/automation/setup-types';
 import {
 	integrateReleaseWorkflow,
 	integrateWorkflow,
 	workflowActions,
 	workflowCredentials,
-	workflowEvidence,
 } from '@/automation/setup-workflows';
 import type { Configuration } from '@/automation/types';
 import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
+import { binaryCandidates } from '@/discovery/analysis/binary-candidates.ts';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import type { ReleaseGraph } from '@/discovery/release-graph/graph.ts';
+import { inferReleaseGraph } from '@/discovery/release-graph/graph.ts';
+import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
+import { workflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
 import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/domain/binary-platforms.ts';
 import { isLockfile } from '@/domain/catalog.ts';

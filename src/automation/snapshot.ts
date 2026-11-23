@@ -1,9 +1,9 @@
 import { Effect, Result } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { pkgbuildFile } from '@/automation/managers/channels';
-import { object } from '@/automation/managers/helpers';
 import { workspaceMembers } from '@/automation/managers/workspaces';
-import { bindInputs, matrixCombinations, substitute } from '@/automation/release-graph/bindings';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import { bindInputs, matrixCombinations, substitute } from '@/discovery/release-graph/bindings.ts';
 import {
 	actionBindings,
 	liveJobs,
@@ -11,9 +11,9 @@ import {
 	workflowCalls,
 	workflowDocuments,
 	workflowEvents,
-} from '@/automation/release-graph/calls';
-import { directoryFlagPattern, selectorFlagPattern } from '@/automation/release-graph/package-managers';
-import { literalPrefix } from '@/automation/release-graph/workflows';
+} from '@/discovery/release-graph/calls.ts';
+import { directoryFlagPattern, selectorFlagPattern } from '@/discovery/release-graph/package-managers.ts';
+import { literalPrefix } from '@/discovery/release-graph/workflows.ts';
 import { isLockfile, managerNames, managerSpec } from '@/domain/catalog.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { safeVersionPath } from '@/domain/version-files.ts';

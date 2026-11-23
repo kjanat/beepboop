@@ -2,26 +2,25 @@ import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
 import type { Alias, Document, Node } from 'yaml';
 import { isAlias, isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
-import { jobNeeds } from '@/automation/job-gate';
-import { object } from '@/automation/managers/helpers';
-import { workflowEvents } from '@/automation/release-graph/calls';
 import { annotatePins, matchEnding, pinned, renderWorkflow } from '@/automation/setup-actions';
 import {
 	assetConflicts,
 	assetSteps,
-	beginJobId,
-	begunSource,
 	binaryJobs,
 	buildJobId,
 	expression,
 	gitIdentity,
-	ownedBinaryJob,
 	refSteps,
 	releaseSteps,
 } from '@/automation/setup-binaries';
 import { crateOutcome, ledgerCommand, plainCrateNames } from '@/automation/setup-defaults';
-import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
+import type { SetupWorkflow } from '@/automation/setup-types';
 import { ledgerManagers, publishWaitMinutes } from '@/contract/ledger';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import { workflowEvents } from '@/discovery/release-graph/calls.ts';
+import { jobNeeds } from '@/discovery/workflow-analysis/job-gate.ts';
+import { beginJobId, begunSource, ownedBinaryJob } from '@/discovery/workflow-analysis/owned-binary-job.ts';
+import { actionRole, jobObstacles } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { hostedRunners } from '@/domain/runners.ts';
@@ -29,90 +28,11 @@ import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { yaml, yamlData } from '@/kernel/parse/yaml.ts';
-import { identifierPattern } from '@/kernel/schema/ids.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';
 
 const prepareMinutes = 120;
 export function publishMinutes(packages: number): number {
 	return Math.min(360, publishWaitMinutes + 60 * packages);
-}
-export function actionRole(value: unknown): string | undefined {
-	if (typeof value !== 'string') return;
-	return /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)(begin|prepare|report|publish)(?:@[\w./-]+)?$/.exec(
-		value,
-	)?.[1];
-}
-export function workflowEvidence(file: string, source: string): Result.Result<WorkflowEvidence, DomainError> {
-	return yaml(source).pipe(Result.map(document => evidenceOf(file, document)));
-}
-/** Why setup cannot patch a job in place; integrate refuses the same jobs. */
-export function jobObstacles(jobs: Record<string, unknown>): Record<string, string[]> {
-	const result: Record<string, string[]> = Object.create(null);
-	for (const [name, value] of Object.entries(jobs)) {
-		const job = object(value);
-		const needs = jobNeeds(job.needs).filter(need =>
-			typeof need !== 'string' || !ownedBinaryJob(need, object(jobs[need]))
-		);
-		const reasons = [
-			...(job.uses ? ['reusable workflow call'] : []),
-			...(job.strategy ? ['matrix'] : []),
-			...(needs.length ? [`needs ${needs.map(String).join(', ')}`] : []),
-			...(job.if ? ['conditional'] : []),
-			...(job.container ? ['container'] : []),
-		];
-		if (reasons.length) result[name] = reasons;
-	}
-	return result;
-}
-function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEvidence {
-	const result: WorkflowEvidence = {
-		file,
-		jobs: Object.keys(object(document.jobs)),
-		events: workflowEvents(document),
-		steps: [],
-		roles: [],
-		preparationJobs: [],
-		reportingJobs: [],
-		jobObstacles: jobObstacles(object(document.jobs)),
-		prepares: false,
-		reports: false,
-		publishes: false,
-	};
-	for (const [job, value] of Object.entries(object(document.jobs))) {
-		const steps = object(value).steps;
-		if (!Array.isArray(steps)) continue;
-		for (const entry of steps) {
-			const step = object(entry), role = actionRole(step.uses), inputs = object(step.with);
-			if (typeof step.id === 'string' && step.run) {
-				result.steps.push({ job, id: step.id, label: String(step.name ?? step.id) });
-			}
-			if (
-				role === 'begin' && typeof inputs.stream === 'string' && identifierPattern.test(inputs.stream)
-				&& typeof inputs.operation === 'string' && identifierPattern.test(inputs.operation)
-			) {
-				result.roles.push({ job, stream: inputs.stream, operation: inputs.operation });
-			}
-			if (role === 'prepare') {
-				result.prepares = true;
-				if (!result.preparationJobs.includes(job)) result.preparationJobs.push(job);
-			}
-			if (role === 'report' || role === 'publish') {
-				result.reports = true;
-				if (!result.reportingJobs.includes(job)) result.reportingJobs.push(job);
-			}
-			if (
-				typeof step.run === 'string'
-				&& /\b(?:npm|pnpm|yarn|bun|jsr|cargo)\s+(?:[^\n]*\s)?publish\b|\bgoreleaser\s+release\b/.test(step.run)
-			) result.publishes = true;
-		}
-	}
-	const reports = (role: WorkflowEvidence['roles'][number]) =>
-		role.operation === 'promote' && result.reportingJobs.includes(role.job);
-	result.roles = result.roles.filter(role =>
-		role.operation !== 'promote' || reports(role)
-		|| !result.roles.some(other => other.stream === role.stream && reports(other))
-	);
-	return result;
 }
 const executionInput = expression('inputs.beepboop_execution_id');
 const runName = expression('inputs.beepboop_title || github.workflow');

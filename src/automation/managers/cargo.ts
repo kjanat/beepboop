@@ -1,6 +1,5 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { editTomlVersion, object } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import {
@@ -15,6 +14,7 @@ import {
 } from '@/automation/managers/verification';
 import { cargoMembers } from '@/automation/managers/workspaces';
 import type { Publication } from '@/automation/types';
+import { editTomlVersion, object } from '@/discovery/managers/manifest-editing.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
 import { compareVersions, isPrerelease } from '@/domain/semver.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';

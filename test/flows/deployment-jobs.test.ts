@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { checkJobs, deploys } from '@/automation/deployment-jobs';
+import { checkJobs, deploys } from '@/discovery/workflow-analysis/deployment-jobs.ts';
 
 const workflow = [
 	'on: push',

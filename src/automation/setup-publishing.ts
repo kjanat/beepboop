@@ -1,13 +1,12 @@
 import { Effect, Result } from 'effect';
 import type { VerificationContext } from '@/automation/gateway.ts';
 import { cargoManager } from '@/automation/managers/cargo';
-import { object } from '@/automation/managers/helpers';
 import { registryRequest } from '@/automation/managers/verification';
-import { disabled, expandStep } from '@/automation/release-graph/bindings';
-import { localAction } from '@/automation/release-graph/calls';
-import { cargoJobPackages } from '@/automation/release-graph/graph';
-import { publishingJobs } from '@/automation/setup-publishing-jobs';
 import type { PublishingCheck, SetupChoices } from '@/automation/setup-types';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import { cargoJobPackages } from '@/discovery/release-graph/graph.ts';
+import { publishingJobs } from '@/discovery/workflow-analysis/publishing-jobs.ts';
+import { references, usedActions } from '@/discovery/workflow-analysis/workflow-references.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -15,40 +14,11 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseJson } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
-import { yaml } from '@/kernel/parse/yaml.ts';
 
 export interface PublishingAccess {
 	request: Fetcher;
 	github: VerificationContext['github'];
 	cargoToken(file: string, secrets: string[]): Effect.Effect<string | undefined, DomainError>;
-}
-
-function references(source: unknown, context: 'secrets' | 'vars'): string[] {
-	const text = JSON.stringify(source) ?? '';
-	return [
-		...new Set(
-			[...text.matchAll(new RegExp(`\\b${context}(?:\\.([A-Za-z_][\\w]*)|\\[['"]([A-Za-z_][\\w]*)['"]\\])`, 'g'))].map(
-				match => match[1] ?? match[2] ?? '',
-			),
-		),
-	];
-}
-
-function usedActions(snapshot: Snapshot, steps: unknown, seen = new Set<string>()): string[] {
-	if (!Array.isArray(steps)) return [];
-	return steps.flatMap(entry => expandStep(object(entry), {}, {})).flatMap(step => {
-		if (disabled(step.if) || typeof step.uses !== 'string') return [];
-		const local = localAction(step.uses);
-		if (!local || seen.has(local)) return [step.uses];
-		const source = snapshot.files[`${local}/action.yml`] ?? snapshot.files[`${local}/action.yaml`];
-		const parsed = source === undefined ? undefined : yaml(source);
-		return [
-			step.uses,
-			...(parsed && Result.isSuccess(parsed)
-				? usedActions(snapshot, object(parsed.success.runs).steps, new Set([...seen, local]))
-				: []),
-		];
-	});
 }
 
 export function checkPublishing(
