@@ -1078,7 +1078,7 @@ test(
 		expect([blocked.state, blocked.sourceSha, blocked.reason]).toEqual([
 			'awaiting-approval',
 			unlicensed.sha,
-			'Fix the package metadata before this release: widget (package.json) lacks license',
+			'metadata incomplete: widget (package.json) lacks license',
 		]);
 		expect(world.github.dispatches).toEqual([]);
 		expect((await api('/api/executions/approval', { id: blocked.id })).body).toEqual({

@@ -13,7 +13,7 @@ import { formatTime } from '@/kernel/time.ts';
 import { packageDisplayName } from '@/server/package-name.ts';
 import type { releaseSummaries } from '@/server/releases.ts';
 import { byAge, checksPolicy, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
-import { executionTone, releaseStatus } from '@/server/views/tone.ts';
+import { executionTone, releaseStatus, shownReason } from '@/server/views/tone.ts';
 
 export function waitingUntil(run: Execution, now: number): string | undefined {
 	return run.notBefore !== undefined && run.notBefore > now && ['pending', 'ready'].includes(run.state)
@@ -66,7 +66,7 @@ export function runCard(run: Execution, now: number) {
 		!run.publications.some(p => matchesPublication(id, p) && p.outcome === 'succeeded')
 	);
 	const preparation = run.managed?.result ?? run.prepared?.result;
-	const reason = run.reason?.replace(/\b[0-9a-f]{32,64}\b/g, id => id.slice(0, 12));
+	const reason = shownReason(run.reason);
 	const origin = run.started
 		? [`Started from ${startLabels[run.started.via]}.`]
 		: run.approvedBy === 'merge'

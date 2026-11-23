@@ -1028,6 +1028,8 @@ test('a run that publishes once its checks pass is not waiting for the user', as
 	const [checking] = releaseSummaries([{ ...started, reason: 'publish running' }]);
 	if (!checking) throw new Error('No release');
 	expect(releaseStatus(checking).label).toBe('publish running');
+	const [hashed] = releaseSummaries([{ ...started, reason: `commit check error: ${'f'.repeat(40)}` }]);
+	expect(hashed && releaseStatus(hashed).label).toBe(`commit check error: ${'f'.repeat(12)}`);
 	expect(runCard({ ...started, reason: 'publish running' }, Date.now()).wait).toEqual({
 		fact: 'publish running',
 		detail: `${checksPolicy}.`,

@@ -215,7 +215,7 @@ const projectionRetry = 10_000;
 const dependencyPoll = 30_000;
 const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
-const metadataReason = 'Fix the package metadata before this release: ';
+const metadataReason = 'metadata incomplete: ';
 const passingConclusions = ['success', 'neutral', 'skipped'];
 function missingReceipt(execution: Execution, record: LedgerRecord): boolean {
 	return released(record)
@@ -4300,7 +4300,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					),
 					recover(error =>
 						Effect.gen({ self: this }, function*() {
-							const reason = `Beepboop could not check this commit: ${decodeError(error)}`;
+							const reason = `commit check error: ${decodeError(error)}`;
 							if (current.reason !== reason) yield* this.put({ ...current, reason });
 							return 'continue' as const;
 						})

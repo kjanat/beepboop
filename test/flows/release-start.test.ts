@@ -619,7 +619,7 @@ test('missing package metadata stops a started release with a reason', async () 
 	expect(await promotions(api)).toEqual([
 		expect.objectContaining({
 			state: 'failed',
-			reason: expect.stringContaining('Fix the package metadata before this release: '),
+			reason: expect.stringContaining('metadata incomplete: '),
 		}),
 	]);
 	expect(repository.runs).toEqual([]);

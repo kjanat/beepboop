@@ -66,10 +66,14 @@ export function deliveryStatus(delivery: NotificationDelivery): Status {
 	return { tone: deliveryTone[delivery.state], label };
 }
 
+export function shownReason(reason: string | undefined): string | undefined {
+	return reason?.replace(/\b[0-9a-f]{32,64}\b/g, id => id.slice(0, 12));
+}
+
 function releaseState(release: ReturnType<typeof releaseSummaries>[number]): Status {
 	const { latest } = release;
 	if (publishesAutomatically(latest)) {
-		return { tone: 'active', label: latest.reason ?? runStateLabel(latest), detail: checksPolicy };
+		return { tone: 'active', label: shownReason(latest.reason) ?? runStateLabel(latest), detail: checksPolicy };
 	}
 	if (latest.state === 'awaiting-approval') return { tone: 'warn', label: 'Waiting for you to publish' };
 	if (release.attention) return { tone: 'warn', label: 'Needs attention' };

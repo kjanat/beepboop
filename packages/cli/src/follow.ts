@@ -251,7 +251,7 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 			if (promotion?.operation !== 'promote') continue;
 			const sha = look.sha(promotion.sourceSha);
 			if (promotion.state === 'awaiting-approval') {
-				spinner.update(`Waiting for checks on ${sha}${promotion.reason ? `: ${promotion.reason}` : ''}`);
+				spinner.update(promotion.reason ? `${sha}: ${promotion.reason}` : `Waiting for checks on ${sha}`);
 				continue;
 			}
 			if (['pending', 'ready', 'dispatching'].includes(promotion.state)) {
