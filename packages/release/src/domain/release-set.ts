@@ -1,6 +1,4 @@
 import { Effect, Result } from 'effect';
-import { deriveExecution } from '@/automation/execution';
-import type { Execution } from '@/automation/types';
 import { discover } from '@/discovery/discover.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { packageId, selectorKey, soleMatch } from '@/domain/package-identity.ts';
@@ -10,7 +8,9 @@ import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { invalid } from '@/kernel/schema/result.ts';
-import { executionId } from '@/persistence/identity-keys';
+import { deriveExecution } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { executionId } from '@/release/domain/identity-keys.ts';
 
 function expandPackages(
 	member: Execution,

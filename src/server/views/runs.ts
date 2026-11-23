@@ -1,5 +1,3 @@
-import { runFailedNote } from '@/automation/execution.ts';
-import type { Execution } from '@/automation/types.ts';
 import type { Status, Tone } from '@/contract/views';
 import { managerSpec } from '@/domain/catalog.ts';
 import { matchesPublication } from '@/domain/package-identity.ts';
@@ -12,6 +10,8 @@ import { safeDecode } from '@/kernel/schema/structs.ts';
 import { formatTime } from '@/kernel/time.ts';
 import { githubHref, registryHref } from '@/publication/links.ts';
 import type { Publication } from '@/publication/publication.ts';
+import { runFailedNote } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 import { packageDisplayName } from '@/server/package-name.ts';
 import type { releaseSummaries } from '@/server/releases.ts';
 import { byAge, checksPolicy, publishesAutomatically, runStateLabel } from '@/server/releases.ts';

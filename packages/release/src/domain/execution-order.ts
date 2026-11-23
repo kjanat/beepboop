@@ -1,4 +1,4 @@
-import type { Execution, ExecutionState } from '@/automation/types.ts';
+import type { Execution, ExecutionState } from '@/release/domain/execution/types.ts';
 
 export const unfinishedStates: readonly ExecutionState[] = [
 	'pending',

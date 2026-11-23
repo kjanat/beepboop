@@ -1,11 +1,11 @@
 import type { Effect } from 'effect';
-import type { ReleaseSetPlan } from '@/automation/planning';
-import type { Execution, ReleasePlan } from '@/automation/types';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
 import { encodeConfigurationV1 } from '@/persistence/codecs/configuration';
+import type { Execution, ReleasePlan } from '@/release/domain/execution/types.ts';
+import type { ReleaseSetPlan } from '@/release/domain/planning/plan.ts';
 
 export function executionId(
 	repositoryId: number,

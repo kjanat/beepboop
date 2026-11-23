@@ -1,13 +1,13 @@
 import { Clock, Effect } from 'effect';
-import { createExecution } from '@/automation/execution';
-import type { ReleaseSetPlan } from '@/automation/planning';
-import type { Execution, ReleasePlan, ReleaseStarted } from '@/automation/types';
 import { startLabels } from '@/domain/release-start.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { publishWhenNames, publishWhenSentences } from '@/domain/setup-terms.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
-import { executionId, planIdentity } from '@/persistence/identity-keys';
+import { createExecution } from '@/release/domain/execution/execution.ts';
+import type { Execution, ReleasePlan, ReleaseStarted } from '@/release/domain/execution/types.ts';
+import { executionId, planIdentity } from '@/release/domain/identity-keys.ts';
+import type { ReleaseSetPlan } from '@/release/domain/planning/plan.ts';
 
 export function preparationBody(execution: Pick<Execution, 'configuration' | 'stream' | 'started'>): string {
 	const { started } = execution;

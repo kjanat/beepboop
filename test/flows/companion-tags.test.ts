@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 import { widgetConfiguration } from '@root/test/support/repositories.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
-import { createExecution } from '@/automation/execution';
 import { companionProposals } from '@/discovery/analysis/companions.ts';
 import { validateAgainst } from '@/discovery/validation/validate.ts';
 import { binaries } from '@/domain/binary-platforms.ts';
@@ -26,6 +25,7 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
+import { createExecution } from '@/release/domain/execution/execution.ts';
 import { planRefs, refsLanded, streamModuleTagPrefixes } from '@/release/domain/refs.ts';
 import type { SetupChoices } from '@/setup/types.ts';
 

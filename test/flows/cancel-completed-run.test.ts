@@ -5,9 +5,9 @@ import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import { createExecution, expectedRunTitle } from '@/automation/execution';
 import { Store } from '@/automation/store';
 import { requireReady } from '@/domain/repository';
+import { createExecution, expectedRunTitle } from '@/release/domain/execution/execution.ts';
 
 let world: World;
 eachWorld(created => {

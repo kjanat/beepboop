@@ -14,11 +14,9 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
-import { createExecution, runFailedNote } from '@/automation/execution';
 import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Automation } from '@/automation/service';
 import { Store } from '@/automation/store';
-import type { Execution } from '@/automation/types';
 import { requireReady } from '@/domain/repository';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -34,8 +32,10 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { executionId, releaseEventId } from '@/persistence/identity-keys';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { createExecution, runFailedNote } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { executionId, releaseEventId } from '@/release/domain/identity-keys.ts';
 import { loaders } from '@/server/loaders';
 import { checksPolicy, needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';

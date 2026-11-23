@@ -7,8 +7,6 @@ import { applyChoices, applySetup, discoverSetup, previewSetup } from '@root/tes
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { runFailedNote } from '@/automation/execution';
-import type { Execution } from '@/automation/types';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -24,7 +22,9 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { runFailedNote } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 import { parseSetupPlan } from '@/setup/plan.ts';
 import type { SetupChoices } from '@/setup/types.ts';
 

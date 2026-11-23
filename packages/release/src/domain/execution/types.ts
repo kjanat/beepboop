@@ -1,4 +1,3 @@
-import type { ResolvedInput } from '@/automation/execution-outputs';
 import type { ExecutionStateView } from '@/contract/views';
 import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration/schema.ts';
@@ -10,6 +9,7 @@ import type { StartChannel } from '@/domain/release-start.ts';
 import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
 import type { Publication } from '@/publication/publication.ts';
 import type { PublishKind } from '@/publication/publish-pace.ts';
+import type { ResolvedInput } from '@/release/domain/execution/outputs.ts';
 import type { FrozenPackageTag } from '@/release/domain/package-tags.ts';
 
 export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration/schema.ts';
@@ -90,7 +90,7 @@ export interface Execution {
 	};
 	managed?: {
 		kind: 'prepare';
-		plan: ReleasePlan | import('@/automation/planning').ReleaseSetPlan;
+		plan: ReleasePlan | import('@/release/domain/planning/plan.ts').ReleaseSetPlan;
 		branch: string;
 		title: string;
 		body: string;
@@ -105,7 +105,7 @@ export interface Execution {
 	refNamespace?: RefNamespace;
 	upstreamRelease?: ReleaseReference;
 	release?: ReleaseReference;
-	plan?: ReleasePlan | import('@/automation/planning').ReleaseSetPlan;
+	plan?: ReleasePlan | import('@/release/domain/planning/plan.ts').ReleaseSetPlan;
 	id: string;
 	repositoryId: number;
 	repository: string;

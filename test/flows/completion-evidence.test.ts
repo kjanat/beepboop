@@ -4,9 +4,9 @@ import { Effect } from 'effect';
 import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Store } from '@/automation/store';
 import { compare, precedenceKey } from '@/domain/semver.ts';
-import { projectionRules } from '@/persistence/d1/completions';
 import type { Projection } from '@/persistence/d1/projection';
 import { ProjectionStore } from '@/persistence/d1/projection';
+import { projectionRules } from '@/release/adapters/d1/completions.ts';
 
 const candidate = { repositoryId: 1, stream: 'main', state: 'failed' as const, version: '1.0.0', updatedAt: 1 };
 function projection(id: string, version: string, at: number, group?: string): Projection {

@@ -1,5 +1,4 @@
 import { Effect } from 'effect';
-import type { Stream } from '@/automation/types';
 import { operations } from '@/domain/configuration/schema.ts';
 import type { Inventory, Package } from '@/domain/inventory.ts';
 import { matchesPackage } from '@/domain/package-identity.ts';
@@ -11,6 +10,7 @@ import { distinct } from '@/kernel/collections/distinct.ts';
 import { blocking } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { Stream } from '@/release/domain/execution/types.ts';
 
 export function releasedVersion(pkg: Package): string | undefined {
 	if (pkg.publicationStatus === 'published') return pkg.published;

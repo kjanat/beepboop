@@ -166,6 +166,7 @@
         "@beepboopbot/kernel": "workspace:*",
         "@beepboopbot/persistence": "workspace:*",
         "@beepboopbot/publication": "workspace:*",
+        "@beepboopbot/release": "workspace:*",
         "effect": "^4.1.2",
       },
     },
@@ -203,8 +204,10 @@
       "name": "@beepboopbot/release",
       "version": "0.0.0",
       "dependencies": {
+        "@beepboopbot/auth": "workspace:*",
         "@beepboopbot/discovery": "workspace:*",
         "@beepboopbot/domain": "workspace:*",
+        "@beepboopbot/github": "workspace:*",
         "@beepboopbot/kernel": "workspace:*",
         "@beepboopbot/persistence": "workspace:*",
         "@beepboopbot/publication": "workspace:*",

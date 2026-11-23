@@ -1,10 +1,10 @@
 import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
-import type { Execution } from '@/automation/types';
 import { routes } from '@/contract/routes';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 import { admin } from '@/server/handlers/kit';
 
 const shortId = /^[0-9a-f]{8,63}$/;

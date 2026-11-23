@@ -1,4 +1,4 @@
-import type { Execution } from '@/automation/types';
+import type { Configuration } from '@/domain/configuration/schema.ts';
 import type { Inventory, Package } from '@/domain/inventory.ts';
 import {
 	matchesPackage,
@@ -15,14 +15,28 @@ import type { LedgerManager } from '@/publication/contract.ts';
 import { ledgerManagers } from '@/publication/contract.ts';
 import type { Ledger, LedgerRecord } from '@/publication/ledger.ts';
 import { availability, label, released } from '@/publication/ledger.ts';
+import type { Publication } from '@/publication/publication.ts';
 
 const dependencyPoll = 30_000;
+
+export interface LedgerExecution {
+	readonly id: string;
+	readonly repositoryId: number;
+	readonly stream: string;
+	readonly sourceSha: string;
+	readonly state: string;
+	readonly runId?: number;
+	readonly runAttempt?: number;
+	readonly configuration: Configuration;
+	readonly workflow?: { readonly publications?: readonly string[] };
+	readonly publications: readonly Publication[];
+}
 
 export type Blocker =
 	| { kind: 'failed'; reason: string }
 	| { kind: 'pending'; reason: string; until: number; producers: LedgerRecord[] };
 
-export function planLedger(execution: Execution, inventory: Inventory, version: string): Ledger {
+export function planLedger(execution: LedgerExecution, inventory: Inventory, version: string): Ledger {
 	const stream = execution.configuration.streams[execution.stream];
 	const selected = execution.workflow?.publications ?? stream?.packages ?? [];
 	const required = execution.workflow?.publications ?? stream?.required ?? [];
@@ -63,7 +77,7 @@ export function planLedger(execution: Execution, inventory: Inventory, version: 
 export function publicationDeadlock(
 	current: Ledger,
 	ledgers: Ledger[],
-	executions: Execution[],
+	executions: readonly LedgerExecution[],
 	now: number,
 ): LedgerRecord | undefined {
 	const active = new Map(
@@ -96,11 +110,11 @@ export function publicationDeadlock(
 }
 
 export function dependencyBlocker(
-	execution: Execution,
+	execution: LedgerExecution,
 	record: LedgerRecord,
 	holder: string,
 	ledgers: Ledger[],
-	executions: Execution[],
+	executions: readonly LedgerExecution[],
 	now: number,
 ): Blocker | undefined {
 	const live = (id: string) =>

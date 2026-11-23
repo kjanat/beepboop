@@ -1,5 +1,4 @@
 import { Effect, Schema } from 'effect';
-import type { ActivityEntry, Execution } from '@/automation/types';
 import type { ExecutionFilter } from '@/contract/routes';
 import { RepositoryStore } from '@/discovery/adapters/d1/repositories.ts';
 import { fromJson, fromSync, recover } from '@/kernel/errors/classify.ts';
@@ -9,17 +8,18 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { AuditStore } from '@/persistence/d1/audit';
 import { backfillPage, drainBackfill } from '@/persistence/d1/backfill-page';
-import type { CompletionCandidate } from '@/persistence/d1/completions';
-import { CompletionStore } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
 import { rowDocument } from '@/persistence/d1/document-row';
 import { GateSkipStore } from '@/persistence/d1/gate-skips';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import { readyRead } from '@/persistence/d1/ready-read';
+import type { CompletionCandidate } from '@/release/adapters/d1/completions.ts';
+import { CompletionStore } from '@/release/adapters/d1/completions.ts';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import type { ActivityEntry, Execution } from '@/release/domain/execution/types.ts';
 import { executionOrderSql, newestActiveFirst, validJson } from '@/release/domain/execution-order.ts';
 
 export interface UnreadableExecution {

@@ -1,8 +1,5 @@
 import { Clock, Effect } from 'effect';
 import type { DispatchedExecution } from '@/auth/workflow-token.ts';
-import { outputsComplete } from '@/automation/execution-outputs';
-import { githubFailureReason, githubRunLabel } from '@/automation/run-labels';
-import type { Configuration, Execution, ReleaseReference, WorkflowBinding } from '@/automation/types';
 import { managerSpec } from '@/domain/catalog.ts';
 import type { DiscoveredWorkflow, Package, RepositoryRecord } from '@/domain/inventory.ts';
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/domain/package-identity.ts';
@@ -11,8 +8,11 @@ import type { GitHubRunResult } from '@/github/run-state.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
-import { executionId } from '@/persistence/identity-keys';
 import type { Publication } from '@/publication/publication.ts';
+import { outputsComplete } from '@/release/domain/execution/outputs.ts';
+import { githubFailureReason, githubRunLabel } from '@/release/domain/execution/run-labels.ts';
+import type { Configuration, Execution, ReleaseReference, WorkflowBinding } from '@/release/domain/execution/types.ts';
+import { executionId } from '@/release/domain/identity-keys.ts';
 import { freezePackageTags, packageTagGroups } from '@/release/domain/package-tags.ts';
 import { streamModuleTags } from '@/release/domain/refs.ts';
 

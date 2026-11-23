@@ -1,15 +1,15 @@
 import { Effect, Schema } from 'effect';
-import type { Execution } from '@/automation/types';
 import { precedenceKey } from '@/domain/semver.ts';
 import { isDecodingFailure } from '@/kernel/errors/decoding.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
-import { decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { backfillPage, drainBackfill } from '@/persistence/d1/backfill-page';
 import type { Sql } from '@/persistence/d1/database';
 import { parse } from '@/persistence/d1/database';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import type { CompletionMetadata, ProjectionRules } from '@/persistence/d1/projection';
 import { readyRead } from '@/persistence/d1/ready-read';
+import { decodeEventV1, decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 
 export function completionMetadata(document: string, repositoryId: number): CompletionMetadata | undefined {
 	try {

@@ -15,7 +15,6 @@ import {
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import type { Execution } from '@/automation/types';
 import type { ApprovalPolicy, ReleaseStart, VersionBump } from '@/domain/release-start.ts';
 import { publishWhenNames, versionLandsNames, versionScopeNames } from '@/domain/setup-terms.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
@@ -31,6 +30,7 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 
 type Api = (path: string, body?: unknown) => Promise<Reply>;
 
