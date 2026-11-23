@@ -609,7 +609,9 @@ off** makes every later release of the stream ignore that gate, and **Switch
 on** undoes it. Beepboop stores the choice on the server and leaves
 `.github/beepboop.json` as it is. A switched-off check stays listed when the
 commit lacks it. The activity log records who switched each gate, and the
-approval of a release names each failing or running gate it ignored. Manifest
+approval of a release names each failing or running gate it ignored. With the
+package metadata gate off, `actions/publish` publishes a package that lacks
+metadata. Manifest
 problems and more than 100 check runs always stop a release.
 
 `beepboop release` and the dashboard start a release on every stream that can

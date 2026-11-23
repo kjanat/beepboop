@@ -250,9 +250,6 @@ function freshRun(execution: Execution, workflow: Execution['workflow']): Execut
 		publications: reopened(execution.publications),
 	};
 }
-function forcedView(execution: Execution, record: LedgerRecord): LedgerPackage {
-	return execution.started?.force ? { ...view(record), force: true } : view(record);
-}
 function reopened(publications: Publication[]): Publication[] {
 	return publications.map(publication =>
 		publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
@@ -2109,7 +2106,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					if (!record) continue;
 					const open = availability(record, holder, now);
 					if (open.kind === 'settled' || open.kind === 'uploaded') continue;
-					if (open.kind === 'held') return { kind: 'publish' as const, package: forcedView(execution, record) };
+					if (open.kind === 'held') {
+						return { kind: 'publish' as const, package: yield* this.ledgerView(execution, record) };
+					}
 					if (open.kind === 'wait') {
 						waits.push(open);
 						continue;
@@ -2118,7 +2117,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					if (blocked?.kind === 'failed') {
 						ledger = yield* this.settleRecord(ledger, fail(record, holder, blocked.reason, false, now));
 					} else if (blocked) waits.push({ until: blocked.until, reason: blocked.reason });
-					else return { kind: 'publish' as const, package: forcedView(execution, record) };
+					else return { kind: 'publish' as const, package: yield* this.ledgerView(execution, record) };
 				}
 				const [wait] = waits.sort((a, b) => a.until - b.until);
 				if (wait) {
@@ -2191,7 +2190,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const claimed = yield* Effect.fromResult(claim(record, holder, digest, now));
 				yield* this.settleRecord(ledger, claimed);
-				return { kind: 'publish' as const, package: forcedView(execution, claimed) };
+				return { kind: 'publish' as const, package: yield* this.ledgerView(execution, claimed) };
 			}),
 			'coordinator.publishClaim',
 			{ executionId: id },
@@ -3157,6 +3156,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				});
 			}
 			return { manifest, truncated: checks.total_count !== runs.length, runs: runs.length, outcomes };
+		});
+	}
+	private ledgerView(execution: Execution, record: LedgerRecord): CoordinatorEffect<LedgerPackage, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const metadata = execution.started?.force === true
+				|| (yield* this.gateSkips(execution)).some(skip => skip.gate.kind === 'metadata');
+			return metadata ? { ...view(record), force: true } : view(record);
 		});
 	}
 	private gateSkips(subject: Pick<Execution, 'repositoryId' | 'stream'>): CoordinatorEffect<GateSkip[], DomainError> {

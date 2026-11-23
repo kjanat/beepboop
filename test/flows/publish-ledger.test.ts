@@ -1309,6 +1309,23 @@ test('a forced release publishes a crate packaged without a README', async () =>
 	expect(state.commands.map(entry => entry.command)).toContain('publish lint-core');
 }, 60_000);
 
+test('a stream that switched the metadata gate off publishes a crate packaged without a README', async () => {
+	const { repository, api, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const skipped = await api('/api/repositories/gates/skip', {
+		repositoryId: repository.id,
+		stream: 'main',
+		gate: { kind: 'metadata' },
+		skip: true,
+	});
+	expect(skipped.status).toBe(200);
+	const state: Cargo = { commands: [], outcomes: {}, stripped: { 'lint-core': ['README.md'] } };
+	const { result } = await publishing(identity, execution.id, state);
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([['pkg:cargo/lint-core@1.1.0', 'published']]);
+	expect(state.commands.map(entry => entry.command)).toContain('publish lint-core');
+}, 60_000);
+
 test('cargo metadata without description, license or repository fails the crate and names each field', async () => {
 	const { begun } = await released({ main: [core] });
 	const { execution, identity } = started(begun, 'main');
