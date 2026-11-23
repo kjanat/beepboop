@@ -1,9 +1,9 @@
 import { Clock, Effect } from 'effect';
+import { outputsComplete } from '@/automation/execution-outputs';
 import type { GitHubRunResult } from '@/automation/github-state';
 import { githubFailureReason, githubRunLabel } from '@/automation/github-state';
 import type { DiscoveredWorkflow, Package, RepositoryRecord } from '@/automation/inventory';
 import { canVerifyPublication } from '@/automation/managers';
-import { outputsComplete } from '@/automation/outputs';
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/automation/package-identity';
 import { freezePackageTags, packageTagGroups } from '@/automation/package-tags';
 import { streamModuleTags } from '@/automation/refs';

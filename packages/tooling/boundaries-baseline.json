@@ -232,6 +232,22 @@
 		"specifier": "@/domain/repository"
 	},
 	{
+		"file": "packages/persistence/src/codecs/stored.ts",
+		"specifier": "@/automation/inventory"
+	},
+	{
+		"file": "packages/persistence/src/codecs/stored.ts",
+		"specifier": "@/automation/package-identity"
+	},
+	{
+		"file": "packages/persistence/src/codecs/stored.ts",
+		"specifier": "@/automation/package-publication"
+	},
+	{
+		"file": "packages/persistence/src/codecs/stored.ts",
+		"specifier": "@/automation/types"
+	},
+	{
 		"file": "packages/persistence/src/codecs/v1.ts",
 		"specifier": "@/automation/destinations"
 	},
@@ -241,15 +257,15 @@
 	},
 	{
 		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/execution-outputs"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
 		"specifier": "@/automation/inventory"
 	},
 	{
 		"file": "packages/persistence/src/codecs/v1.ts",
 		"specifier": "@/automation/outputs"
-	},
-	{
-		"file": "packages/persistence/src/codecs/v1.ts",
-		"specifier": "@/automation/package-identity"
 	},
 	{
 		"file": "packages/persistence/src/codecs/v1.ts",

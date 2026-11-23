@@ -23,6 +23,7 @@ import {
 	validatePublicationIdentity,
 	verifiableCancellation,
 } from '@/automation/execution';
+import { mergeArtifacts, resolveInputs } from '@/automation/execution-outputs';
 import { GitHubRejection } from '@/automation/github';
 import type { GitHubRelease, WorkflowRun } from '@/automation/github-resources';
 import {
@@ -74,9 +75,7 @@ import {
 	verifySecondaryPublications,
 } from '@/automation/managers';
 import { tagPrefix } from '@/automation/managers/tags';
-import { mergeArtifacts, resolveInputs } from '@/automation/outputs';
 import {
-	identifyExecution,
 	identityPackageName,
 	matchesPackage,
 	matchesPublication,
@@ -155,6 +154,7 @@ import { matches, sha } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import { purl } from '@/package-url';
+import { identifyExecution } from '@/persistence/codecs/stored';
 import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';

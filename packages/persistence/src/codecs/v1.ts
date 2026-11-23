@@ -1,11 +1,9 @@
 import { Schema, Struct } from 'effect';
 import type { ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import { completion } from '@/automation/execution';
+import type { ResolvedInput } from '@/automation/execution-outputs';
 import type { DiscoveredWorkflow, Edit, Package, RepositoryRecord } from '@/automation/inventory';
-import type { ResolvedInput } from '@/automation/outputs';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
-import type { StoredInventory, StoredRepository } from '@/automation/package-identity';
-import { identifyExecution, identifyRepository, normalizePublication } from '@/automation/package-identity';
 import { publicationSchema } from '@/automation/package-publication';
 import type { ReleaseSetPlan } from '@/automation/planning';
 import type { RefPlan } from '@/automation/refs';
@@ -30,6 +28,8 @@ import { stringsSchema as strings } from '@/kernel/schema/result.ts';
 import { decodeSync, mapped, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { PackageIdentity } from '@/package-url';
 import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
+import type { StoredInventory, StoredRepository } from '@/persistence/codecs/stored';
+import { identifyExecution, identifyRepository, normalizePublication } from '@/persistence/codecs/stored';
 
 const managerName = Schema.Literals(managerNames);
 const shas = mutableRecord(Schema.String, Schema.String);
