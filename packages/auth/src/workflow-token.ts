@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import type { WorkflowIdentity } from '@/automation/auth';
+import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { expectedRunTitle } from '@/automation/execution';
 import type { Execution } from '@/automation/types';
 import type { BotIdentity } from '@/github/app.ts';
@@ -26,7 +26,7 @@ export interface TokenAudit {
 const dispatchedStates: Execution['state'][] = ['dispatching', 'running', 'uncertain'];
 
 function dispatchedByBeepboop(
-	identity: WorkflowIdentity,
+	identity: RunIdentity,
 	executionId: unknown,
 	issuer: TokenIssuer,
 	log: TokenAudit,
@@ -74,7 +74,7 @@ export interface TokenRequest {
 }
 
 export function issueWorkflowToken(
-	identity: WorkflowIdentity,
+	identity: RunIdentity,
 	body: TokenRequest,
 	ownerId: number,
 	issuer: TokenIssuer,

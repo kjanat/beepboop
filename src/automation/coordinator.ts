@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
-import type { WorkflowIdentity } from '@/automation/auth';
+import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import type { CheckJob } from '@/automation/deployment-jobs';
 import { checkJobs, deploys } from '@/automation/deployment-jobs';
 import type { DistributionFile } from '@/automation/distribution';
@@ -1259,7 +1259,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			),
 		);
 	}
-	prepared(id: string, identity: WorkflowIdentity, edits: Edit[]): Promise<{ url: string; head: string }> {
+	prepared(id: string, identity: RunIdentity, edits: Edit[]): Promise<{ url: string; head: string }> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const execution = yield* this.get(id);
@@ -1390,7 +1390,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return result;
 		});
 	}
-	register(id: string, identity: WorkflowIdentity): Promise<Execution> {
+	register(id: string, identity: RunIdentity): Promise<Execution> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const execution = yield* this.get(id);
@@ -1470,7 +1470,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	refs(
 		id: string,
-		identity: WorkflowIdentity,
+		identity: RunIdentity,
 		complete = false,
 		suppliedFiles: DistributionFile[] = [],
 		artifact?: DistributionArtifact,
@@ -1736,10 +1736,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return false;
 		});
 	}
-	publishRelease(id: string, identity: WorkflowIdentity): Promise<Execution> {
+	publishRelease(id: string, identity: RunIdentity): Promise<Execution> {
 		return this.serial(this.releasePublication(id, identity), 'coordinator.publishRelease', { executionId: id });
 	}
-	private releasePublication(id: string, identity: WorkflowIdentity): CoordinatorEffect<Execution, DomainError> {
+	private releasePublication(id: string, identity: RunIdentity): CoordinatorEffect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
 			if (!execution.workflow || execution.managed) return yield* precondition('Operation is not a workflow');
@@ -2088,7 +2088,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	report(
 		id: string,
-		identity: WorkflowIdentity,
+		identity: RunIdentity,
 		publications: Publication[],
 		artifacts: Artifact[],
 	): Promise<Execution> {
@@ -2096,7 +2096,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			executionId: id,
 		});
 	}
-	publishNext(id: string, identity: WorkflowIdentity): Promise<NextStep> {
+	publishNext(id: string, identity: RunIdentity): Promise<NextStep> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const clock = yield* Clock.Clock;
@@ -2142,7 +2142,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
-	publishClaim(id: string, identity: WorkflowIdentity, purl: string, digest: string): Promise<ClaimStep> {
+	publishClaim(id: string, identity: RunIdentity, purl: string, digest: string): Promise<ClaimStep> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const clock = yield* Clock.Clock;
@@ -2201,7 +2201,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
-	publishReport(id: string, identity: WorkflowIdentity, report: PublishReport): Promise<ReportStep> {
+	publishReport(id: string, identity: RunIdentity, report: PublishReport): Promise<ReportStep> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const clock = yield* Clock.Clock;
@@ -2245,7 +2245,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private publishing(
 		id: string,
-		identity: WorkflowIdentity,
+		identity: RunIdentity,
 	): CoordinatorEffect<{ execution: Execution; holder: string }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
@@ -2504,7 +2504,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private recordReport(
 		id: string,
-		identity: WorkflowIdentity,
+		identity: RunIdentity,
 		publications: Publication[],
 		artifacts: Artifact[],
 	): CoordinatorEffect<Execution, DomainError> {

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect';
 import { TestClock } from 'effect/testing';
+import { SessionStore } from '@/auth/adapters/d1/sessions.ts';
 import { applyVersionFiles } from '@/automation/editors';
 import { latestVersion, registryRequest } from '@/automation/managers/verification';
 import {
@@ -30,7 +31,6 @@ import { retryTransient } from '@/kernel/http/retry.ts';
 import { AuditStore } from '@/persistence/d1/audit';
 import type { Sql } from '@/persistence/d1/database';
 import { Database } from '@/persistence/d1/database';
-import { SessionStore } from '@/persistence/d1/sessions';
 import { capture } from '@/tooling/runtime';
 import { readBody } from '@/webhook';
 

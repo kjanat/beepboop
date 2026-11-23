@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import type { CLISessionRow } from '@/auth/adapters/d1/cli-sessions.ts';
 import { packageWatches } from '@/automation/package-watch.ts';
 import type { Automation, AutomationBindings, AutomationService } from '@/automation/service.ts';
 import { withAutomation } from '@/automation/service.ts';
@@ -13,7 +14,6 @@ import { recover } from '@/kernel/errors/classify.ts';
 import type { Readable } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
-import type { CLISessionRow } from '@/persistence/d1/cli-sessions.ts';
 import type { Section } from '@/server/sections.ts';
 
 export interface LoaderContext {

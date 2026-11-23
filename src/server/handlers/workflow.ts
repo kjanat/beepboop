@@ -1,7 +1,7 @@
 import { Effect, Schema } from 'effect';
+import { issueWorkflowToken } from '@/auth/workflow-token.ts';
 import { createExecution } from '@/automation/execution';
 import { repositorySnapshot } from '@/automation/snapshot';
-import { issueWorkflowToken } from '@/automation/token';
 import type { Artifact, Execution, Publication } from '@/automation/types';
 import type { ClaimStep, NextStep, ReportStep } from '@/contract/ledger';
 import { routes } from '@/contract/routes';

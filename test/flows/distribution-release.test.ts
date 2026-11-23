@@ -9,7 +9,7 @@ import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import type { WorkflowIdentity } from '@/automation/auth';
+import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { createExecution, expectedRunTitle } from '@/automation/execution';
 import { Store } from '@/automation/store';
 import type { Edit } from '@/domain/inventory.ts';
@@ -142,7 +142,7 @@ async function fixture(
 			}),
 		);
 		const workflowSha = world.github.head(repository);
-		const identity: WorkflowIdentity = {
+		const identity: RunIdentity = {
 			repositoryId: repository.id,
 			repository: repository.name,
 			ownerId,

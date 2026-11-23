@@ -4,7 +4,8 @@ import { adminSubject, eachWorld, epoch, issuer, origin } from '@root/test/suppo
 import { Effect, Result } from 'effect';
 import type { JWTPayload } from 'jose';
 import { decodeJwt, exportJWK, exportPKCS8, generateKeyPair, jwtVerify, SignJWT } from 'jose';
-import { administrator, workflowIdentity } from '@/automation/auth';
+import { workflowIdentity } from '@/auth/actions-oidc.ts';
+import { administrator } from '@/auth/admin.ts';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { Automation } from '@/automation/service';
 

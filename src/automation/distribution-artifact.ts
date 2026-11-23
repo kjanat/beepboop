@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { Effect, Schema } from 'effect';
-import type { WorkflowIdentity } from '@/automation/auth';
+import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import type { DistributionFile } from '@/automation/distribution';
 import { readDistributionFile } from '@/automation/distribution';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
@@ -23,7 +23,7 @@ export function readDistributionArtifact(
 	gateway: RepositoryGateway,
 	input: {
 		artifact: DistributionArtifact;
-		identity: WorkflowIdentity;
+		identity: RunIdentity;
 		sourceSha: string;
 		paths: readonly string[];
 	},

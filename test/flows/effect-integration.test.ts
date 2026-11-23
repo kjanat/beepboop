@@ -9,7 +9,8 @@ import { adminSubject, eachWorld, epoch, issuer, origin } from '@root/test/suppo
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Logger, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { decodeJwt } from 'jose';
-import { administrator, workflowIdentity } from '@/automation/auth';
+import { workflowIdentity } from '@/auth/actions-oidc.ts';
+import { administrator } from '@/auth/admin.ts';
 import { AutomationCoordinator } from '@/automation/coordinator';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { Automation, applicationLayer } from '@/automation/service';
