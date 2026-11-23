@@ -1,6 +1,5 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
-import { previousRender } from '@/automation/setup-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { AutoMerge, PreparationResult } from '@/automation/types';
 import type { Edit, Snapshot } from '@/domain/inventory.ts';
@@ -23,6 +22,7 @@ import { sha } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import { placeBlock, setupBlock } from '@/setup/blocks.ts';
+import { previousRender } from '@/setup/server/pull-requests.ts';
 
 const coAuthor = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 const autoMergeSchema = mutableStruct({

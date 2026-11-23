@@ -56,7 +56,6 @@ import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { githubFailureReason } from '@/automation/run-labels';
 import type { AutomationBindings } from '@/automation/service';
 import { Automation, applicationLayer, withAutomation } from '@/automation/service';
-import { maintainSetup } from '@/automation/setup-maintenance';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type {
 	Artifact,
@@ -183,6 +182,7 @@ import {
 	verifySecondaryPublications,
 } from '@/publication/registries/verify.ts';
 import { decodeSetupEditV1 } from '@/setup/edit.ts';
+import { maintainSetup } from '@/setup/server/maintenance.ts';
 import type { SetupEdit } from '@/setup/types.ts';
 import { binaryLegs } from '@/setup/workflows/binaries.ts';
 
