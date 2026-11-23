@@ -33,7 +33,6 @@ import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, ReleaseStarted, Stream, SubscriptionDelivery } from '@/automation/types';
 import { unchangedSince } from '@/automation/unchanged-paths';
-import { Secrets, secretsLayer, Vault } from '@/automation/vault';
 import type { WinGetBindings } from '@/automation/winget';
 import { WinGetService } from '@/automation/winget';
 import { setupChoicesSchema } from '@/contract/setup';
@@ -42,7 +41,8 @@ import { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
 import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
 import { SecretDeliveryStore } from '@/credentials/adapters/d1/secret-deliveries.ts';
 import type { Grant } from '@/credentials/grant.ts';
-import { isRuntimeGrant } from '@/credentials/grant.ts';
+import { isRuntimeGrant, secretAliases } from '@/credentials/grant.ts';
+import { Secrets, secretsLayer, Vault } from '@/credentials/vault.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration/schema.ts';
 import type { Package, RepositoryRecord, Snapshot } from '@/domain/inventory.ts';
@@ -80,6 +80,7 @@ import {
 	mutableStruct,
 	safeDecode,
 } from '@/kernel/schema/structs.ts';
+import { AuditStore } from '@/persistence/d1/audit';
 import { ChangeLog } from '@/persistence/d1/changes';
 import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { Database, databaseLayer } from '@/persistence/d1/database';
@@ -231,9 +232,7 @@ export class AutomationService {
 			cargoToken: (file, secrets) => Effect.gen({ self: this }, function*() {
 				const grants = yield* this.grants.list({ repositoryId: repository.id });
 				const aliases = [...new Set([
-					...grants.filter(grant =>
-						!isRuntimeGrant(grant) && grant.workflow === file && secrets.includes(grant.secretName)
-					).map(grant => grant.alias),
+					...secretAliases(grants, file, secrets),
 					'crates-io',
 				])];
 				for (const alias of aliases) {
@@ -1274,7 +1273,7 @@ export function applicationLayer(
 				Effect.flatMap(value => fromSync(() => decodeSync(mutableRecord(Schema.String, Schema.String), value))),
 			);
 			return new Vault(
-				new Store(db),
+				new AuditStore(db),
 				{ credentials: new CredentialStore(db), grants: new GrantStore(db), deliveries: new SecretDeliveryStore(db) },
 				keys,
 				env.VAULT_ACTIVE_KEY,

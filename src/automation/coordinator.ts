@@ -104,7 +104,7 @@ import { unchangedSince } from '@/automation/unchanged-paths';
 import type { ClaimStep, LedgerManager, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
 import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
-import { runtimeGrant } from '@/credentials/grant.ts';
+import { coversBinding } from '@/credentials/grant.ts';
 import { identifiedManagers, isManagerName, managerSpec } from '@/domain/catalog.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
 import {
@@ -2658,14 +2658,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const missing: string[] = [];
 			for (const alias of stream.credentials) {
 				const grants = yield* (yield* Automation).grants.list({ alias, repositoryId: execution.repositoryId });
-				if (
-					!bindings.some(binding =>
-						grants.some(grant =>
-							grant.workflow === binding.file
-							&& runtimeGrant(grant, binding.operation, execution.repository, binding.ref)
-						)
-					)
-				) missing.push(alias);
+				if (!coversBinding(grants, bindings, execution.repository)) missing.push(alias);
 			}
 			const workflow = stream.promote.workflow?.file ?? execution.workflow?.file;
 			return missing.length

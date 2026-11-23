@@ -1,9 +1,9 @@
 import { Effect } from 'effect';
-import { validCredential } from '@/automation/vault';
 import { routes } from '@/contract/routes';
 import { configuredGrant } from '@/credentials/access.ts';
 import type { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
 import { grantRow } from '@/credentials/grant.ts';
+import { validCredential } from '@/credentials/vault.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';

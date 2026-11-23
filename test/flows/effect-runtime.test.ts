@@ -15,18 +15,19 @@ import {
 	HttpTransport,
 } from '@/automation/service';
 import { Store } from '@/automation/store';
-import { Vault } from '@/automation/vault';
 import { call, send } from '@/contract/client';
 import { routes } from '@/contract/routes';
 import { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
 import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
 import { SecretDeliveryStore } from '@/credentials/adapters/d1/secret-deliveries.ts';
+import { Vault } from '@/credentials/vault.ts';
 import { https } from '@/distribution/assets';
 import { GitHubApp, makeGitHubApp } from '@/github/app.ts';
 import { GitHubTransport, gitHubRequest } from '@/github/transport.ts';
 import { classify, fromSync, recover } from '@/kernel/errors/classify.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { retryTransient } from '@/kernel/http/retry.ts';
+import { AuditStore } from '@/persistence/d1/audit';
 import type { Sql } from '@/persistence/d1/database';
 import { Database } from '@/persistence/d1/database';
 import { SessionStore } from '@/persistence/d1/sessions';
@@ -246,7 +247,7 @@ test('the application layer uses explicitly supplied database, GitHub, HTTP and 
 			}),
 	};
 	const vault = new Vault(
-		new Store(sql),
+		new AuditStore(sql),
 		{ credentials: new CredentialStore(sql), grants: new GrantStore(sql), deliveries: new SecretDeliveryStore(sql) },
 		{},
 		'test',

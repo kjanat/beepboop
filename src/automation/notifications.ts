@@ -1,8 +1,8 @@
 import { Clock, Effect, Result, Schema } from 'effect';
 import type { Store } from '@/automation/store';
-import type { Vault } from '@/automation/vault';
 import { watchedPackageHref } from '@/contract/links';
 import type { DestinationInput } from '@/contract/notifications';
+import type { Vault } from '@/credentials/vault.ts';
 import type { NotificationKind, WatchedRegistry } from '@/domain/catalog.ts';
 import { notificationKinds, watchedRegistries } from '@/domain/catalog.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
