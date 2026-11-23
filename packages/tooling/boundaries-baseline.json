@@ -264,6 +264,14 @@
 		"specifier": "@/contract/views"
 	},
 	{
+		"file": "packages/release/src/domain/planning/editors.ts",
+		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/release/src/domain/planning/managers.ts",
+		"specifier": "@/automation/types"
+	},
+	{
 		"file": "packages/release/src/domain/release-set.ts",
 		"specifier": "@/automation/execution"
 	},

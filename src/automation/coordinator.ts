@@ -29,7 +29,6 @@ import { mergeArtifacts, resolveInputs } from '@/automation/execution-outputs';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
-import { observedVersion, placeholderVersion } from '@/automation/managers';
 import {
 	commitVersion,
 	enableAutoMerge,
@@ -179,6 +178,7 @@ import {
 	packageTagRows,
 	taggedReleases,
 } from '@/release/domain/package-tags.ts';
+import { observedVersion, placeholderVersion } from '@/release/domain/planning/managers.ts';
 import { compileReleaseSet } from '@/release/domain/release-set.ts';
 import { manifestProblems, releasePaths } from '@/release/domain/version.ts';
 import { decodeSetupEditV1 } from '@/setup/edit.ts';

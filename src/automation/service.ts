@@ -5,13 +5,11 @@ import type { SessionStore } from '@/auth/adapters/d1/sessions.ts';
 import type { AuthBindings, AuthenticationDependencies } from '@/auth/service.ts';
 import { Authentication, authentication } from '@/auth/service.ts';
 import type { AutomationCoordinator } from '@/automation/coordinator';
-import { planVersionFiles } from '@/automation/editors';
 import { createExecution, deriveExecution } from '@/automation/execution';
 import type { Credentials } from '@/automation/gateway.ts';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEvent } from '@/automation/inbox';
-import { planRelease } from '@/automation/managers';
 import { preparationMerge } from '@/automation/preparation-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { Store } from '@/automation/store';
@@ -76,6 +74,8 @@ import { resolvePublished } from '@/publication/registries/verify.ts';
 import { setUpJsrPackages } from '@/publication/setup/jsr.ts';
 import type { WinGetBindings } from '@/publication/winget/service.ts';
 import { WinGetService } from '@/publication/winget/service.ts';
+import { planVersionFiles } from '@/release/domain/planning/editors.ts';
+import { planRelease } from '@/release/domain/planning/managers.ts';
 import {
 	hasTagPromotion,
 	manifestProblems,
