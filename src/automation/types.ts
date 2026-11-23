@@ -5,11 +5,11 @@ import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration/schema.ts';
 import type { GitHubRunState } from '@/domain/github-run-state.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
+import type { PackageIdentity } from '@/domain/purl/index.ts';
 import type { ModuleTag, RefPlan, RefState } from '@/domain/refs.ts';
 import type { GateSkip } from '@/domain/release-gates.ts';
 import type { StartChannel } from '@/domain/release-start.ts';
 import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
-import type { PackageIdentity } from '@/package-url';
 import type { PublishKind } from '@/publication/publish-pace.ts';
 
 export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration/schema.ts';

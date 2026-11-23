@@ -17,6 +17,7 @@ import { githubRunState } from '@/domain/github-run-state.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { publicationSchema } from '@/domain/package-publication.ts';
+import type { PackageIdentity } from '@/domain/purl/index.ts';
 import type { RefPlan } from '@/domain/refs.ts';
 import { gateSkip } from '@/domain/release-gates.ts';
 import { startChannel } from '@/domain/release-start.ts';
@@ -24,7 +25,6 @@ import { autoMergeMethods, versionPrMerge } from '@/domain/setup-terms.ts';
 import { diagnostic, isDiagnosticCode } from '@/kernel/errors/diagnostics.ts';
 import { stringsSchema as strings } from '@/kernel/schema/result.ts';
 import { decodeSync, mapped, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
-import type { PackageIdentity } from '@/package-url';
 import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
 import { identifyExecution, normalizePublication } from '@/persistence/codecs/stored';
 

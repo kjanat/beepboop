@@ -5,9 +5,9 @@ import { isPyproject, privateProject } from '@/discovery/managers/pyproject.ts';
 import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
+import { packageIdentity } from '@/domain/purl/index.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
-import { packageIdentity } from '@/package-url';
 
 export const projectName = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 export function normalizedProject(name: string): string {

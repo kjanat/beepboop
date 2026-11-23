@@ -5,10 +5,10 @@ import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import { cargoMembers } from '@/discovery/managers/workspaces.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
+import { packageIdentity } from '@/domain/purl/index.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
-import { packageIdentity } from '@/package-url';
 
 export const cargoDiscoverer = {
 	name: 'cargo',

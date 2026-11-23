@@ -2,8 +2,8 @@ import { cp, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Effect } from 'effect';
+import source from '@/domain/purl/source.json';
 import { git as runGit } from '@/host/git.ts';
-import source from '@/package-url/source.json';
 import { definitionFiles } from '@/tooling/purl/definition-files';
 import { attempt, attemptPromise, main, refuse, run, temporaryDirectory } from '@/tooling/runtime';
 

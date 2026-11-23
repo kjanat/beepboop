@@ -7,10 +7,10 @@ import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import type { Package } from '@/domain/inventory.ts';
 import { excluded, publishable, registry } from '@/domain/package-publication.ts';
+import { packageIdentity } from '@/domain/purl/index.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
-import { packageIdentity } from '@/package-url';
 
 const defaultRegistry = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)(?:[/:?#]|$)/;
 function foreignRegistry(value: unknown): boolean {
