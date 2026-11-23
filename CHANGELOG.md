@@ -32,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A release skips an unfinished job that has an `environment`, such as an Actions publishing job behind a wait timer in the workflow that verifies the commit. The release waited until that job finished. Such a job that failed still stops the release.
+- `beepboop runs publish` clears the reason the release waited for. After a forced publish the CLI printed "Releases when the commit is verified and its checks pass" for a release already on its way.
 - A start for a version whose preparation failed or was cancelled restarts that preparation. It keeps an earlier `--force`, and under `concurrency: supersede-pending` it cancels the stream's other pending preparations. The start request answered with success and left the preparation stopped, so the release never published.
 - A retry or start of an operation you cancelled clears your cancellation. When GitHub then cancelled the new run, the operation counted as cancelled by you and could not be retried again.
 - Adopting a repository with several tag-triggered release workflows gives each tag family its own promotion workflow with that family's tag prefix, and its observed workflow waits for that promotion. Setup gave neither family a promotion. Generated workflow names stay unique across the streams. Unclaimed crates and Go modules join a stream only when the repository has one tag family.

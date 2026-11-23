@@ -1206,3 +1206,102 @@ test('a promotion waits for the pending release of its dependency from an earlie
 	]);
 	expect(world.github.dispatches).toEqual([]);
 }, 60_000);
+
+test.each(
+	[
+		[
+			'releases while a job with an environment waits',
+			'    environment: tag\n',
+			'waiting',
+			null,
+			'actions.yml',
+			1,
+			undefined,
+		],
+		[
+			'waits for an unfinished job without an environment',
+			'',
+			'waiting',
+			null,
+			'actions.yml',
+			0,
+			'Releases when the commit is verified and its checks pass: publish is still running',
+		],
+		[
+			'waits for an unfinished job whose workflow file the commit lacks',
+			'    environment: tag\n',
+			'waiting',
+			null,
+			'removed.yml',
+			0,
+			'Releases when the commit is verified and its checks pass: publish is still running',
+		],
+		[
+			'stops at a failed job with an environment',
+			'    environment: tag\n',
+			'completed',
+			'failure',
+			'actions.yml',
+			0,
+			'Releases when the commit is verified and its checks pass: publish failure',
+		],
+	] as const,
+)('a promotion %s', async (_case, environment, status, conclusion, file, dispatched, reason) => {
+	const repository = widget(world.github, { configured: false });
+	world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['npm', 'workflow'],
+			streams: {
+				main: {
+					packages: ['pkg:npm/widget'],
+					required: ['pkg:npm/widget'],
+					prepare: { strategy: 'managed' },
+					promote: { approval: 'push', workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] } },
+				},
+			},
+		}),
+		'.github/workflows/actions.yml': [
+			'on: push',
+			'jobs:',
+			'  verify:',
+			'    runs-on: ubuntu-latest',
+			'    steps:',
+			'      - run: bun test',
+			'  publish:',
+			'    needs: verify',
+			`${environment}    runs-on: ubuntu-latest`,
+			'    steps:',
+			'      - run: bun run publish-actions',
+			'',
+		].join('\n'),
+	}, 'Publish the Actions after verification');
+	passChecks(repository, world.github.head(repository));
+	world.npm.publish('widget', '1.0.0');
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const raised = world.github.push(repository, { 'package.json': manifest('widget', '1.1.0') }, 'Release widget 1.1.0');
+	repository.runs.push({
+		id: 77,
+		path: `.github/workflows/${file}`,
+		event: 'push',
+		headSha: raised.sha,
+		headBranch: repository.defaultBranch,
+		status: 'in_progress',
+		conclusion: null,
+		attempt: 1,
+		title: 'Release widget 1.1.0',
+		inputs: {},
+	});
+	repository.checks.set(raised.sha, [
+		{ name: 'verify', status: 'completed', conclusion: 'success', runId: 77 },
+		{ name: 'publish', status, conclusion, runId: 77 },
+	]);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	const [promotion] = await promotions(api);
+	expect([promotion?.sourceSha, promotion?.reason]).toEqual([raised.sha, reason]);
+	expect(world.github.dispatches.filter(dispatch => dispatch.file === 'publish.yml')).toHaveLength(dispatched);
+	if (dispatched) return;
+	const forced = await api('/api/executions/approve', { id: promotion?.id, sourceSha: raised.sha, force: true });
+	expect([forced.status, field(forced.body, 'state'), field(forced.body, 'reason')]).toEqual([200, 'ready', undefined]);
+}, 60_000);
