@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import type { Repository } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
+import { licenseText, npmManifest } from '@root/test/support/repositories.ts';
 import { applyChoices, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -111,6 +112,92 @@ test('a configuration without extends that states every value gets no format PR 
 	);
 	expect([after.extends, after.streams.main.versionScope]).toEqual([undefined, 'one-for-stream']);
 });
+
+const discoveredShape = looseStruct({
+	configuration: Schema.optional(looseStruct({ streams: looseStruct({}) })),
+	findings: Schema.Array(looseStruct({ code: Schema.String })),
+});
+
+test('a repository without the configuration file releases when its workflows run the Beepboop actions', async () => {
+	const { repository } = await managed();
+	const api = bearer(world, await world.cliSession());
+	const committed = decodeSync(
+		discoveredShape,
+		(await api('/api/repositories/discover', { repository: repository.name })).body,
+	);
+	world.github.push(repository, { [configurationPath]: null }, 'Drop the configuration file');
+	const discovered = decodeSync(
+		discoveredShape,
+		(await api('/api/repositories/discover', { repository: repository.name })).body,
+	);
+	const released = mutableStruct({
+		managers: Schema.Array(Schema.String),
+		streams: mutableStruct({
+			main: mutableStruct({
+				packages: Schema.Unknown,
+				required: Schema.Unknown,
+				credentials: Schema.Unknown,
+				packageTags: Schema.Unknown,
+				versioning: Schema.String,
+				promote: mutableStruct({
+					approval: Schema.String,
+					workflow: mutableStruct({ file: Schema.String, publications: Schema.Unknown, refs: Schema.Unknown }),
+				}),
+			}),
+		}),
+	});
+	expect(decodeSync(released, discovered.configuration)).toEqual(decodeSync(released, committed.configuration));
+	expect(discovered.findings.map(entry => entry.code)).not.toContain('unconfigured');
+	const planned = await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.0.1' });
+	expect(planned.status).toBe(200);
+});
+
+test('a repository without the configuration file stays unconfigured while setup would rewrite its workflow', async () => {
+	const { repository } = await managed();
+	const workflow = world.github.file(repository, '.github/workflows/release.yml') ?? '';
+	world.github.push(repository, {
+		[configurationPath]: null,
+		'.github/workflows/release.yml': workflow.replace('    timeout-minutes: 90\n', ''),
+	}, 'Drop the configuration file');
+	const api = bearer(world, await world.cliSession());
+	const discovered = decodeSync(
+		discoveredShape,
+		(await api('/api/repositories/discover', { repository: repository.name })).body,
+	);
+	expect(discovered.configuration).toBeUndefined();
+	expect(discovered.findings.map(entry => entry.code)).toContain('unconfigured');
+});
+
+test.each([
+	['no Beepboop step', '      - run: npm publish\n', {}],
+	[
+		'only the credentials action',
+		'      - uses: kjanat/beepboop/actions/credentials@v1\n      - run: npm publish\n',
+		{},
+	],
+	['only a local action', '      - uses: ./actions/setup\n      - run: npm publish\n', {}],
+])(
+	'a repository without the configuration file stays unconfigured when its publish workflow has %s',
+	async (_case, steps, extra: Record<string, string>) => {
+		const repository = world.github.create('octo/lib', {
+			'package.json': npmManifest('lib', '1.0.0'),
+			'README.md': '# lib\n',
+			LICENSE: licenseText,
+			'.github/workflows/publish.yml':
+				`name: Publish\non: workflow_dispatch\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n${steps}`,
+			...extra,
+		});
+		const api = bearer(world, await world.cliSession());
+		const discovered = decodeSync(
+			discoveredShape,
+			(await api('/api/repositories/discover', { repository: repository.name })).body,
+		);
+		expect(discovered.configuration).toBeUndefined();
+		expect(discovered.findings.map(entry => entry.code)).toContain('unconfigured');
+		const plan = await previewSetup(api, repository.name);
+		expect([plan.blockers, plan.edits.map(edit => edit.path)]).toEqual([[], [configurationPath]]);
+	},
+);
 
 test('auto-merge uses a merge method the repository allows', async () => {
 	const { repository } = await managed();

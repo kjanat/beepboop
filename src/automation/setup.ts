@@ -330,13 +330,12 @@ export function previewSetup(
 		return { ...plan, planId };
 	});
 }
-function draftSetup(
+function proposedSetup(
 	snapshot: Snapshot,
 	inventory: Inventory,
-	input: unknown,
 	baseline: SetupBaseline,
 	resolved?: Configuration,
-): Effect.Effect<Omit<SetupPlan, 'planId'>, DomainError> {
+) {
 	return Effect.gen(function*() {
 		const raw = yield* storedConfiguration(snapshot);
 		const workflows = yield* evidence(snapshot, inventory);
@@ -351,6 +350,56 @@ function draftSetup(
 			inventory,
 			{ ...requested, streams: withDependencies(inventory, requested) },
 			raw,
+		);
+		return { raw, workflows, graph, candidates, requested, proposal };
+	});
+}
+export function inferredConfiguration(
+	snapshot: Snapshot,
+	inventory: Inventory,
+): Effect.Effect<string | undefined, DomainError> {
+	return Effect.gen(function*() {
+		const beginning = new Set(
+			Object.entries(snapshot.files).flatMap(([path, source]) => {
+				const file = /^\.github\/workflows\/([^/]+\.ya?ml)$/.exec(path)?.[1];
+				return file && workflowActions(source).has('begin') ? [file] : [];
+			}),
+		);
+		if (snapshot.files['.github/beepboop.json'] !== undefined || !beginning.size) return undefined;
+		const baseline: SetupBaseline = { head: null };
+		const { raw, workflows, requested } = yield* proposedSetup(snapshot, inventory, baseline);
+		const unbuilt: SetupChoices = {
+			...requested,
+			streams: requested.streams.map(stream => {
+				if (!stream.promote?.binaries) return stream;
+				const { binaries: _binaries, ...promote } = stream.promote;
+				return { ...stream, promote };
+			}),
+		};
+		const adopted = completeChoices(
+			snapshot,
+			inventory,
+			{ ...unbuilt, streams: withDependencies(inventory, unbuilt) },
+			raw,
+		);
+		const { plan } = yield* drafted(snapshot, inventory, adopted, raw, workflows, baseline);
+		if (plan.blockers.length || plan.edits.some(edit => edit.path !== '.github/beepboop.json')) return undefined;
+		return plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after;
+	});
+}
+function draftSetup(
+	snapshot: Snapshot,
+	inventory: Inventory,
+	input: unknown,
+	baseline: SetupBaseline,
+	resolved?: Configuration,
+): Effect.Effect<Omit<SetupPlan, 'planId'>, DomainError> {
+	return Effect.gen(function*() {
+		const { raw, workflows, graph, candidates, requested, proposal } = yield* proposedSetup(
+			snapshot,
+			inventory,
+			baseline,
+			resolved,
 		);
 		const chosen = input === undefined ? undefined : yield* decodeRequest(setupChoicesSchema, input);
 		const choices = chosen ? completeChoices(snapshot, inventory, chosen, raw) : proposal;
