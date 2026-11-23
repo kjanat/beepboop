@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import { auditActor } from '@/domain/audit';
+import { parseActor } from '@/domain/audit';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
@@ -31,7 +31,7 @@ export class AuditStore {
 				'INSERT INTO audit(id,actor,actor_json,action,target,created_at) VALUES(?,?,?,?,?,?)',
 				crypto.randomUUID(),
 				actor,
-				JSON.stringify(auditActor(actor)),
+				JSON.stringify(parseActor(actor)),
 				action,
 				target,
 				clock.currentTimeMillisUnsafe(),
