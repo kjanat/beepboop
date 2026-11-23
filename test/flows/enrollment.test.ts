@@ -4,9 +4,9 @@ import { bearer, field, text } from '@root/test/support/http.ts';
 import type { World } from '@root/test/support/world.ts';
 import { adminSubject, eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
+import { SessionStore } from '@/auth/adapters/d1/sessions.ts';
 import type { CborValue } from '@/cli/fido2/cbor';
 import { encode } from '@/cli/fido2/cbor';
-import { SessionStore } from '@/persistence/d1/sessions';
 
 let world: World;
 eachWorld(created => {

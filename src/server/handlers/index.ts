@@ -1,3 +1,4 @@
+import { securityEndpoints } from '@/auth/http/security.ts';
 import type { RouteId, Routes } from '@/contract/routes';
 import { changeEndpoints } from '@/server/handlers/changes';
 import { credentialEndpoints } from '@/server/handlers/credentials';
@@ -6,7 +7,6 @@ import type { Endpoint } from '@/server/handlers/kit';
 import { notificationEndpoints } from '@/server/handlers/notifications';
 import { releaseEndpoints } from '@/server/handlers/releases';
 import { repositoryEndpoints } from '@/server/handlers/repositories';
-import { securityEndpoints } from '@/server/handlers/security';
 import { wingetEndpoints } from '@/server/handlers/winget';
 import { workflowEndpoints } from '@/server/handlers/workflow';
 

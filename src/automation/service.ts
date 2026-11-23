@@ -1,7 +1,9 @@
 import { CronExpressionParser } from 'cron-parser';
 import { Clock, Context, Effect, Layer, Result, Schema } from 'effect';
-import type { AuthBindings, AuthenticationDependencies } from '@/automation/auth';
-import { Authentication, authentication } from '@/automation/auth';
+import type { CLISessionStore } from '@/auth/adapters/d1/cli-sessions.ts';
+import type { SessionStore } from '@/auth/adapters/d1/sessions.ts';
+import type { AuthBindings, AuthenticationDependencies } from '@/auth/service.ts';
+import { Authentication, authentication } from '@/auth/service.ts';
 import type { AutomationCoordinator } from '@/automation/coordinator';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution, deriveExecution } from '@/automation/execution';
@@ -82,11 +84,9 @@ import {
 } from '@/kernel/schema/structs.ts';
 import { AuditStore } from '@/persistence/d1/audit';
 import { ChangeLog } from '@/persistence/d1/changes';
-import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import { Database, databaseLayer } from '@/persistence/d1/database';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
-import type { SessionStore } from '@/persistence/d1/sessions';
 import { executionId } from '@/persistence/identity-keys';
 import { readBody } from '@/webhook';
 

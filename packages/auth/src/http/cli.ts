@@ -1,30 +1,12 @@
 import { Effect } from 'effect';
-import type { AuthBindings, AuthenticationDependencies } from '@/automation/auth';
+import { cliSubject } from '@/auth/cli-sessions.ts';
+import { AuthPages } from '@/auth/pages.ts';
+import type { AuthBindings, AuthenticationDependencies } from '@/auth/service.ts';
 import { fromJson, fromPromise, toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { unauthenticated } from '@/kernel/errors/domain-error.ts';
 import { responseText } from '@/kernel/http/body.ts';
-import { cliToken, cliTokenPattern, confirmationCode, loginSecretPattern, sha256Hex } from '@/kernel/schema/ids.ts';
+import { cliToken, confirmationCode, loginSecretPattern, sha256Hex } from '@/kernel/schema/ids.ts';
 import { record, string } from '@/kernel/schema/result.ts';
-import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
-
-type CLIEnvironment = Pick<AuthBindings, 'ADMIN_SUBJECT'> & Partial<Pick<AuthBindings, 'DB'>>;
-export function cliSubject(
-	request: Request,
-	env: CLIEnvironment,
-	sessions: CLISessionStore,
-): Effect.Effect<string, DomainError> {
-	return Effect.gen(function*() {
-		const token = request.headers.get('authorization')?.match(/^Bearer (\S+)$/)?.[1];
-		if (!token || !cliTokenPattern.test(token)) return yield* unauthenticated('CLI login required');
-		const hash = yield* fromPromise(() => sha256Hex(token));
-		const subject = yield* sessions.subject(hash);
-		if (!subject || !env.ADMIN_SUBJECT || subject !== env.ADMIN_SUBJECT) {
-			return yield* unauthenticated('CLI session revoked; run beepboop auth login');
-		}
-		return subject;
-	});
-}
 
 /** Browser approval and a one-time, verifier-bound exchange, using the existing OAuth login. */
 export function cliAuthRoute(
@@ -32,7 +14,7 @@ export function cliAuthRoute(
 	env: AuthBindings,
 	verify: (request: Request, env: AuthBindings) => Effect.Effect<string, DomainError>,
 	dependencies: Pick<AuthenticationDependencies, 'sessions' | 'cliSessions'>,
-): Effect.Effect<Response, DomainError> {
+): Effect.Effect<Response, DomainError, AuthPages> {
 	return Effect.gen(function*() {
 		const url = new URL(request.url);
 		const json = (value: unknown, status = 200) =>
@@ -88,16 +70,9 @@ export function cliAuthRoute(
 			if (request.headers.get('origin') !== env.APPLICATION_ORIGIN) return json({ error: 'Invalid origin' }, 403);
 			yield* dependencies.sessions.offer('cli-approval', `cli-approval:${challenge}`, { subject }, 300000);
 		}
+		const pages = yield* AuthPages;
 		return new Response(
-			`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Beepboop CLI login</title><main><h1>${
-				approved ? 'Terminal approved' : 'Authorize Beepboop CLI'
-			}</h1>${
-				approved
-					? '<p>Return to your terminal. You can close this page.</p>'
-					: `<p>Only approve if you just ran beepboop auth login in your own terminal. This grants administrator API access until you run beepboop auth logout. Security-key checks still apply.</p><p>Confirm this code matches your terminal: <strong>${
-						confirmationCode(challenge)
-					}</strong></p><form method="post"><button>Authorize my terminal</button></form>`
-			}</main></html>`,
+			pages.cliApproval(approved ? { _tag: 'Approved' } : { _tag: 'Authorize', code: confirmationCode(challenge) }),
 			{
 				headers: {
 					'Content-Type': 'text/html; charset=utf-8',

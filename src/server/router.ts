@@ -1,7 +1,8 @@
 import targetsSchema from '@root/schemas/targets.v1.json';
 import schema from '@root/schemas/v1.json' with { type: 'json' };
 import { Effect } from 'effect';
-import { authRoute } from '@/automation/auth';
+import { authRoute } from '@/auth/http/dashboard.ts';
+import { AuthPages } from '@/auth/pages.ts';
 import type { Automation, AutomationService } from '@/automation/service';
 import { withAutomation } from '@/automation/service';
 import type { Method, RouteId } from '@/contract/routes';
@@ -9,6 +10,7 @@ import { routeIds, routes } from '@/contract/routes';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { domainError, notFound } from '@/kernel/errors/domain-error.ts';
+import { authPages } from '@/server/auth-pages.ts';
 import { endpoints } from '@/server/handlers/index';
 import type { Endpoint } from '@/server/handlers/kit';
 import { readBody } from '@/webhook';
@@ -63,7 +65,9 @@ export function dispatch(
 			return yield* raw.serve(request, service);
 		}
 		if (path.startsWith('/auth/')) {
-			const response = yield* authRoute(request, env, service.authentication);
+			const response = yield* authRoute(request, env, service.authentication).pipe(
+				Effect.provideService(AuthPages, authPages),
+			);
 			if (response) return response;
 			return yield* notFound('route', 'Not found');
 		}

@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
-import type { WorkflowIdentity } from '@/automation/auth';
-import { administrator, workflowIdentity } from '@/automation/auth';
+import type { RunIdentity } from '@/auth/actions-oidc.ts';
+import { workflowIdentity } from '@/auth/actions-oidc.ts';
+import { administrator } from '@/auth/admin.ts';
 import type { AutomationBindings, AutomationService } from '@/automation/service';
 import type { AnyRoute, Known, Route } from '@/contract/routes';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
@@ -21,7 +22,7 @@ export interface AdminContext extends Context {
 	actor: string;
 }
 export interface WorkflowContext extends Context {
-	identity: WorkflowIdentity;
+	identity: RunIdentity;
 }
 export interface EnrolledContext extends WorkflowContext {
 	enrollment: RepositoryRecord;
@@ -103,7 +104,7 @@ export function elevated<Q extends Contract, S extends Contract>(
 	};
 }
 
-function identify(context: Context): Effect.Effect<WorkflowIdentity, DomainError> {
+function identify(context: Context): Effect.Effect<RunIdentity, DomainError> {
 	return workflowIdentity(
 		context.request,
 		context.env.APPLICATION_ORIGIN,

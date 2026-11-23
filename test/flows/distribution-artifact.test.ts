@@ -5,14 +5,14 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Effect } from 'effect';
-import type { WorkflowIdentity } from '@/automation/auth';
+import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { readDistributionArtifact } from '@/automation/distribution-artifact';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 
 const repository = 'octo/widget';
 const sourceSha = 'a'.repeat(40);
 const runSha = 'b'.repeat(40);
-const identity: WorkflowIdentity = {
+const identity: RunIdentity = {
 	repositoryId: 1,
 	repository,
 	ownerId: 1,

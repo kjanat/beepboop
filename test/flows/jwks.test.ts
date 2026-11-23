@@ -3,7 +3,7 @@ import { Effect } from 'effect';
 import { TestClock } from 'effect/testing';
 import { exportJWK, generateKeyPair } from 'jose';
 import type { JwsKeyRequest, JwsKeyResolver } from 'micro509/jose';
-import { remoteKeys } from '@/automation/jwks';
+import { remoteKeys } from '@/auth/jwks.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 
 const endpoint = new URL('https://issuer.example/.well-known/jwks');

@@ -1,5 +1,21 @@
 [
 	{
+		"file": "packages/auth/src/http/security.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/auth/src/http/security.ts",
+		"specifier": "@/server/handlers/kit"
+	},
+	{
+		"file": "packages/auth/src/workflow-token.ts",
+		"specifier": "@/automation/execution"
+	},
+	{
+		"file": "packages/auth/src/workflow-token.ts",
+		"specifier": "@/automation/types"
+	},
+	{
 		"file": "packages/cli/src/cli.ts",
 		"specifier": "@/contract/routes"
 	},
