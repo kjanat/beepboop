@@ -12,7 +12,7 @@ import {
 } from '@/release/domain/execution/execution.ts';
 import { githubFailureReason } from '@/release/domain/execution/run-labels.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
-import { runStateLabel } from '@/server/releases';
+import { runStateLabel } from '@/release/domain/summaries.ts';
 
 function execution(): Execution {
 	return decodeExecutionV1({

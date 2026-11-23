@@ -2,8 +2,8 @@
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import ReleaseSummary from '@/components/ReleaseSummary.astro';
+import { runStateLabel } from '@/release/domain/summaries.ts';
 import type { ViewOf } from '@/server/loaders.ts';
-import { runStateLabel } from '@/server/releases.ts';
 import { overview } from '@/server/views/overview.ts';
 import { executionTone, runLabel } from '@/server/views/tone.ts';
 

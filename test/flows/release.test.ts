@@ -36,8 +36,14 @@ import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 import { createExecution, runFailedNote } from '@/release/domain/execution/execution.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { executionId, releaseEventId } from '@/release/domain/identity-keys.ts';
+import {
+	checksPolicy,
+	needingUser,
+	releaseSetSummaries,
+	releaseSummaries,
+	runStateLabel,
+} from '@/release/domain/summaries.ts';
 import { loaders } from '@/server/loaders';
-import { checksPolicy, needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
 import { pipeline, runCard } from '@/server/views/runs';
 import { releaseStatus } from '@/server/views/tone';
