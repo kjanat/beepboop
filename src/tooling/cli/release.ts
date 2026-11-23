@@ -6,8 +6,16 @@ import { checkoutAt } from '@/host/git.ts';
 import { writeOutput } from '@/host/github-output.ts';
 import { sha256Hex } from '@/kernel/crypto/sha256.ts';
 import { responseJson } from '@/kernel/http/body.ts';
-import { looseSchema } from '@/kernel/schema/result.ts';
-import { mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import {
+	jsrChangedFiles,
+	jsrFilePaths,
+	jsrFiles,
+	jsrPackage,
+	jsrVersion,
+	npmBuild,
+	npmVersion,
+} from '@/publication/registries/release-check.ts';
 import { packageManifest } from '@/tooling/cli/manifest';
 import { registry } from '@/tooling/cli/registry';
 import {
@@ -24,12 +32,6 @@ import {
 
 const root = resolve(import.meta.dir, '../../..');
 const directory = join(root, 'packages/cli');
-const npmVersion = mutableStruct({ dist: Schema.optional(Schema.NullOr(mutableStruct({ integrity: looseSchema }))) });
-const jsrPackage = mutableStruct({
-	versions: Schema.optional(Schema.NullOr(mutableRecord(Schema.String, Schema.Unknown))),
-});
-const jsrVersion = mutableStruct({ yanked: looseSchema });
-const jsrFiles = mutableStruct({ manifest: mutableRecord(Schema.String, mutableStruct({ checksum: Schema.String })) });
 
 function output(name: string, value: string): Effect.Effect<void, ToolFailure> {
 	return writeOutput(name, value).pipe(
@@ -101,20 +103,21 @@ await main(Effect.gen(function*() {
 					`https://registry.npmjs.org/${encodeURIComponent(npm.name)}/${npm.version}`,
 				);
 				if (response.ok) {
-					const published = (yield* parse(npmVersion, yield* body(response))).dist?.integrity;
-					if (typeof published !== 'string') {
-						return yield* refuse('npm returned no integrity for the published version');
+					const build = npmBuild(yield* parse(npmVersion, yield* body(response)), integrity);
+					switch (build.kind) {
+						case 'unreadable':
+							return yield* refuse('npm returned no integrity for the published version');
+						case 'matches':
+							yield* output('integrity', build.integrity);
+							console.log(`npm ${npm.name}@${npm.version} matches this build (${integrity}).`);
+							return;
+						case 'differs':
+							console.log(
+								`::error::npm ${npm.name}@${npm.version} has integrity ${build.published}. This build has integrity ${integrity}.`,
+							);
+							process.exitCode = 1;
+							return;
 					}
-					if (published === integrity) {
-						yield* output('integrity', published);
-						console.log(`npm ${npm.name}@${npm.version} matches this build (${integrity}).`);
-					} else {
-						console.log(
-							`::error::npm ${npm.name}@${npm.version} has integrity ${published}. This build has integrity ${integrity}.`,
-						);
-						process.exitCode = 1;
-					}
-					return;
 				}
 				yield* output('integrity', integrity);
 				const userconfig = join(temporary, '.npmrc');
@@ -159,11 +162,9 @@ await main(Effect.gen(function*() {
 			const files = yield* registry(`https://jsr.io/${jsr.name}/${jsr.version}_meta.json`);
 			if (!files.ok) return yield* refuse(`JSR returned no file list for ${jsr.name}@${jsr.version}`);
 			const { manifest: remote } = yield* parse(jsrFiles, yield* body(files));
-			const paths = new Set([...Object.keys(remote), ...jsr.publish.include.map(path => `/${path}`)]);
-			const changed: string[] = [];
-			for (const path of [...paths].sort()) {
-				if (remote[path]?.checksum !== (yield* checksum(path))) changed.push(path);
-			}
+			const local = new Map<string, string | undefined>();
+			for (const path of jsrFilePaths(remote, jsr.publish.include)) local.set(path, yield* checksum(path));
+			const changed = jsrChangedFiles(remote, local);
 			if (changed.length) {
 				console.log(`::error::JSR ${jsr.name}@${jsr.version} differs from this build in ${changed.join(', ')}.`);
 				process.exitCode = 1;
