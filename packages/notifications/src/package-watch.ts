@@ -15,7 +15,7 @@ import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { sql } from '@/persistence/d1/database';
 import { jsrLatest } from '@/publication/registries/jsr.ts';
 import { npmLatest } from '@/publication/registries/npm.ts';
-import type { RegistryVersion } from '@/publication/registries/registry.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 
 export interface PackageWatch extends WatchedPackage {
 	manual: boolean;
@@ -26,7 +26,7 @@ export interface PackageWatch extends WatchedPackage {
 	awaitingRelease: boolean;
 }
 
-const lookups: Record<WatchedRegistry, (name: string, request: Fetcher) => Effect.Effect<RegistryVersion>> = {
+const lookups: Record<WatchedRegistry, (name: string, request: Fetcher) => Effect.Effect<VerificationOutcome>> = {
 	npm: npmLatest,
 	jsr: jsrLatest,
 };
@@ -113,15 +113,15 @@ export function pollPackages(
 		for (const watch of yield* packageWatches(db, repositories)) {
 			yield* addWatch(db, notifications, watch.registry, watch.name, false);
 			const latest = yield* lookups[watch.registry](watch.name, request).pipe(
-				recover(error => Effect.succeed<RegistryVersion>({ kind: 'failed', url: '', reason: decodeError(error) })),
+				recover(error => Effect.succeed(VerificationOutcome.LookupFailed({ url: '', reason: decodeError(error) }))),
 			);
-			if (latest.kind !== 'published') {
+			if (latest._tag !== 'Published') {
 				yield* watched.unpublished(
 					watch.registry,
 					watch.name,
 					now,
-					latest.kind === 'missing' ? 'Not published' : latest.reason,
-					latest.kind === 'missing',
+					latest._tag === 'Missing' ? 'Not published' : latest.reason,
+					latest._tag === 'Missing',
 				);
 				continue;
 			}

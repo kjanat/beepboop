@@ -6,7 +6,7 @@ import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { ResponseReadError, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
-import type { RegistryVersion } from '@/publication/registries/registry.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 
 export interface RegistryRequest {
 	method?: 'POST';
@@ -92,7 +92,7 @@ export function latestVersion(
 	url: string,
 	decode: (body: unknown) => unknown,
 	query?: RegistryRequest,
-): Effect.Effect<RegistryVersion> {
+): Effect.Effect<VerificationOutcome> {
 	return lookup(
 		request,
 		url,
@@ -104,7 +104,7 @@ export function latestText(
 	request: Fetcher,
 	url: string,
 	decode: (body: string) => unknown,
-): Effect.Effect<RegistryVersion> {
+): Effect.Effect<VerificationOutcome> {
 	return lookup(request, url, response => responseText(response).pipe(Effect.map(decode)));
 }
 function lookup(
@@ -112,7 +112,7 @@ function lookup(
 	url: string,
 	read: (response: Response) => Effect.Effect<unknown, unknown>,
 	query?: RegistryRequest,
-): Effect.Effect<RegistryVersion> {
+): Effect.Effect<VerificationOutcome> {
 	return Effect.gen(function*() {
 		const response = yield* registryRequest(request, url, query).pipe(
 			Effect.mapError(error =>
@@ -121,23 +121,23 @@ function lookup(
 					: 'network request failed'
 			),
 		);
-		if (response.status === 404) return { kind: 'missing', url } satisfies RegistryVersion;
-		if (!response.ok) return { kind: 'failed', url, reason: `HTTP ${response.status}` } satisfies RegistryVersion;
+		if (response.status === 404) return VerificationOutcome.Missing({ url });
+		if (!response.ok) return VerificationOutcome.LookupFailed({ url, reason: `HTTP ${response.status}` });
 		const version = yield* read(response).pipe(Effect.mapError(error => {
 			const cause = error instanceof ResponseReadError ? error.cause : error;
 			if (cause instanceof Error && cause.name === 'TimeoutError') return 'request timed out';
 			return cause instanceof SyntaxError ? 'invalid registry response' : 'registry response could not be read';
 		}));
-		if (version === unpublished) return { kind: 'missing', url } satisfies RegistryVersion;
+		if (version === unpublished) return VerificationOutcome.Missing({ url });
 		if (version instanceof LookupFailure) {
-			return { kind: 'failed', url, reason: version.reason } satisfies RegistryVersion;
+			return VerificationOutcome.LookupFailed({ url, reason: version.reason });
 		}
 		return Result.match(semver(version), {
-			onSuccess: (value): RegistryVersion => ({ kind: 'published', version: value.replace(/^v/, '') }),
-			onFailure: (): RegistryVersion => ({ kind: 'failed', url, reason: 'no valid version' }),
+			onSuccess: (value): VerificationOutcome => VerificationOutcome.Published({ version: value.replace(/^v/, '') }),
+			onFailure: (): VerificationOutcome => VerificationOutcome.LookupFailed({ url, reason: 'no valid version' }),
 		});
 	}).pipe(
 		Effect.scoped,
-		Effect.orElseSucceed((reason): RegistryVersion => ({ kind: 'failed', url, reason })),
+		Effect.orElseSucceed((reason): VerificationOutcome => VerificationOutcome.LookupFailed({ url, reason })),
 	);
 }

@@ -3,7 +3,8 @@ import type { Publication } from '@/automation/types';
 import { goreleaserDiscoverer } from '@/discovery/managers/goreleaser.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
-import type { Adapter, RegistryVersion } from '@/publication/registries/registry.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
+import type { Adapter } from '@/publication/registries/registry.ts';
 import { publicationResult } from '@/publication/registries/verification.ts';
 
 function verifyRelease(
@@ -34,18 +35,20 @@ export const goreleaserManager: Adapter<'goreleaser'> = {
 	verifyPublication: (publication, _request, context) => verifyRelease(publication, context),
 	latest(_pkg, _request, context) {
 		if (!context) {
-			return Effect.succeed({ kind: 'failed', url: 'https://api.github.com', reason: 'GitHub access unavailable' });
+			return Effect.succeed(
+				VerificationOutcome.LookupFailed({ url: 'https://api.github.com', reason: 'GitHub access unavailable' }),
+			);
 		}
 		const url = `https://github.com/${context.repository}/releases/latest`;
 		return context.github(`/repos/${context.repository}/releases/latest`).pipe(
-			Effect.map((found): RegistryVersion => {
-				if (found === null) return { kind: 'missing', url };
+			Effect.map((found): VerificationOutcome => {
+				if (found === null) return VerificationOutcome.Missing({ url });
 				const tag = object(found).tag_name;
 				return typeof tag === 'string' && /^v?\d+\.\d+\.\d+/.test(tag)
-					? { kind: 'published', version: tag.replace(/^v/, '') }
-					: { kind: 'failed', url, reason: 'no valid version' };
+					? VerificationOutcome.Published({ version: tag.replace(/^v/, '') })
+					: VerificationOutcome.LookupFailed({ url, reason: 'no valid version' });
 			}),
-			Effect.orElseSucceed((): RegistryVersion => ({ kind: 'failed', url, reason: 'request failed' })),
+			Effect.orElseSucceed(() => VerificationOutcome.LookupFailed({ url, reason: 'request failed' })),
 		);
 	},
 };

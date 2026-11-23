@@ -3,7 +3,7 @@ import type { Channel, ChannelOutcome } from '@/domain/destinations.ts';
 import { tracksBranch } from '@/domain/destinations.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
-import type { RegistryVersion } from '@/publication/registries/registry.ts';
+import type { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import { LookupFailure, latestText, latestVersion, unpublished } from '@/publication/registries/verification.ts';
 
 const aurInfo = mutableStruct({
@@ -37,7 +37,7 @@ function formulaVersion(source: string): unknown {
 	return (url && /\/v?(\d+\.\d+\.\d+)(?:\/|\.tar|\.tgz|\.zip)/.exec(url)?.[1])
 		?? new LookupFailure('no literal version or versioned url');
 }
-function latest(channel: Channel, request: Fetcher): Effect.Effect<RegistryVersion> {
+function latest(channel: Channel, request: Fetcher): Effect.Effect<VerificationOutcome> {
 	if (channel.destination === 'aur') {
 		return latestVersion(
 			request,
@@ -60,8 +60,8 @@ export function checkChannel(
 ): Effect.Effect<{ outcome: ChannelOutcome; failure?: string }> {
 	if (tracksBranch(channel)) return Effect.succeed({ outcome: { ...channel, state: 'tracking' } });
 	return latest(channel, request).pipe(Effect.map((result): { outcome: ChannelOutcome; failure?: string } => {
-		if (result.kind === 'published') return { outcome: { ...channel, state: 'published', version: result.version } };
-		if (result.kind === 'missing') return { outcome: { ...channel, state: 'missing' } };
+		if (result._tag === 'Published') return { outcome: { ...channel, state: 'published', version: result.version } };
+		if (result._tag === 'Missing') return { outcome: { ...channel, state: 'missing' } };
 		return {
 			outcome: { ...channel, state: 'failed', reason: result.reason },
 			failure: `${result.reason} from ${result.url}`,
