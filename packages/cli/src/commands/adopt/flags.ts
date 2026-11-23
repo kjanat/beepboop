@@ -3,7 +3,7 @@ import { Effect, Schema } from 'effect';
 import type { Selection } from '@/automation/setup-defaults';
 import { suggestedCommands, ungenerated } from '@/automation/setup-defaults';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
-import { failure } from '@/cli/output';
+import { failure } from '@/cli/render/output';
 import { setupChoicesSchema, setupStream } from '@/contract/setup';
 import type { ChoicesField, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';

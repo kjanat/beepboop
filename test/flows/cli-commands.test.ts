@@ -7,8 +7,8 @@ import { editableConfiguration, widget } from '@root/test/support/repositories.t
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { app } from '@/cli/cli';
-import type { Client } from '@/cli/client';
+import type { Client } from '@/cli/client/api';
+import { app } from '@/cli/main';
 import { routes } from '@/contract/routes';
 import type { ApiError } from '@/kernel/errors/domain-error.ts';
 import { messageOf, statusOf } from '@/kernel/errors/domain-error.ts';

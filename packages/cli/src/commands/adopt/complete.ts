@@ -3,11 +3,10 @@ import { flag, parse } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupPlan } from '@/automation/setup-types';
-import { Client } from '@/cli/client';
-import { checkoutRepository } from '@/cli/release';
+import { Client } from '@/cli/client/api';
+import { defaultServer } from '@/cli/config';
+import { checkoutRepository } from '@/cli/git-checkout';
 import { routes } from '@/contract/routes';
-
-export const defaultServer = 'https://beepboop.kjanat.dev';
 
 function flagValue(argv: readonly string[], name: string): string | undefined {
 	let value: string | undefined;
@@ -53,7 +52,7 @@ function adoptedRepository(
 function candidates(pick: (plan: SetupPlan) => readonly string[]): CompletionHandler {
 	return context =>
 		Effect.runPromise(Effect.gen(function*() {
-			const { app } = yield* Effect.promise(() => import('@/cli/cli'));
+			const { app } = yield* Effect.promise(() => import('@/cli/main'));
 			const client = yield* Client.at(
 				flagValue(context.argv, 'server') ?? context.env.BEEPBOOP_SERVER ?? defaultServer,
 			);

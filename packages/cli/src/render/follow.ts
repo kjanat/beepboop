@@ -1,9 +1,9 @@
 import type { Ask, CLIError, Out, ProgressHandle } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
-import type { Client } from '@/cli/client';
-import type { Look, State } from '@/cli/look';
-import { lookOf, registryOf, table } from '@/cli/look';
-import { failure, prompted, unprompted } from '@/cli/output';
+import type { Client } from '@/cli/client/api';
+import type { Look, State } from '@/cli/render/look';
+import { lookOf, registryOf, table } from '@/cli/render/look';
+import { failure, prompted, unprompted } from '@/cli/render/output';
 import { routes } from '@/contract/routes';
 import type { BinaryProgress } from '@/contract/views';
 import type { CheckChoice } from '@/domain/release-gates.ts';
