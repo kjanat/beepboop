@@ -1,5 +1,4 @@
 import { Result, Schema } from 'effect';
-import type { Publication } from '@/automation/types';
 import { registryLabel } from '@/domain/catalog.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -7,6 +6,7 @@ import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { LedgerEntry, LedgerManager, LedgerPackage } from '@/publication/contract.ts';
 import { ledgerManagers } from '@/publication/contract.ts';
+import type { Publication } from '@/publication/publication.ts';
 import type { PublishKind } from '@/publication/publish-pace.ts';
 
 export const registries: Record<LedgerManager, string> = {

@@ -2,14 +2,7 @@ import { Schema, Struct } from 'effect';
 import { completion } from '@/automation/execution';
 import type { ResolvedInput } from '@/automation/execution-outputs';
 import type { ReleaseSetPlan } from '@/automation/planning';
-import type {
-	Artifact,
-	AutomationEvent,
-	Execution,
-	Publication,
-	ReleasePlan,
-	ReleaseReference,
-} from '@/automation/types';
+import type { Artifact, AutomationEvent, Execution, ReleasePlan, ReleaseReference } from '@/automation/types';
 import { executionStates } from '@/contract/views';
 import { managerDestinationIds, managerNames } from '@/domain/catalog.ts';
 import type { ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
@@ -160,7 +153,7 @@ const publicationFields = mutableStruct({
 	channel: Schema.optional(Schema.String),
 	required: Schema.Boolean,
 });
-const packagePublication: Schema.Codec<Publication, unknown> = Schema.Union([
+const packagePublication: Schema.Codec<Execution['publications'][number], unknown> = Schema.Union([
 	mutableStruct({ ...publicationFields.fields, ...{ outcome } }),
 	mutableStruct({
 		...publicationFields.fields,

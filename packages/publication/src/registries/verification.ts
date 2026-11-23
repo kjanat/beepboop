@@ -1,11 +1,11 @@
 import type { Scope } from 'effect';
 import { Effect, Result } from 'effect';
-import type { Outcome, Publication } from '@/automation/types';
 import { semver } from '@/domain/semver.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { ResponseReadError, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import type { Outcome, Publication } from '@/publication/publication.ts';
 import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 
 export interface RegistryRequest {

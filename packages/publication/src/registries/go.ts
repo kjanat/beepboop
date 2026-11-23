@@ -1,10 +1,10 @@
 import { Effect } from 'effect';
-import type { Publication } from '@/automation/types';
 import { goDiscoverer, splitModulePath } from '@/discovery/managers/go.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { responseJson } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
+import type { Publication } from '@/publication/publication.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';
 import {
 	latestVersion,

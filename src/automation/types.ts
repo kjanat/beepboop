@@ -4,11 +4,11 @@ import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration/schema.ts';
 import type { GitHubRunState } from '@/domain/github-run-state.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
-import type { PackageIdentity } from '@/domain/purl/index.ts';
 import type { ModuleTag, RefPlan, RefState } from '@/domain/refs.ts';
 import type { GateSkip } from '@/domain/release-gates.ts';
 import type { StartChannel } from '@/domain/release-start.ts';
 import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
+import type { Publication } from '@/publication/publication.ts';
 import type { PublishKind } from '@/publication/publish-pace.ts';
 import type { FrozenPackageTag } from '@/release/domain/package-tags.ts';
 
@@ -22,21 +22,6 @@ export interface ReleasePlan {
 	diagnostics: string[];
 	requiresPreparation: boolean;
 }
-export type Outcome = 'pending' | 'succeeded' | 'failed' | 'cancelled' | 'uncertain' | 'skipped';
-interface PublicationFields {
-	identity?: PackageIdentity;
-	id: string;
-	manager: ManagerName;
-	name: string;
-	version: string;
-	digest?: string;
-	url?: string;
-	channel?: string;
-	required: boolean;
-}
-export type Publication =
-	| (PublicationFields & { outcome: Outcome })
-	| (PublicationFields & { outcome: 'rate-limited'; retryAfter: string });
 export interface PackageTarget {
 	id: string;
 	manager: ManagerName;

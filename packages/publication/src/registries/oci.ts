@@ -1,11 +1,11 @@
 import { Effect } from 'effect';
-import type { Outcome, Publication } from '@/automation/types';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import { responseBytes, responseJson } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
 import { sha256DigestPattern, sha256Hex } from '@/kernel/schema/ids.ts';
 import { record } from '@/kernel/schema/result.ts';
+import type { Outcome, Publication } from '@/publication/publication.ts';
 
 /** Public distribution verification. Never forwards GitHub or vault credentials to registries. */
 export function verifyImage(publication: Publication, request: Fetcher = platformFetch): Effect.Effect<Publication> {

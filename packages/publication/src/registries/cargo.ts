@@ -1,10 +1,10 @@
 import { Effect, Result } from 'effect';
-import type { Publication } from '@/automation/types';
 import { cargoDiscoverer } from '@/discovery/managers/cargo.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { compareVersions, isPrerelease } from '@/domain/semver.ts';
 import { responseText } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import type { Publication } from '@/publication/publication.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';
 import {
 	LookupFailure,

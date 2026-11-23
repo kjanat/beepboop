@@ -1,5 +1,4 @@
 import { Clock, Effect, Option } from 'effect';
-import type { Publication } from '@/automation/types';
 import type { PackageTagPage, PackageTagView } from '@/contract/views';
 import type { Package } from '@/domain/inventory.ts';
 import { matchesPackage, packageId, publicationIdentity } from '@/domain/package-identity.ts';
@@ -8,6 +7,7 @@ import type { RefState } from '@/domain/refs.ts';
 import { parseTag } from '@/domain/version.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { Publication } from '@/publication/publication.ts';
 import { canVerifyPublication } from '@/publication/registries/verify.ts';
 
 export interface PackageTagGroup {

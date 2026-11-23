@@ -1,5 +1,4 @@
 import { Context, Effect, Layer } from 'effect';
-import type { Publication } from '@/automation/types';
 import type { Discoverer } from '@/discovery/managers/registry.ts';
 import { DiscoveryRegistry, uniqueDiagnostics } from '@/discovery/managers/registry.ts';
 import type { ManagerDestinationId, ManagerName } from '@/domain/catalog.ts';
@@ -14,6 +13,7 @@ import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
+import type { Publication } from '@/publication/publication.ts';
 import { checkChannel } from '@/publication/registries/channels.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
 import { publicationStatus, VerificationOutcome } from '@/publication/registries/outcome.ts';
