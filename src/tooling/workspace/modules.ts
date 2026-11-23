@@ -352,6 +352,28 @@ function collect(path: string, source: string, masked: boolean): Reference[] {
 	return [...found.values()].sort((left, right) => left.start - right.start);
 }
 
+const transpilers = {
+	ts: new Bun.Transpiler({ loader: 'ts' }),
+	tsx: new Bun.Transpiler({ loader: 'tsx' }),
+	js: new Bun.Transpiler({ loader: 'js' }),
+	jsx: new Bun.Transpiler({ loader: 'jsx' }),
+};
+
+function transpilerFor(path: string): Bun.Transpiler {
+	if (/\.[cm]?js$/.test(path)) return transpilers.js;
+	if (path.endsWith('.jsx')) return transpilers.jsx;
+	return path.endsWith('.tsx') ? transpilers.tsx : transpilers.ts;
+}
+
+export function scannedImports(path: string, source: string): { specifier: string; kind: ReferenceKind }[] {
+	const loader = transpilerFor(path);
+	const body = path.endsWith('.astro') ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(source)?.[1] ?? '' : source;
+	return loader.scanImports(body.slice(shebangLength(body))).map(entry => ({
+		specifier: entry.path,
+		kind: entry.kind === 'require-call' || entry.kind === 'require-resolve' ? 'require' : 'import',
+	}));
+}
+
 export function references(path: string, source: string): Reference[] {
 	return collect(path, source, true);
 }

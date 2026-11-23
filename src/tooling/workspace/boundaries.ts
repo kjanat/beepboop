@@ -1,6 +1,6 @@
 import { builtinModules } from 'node:module';
 import { dirname, join } from 'node:path';
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, main, parse, readJson, refuse } from '@/tooling/runtime';
 import { exported, packageName, readWorkspaces } from '@/tooling/workspace/manifests';
@@ -13,6 +13,7 @@ import {
 	references,
 	repositoryPath,
 	resolveReference,
+	scannedImports,
 	splitQuery,
 	trackedFiles,
 } from '@/tooling/workspace/modules';
@@ -38,6 +39,18 @@ export interface BoundaryReport {
 	readonly packages: number;
 	readonly baselined: number;
 	readonly violations: readonly Violation[];
+}
+
+function typesPackage(name: string): string {
+	return `@types/${name.startsWith('@') ? name.slice(1).replace('/', '__') : name}`;
+}
+
+function typeOnly(file: string, source: string, specifier: string): boolean {
+	if (file.endsWith('.astro')) return false;
+	return Result.match(Result.try(() => scannedImports(file, source)), {
+		onSuccess: uses => !uses.some(use => use.specifier === specifier),
+		onFailure: () => false,
+	});
 }
 
 function cycles(edges: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
@@ -129,7 +142,9 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 			}
 			if (named?.directory === owner.directory) continue;
 			const dependency = named?.name ?? packageName(specifier);
-			if (!owner.dependencies.has(dependency)) violations.push({ _tag: 'Undeclared', file, specifier, dependency });
+			if (owner.dependencies.has(dependency)) continue;
+			if (owner.dependencies.has(typesPackage(dependency)) && typeOnly(file, source, specifier)) continue;
+			violations.push({ _tag: 'Undeclared', file, specifier, dependency });
 		}
 	}
 	for (const entry of baseline) {

@@ -1,9 +1,9 @@
 import { cli, command, flag } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import { stableVersion } from '@/distribution/assets';
-import { releaseChecksums, writeRendered } from '@/distribution/output';
-import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
-import { parse, readJson } from '@/tooling/runtime';
+import { parse, readJson } from '@/host/files.ts';
+import { releaseChecksums, writeRendered } from '@/host/rendered-file.ts';
+import { stableVersion } from '@/publication/distribution/assets.ts';
+import { generateManifest, scoopConfiguration } from '@/publication/distribution/scoop.ts';
 
 export const generate = command('generate')
 	.description('Write a Scoop manifest for a published release')

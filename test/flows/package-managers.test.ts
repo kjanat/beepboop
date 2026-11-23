@@ -5,14 +5,9 @@ import { join } from 'node:path';
 import { withEnvironment } from '@root/test/support/process.ts';
 import { Effect, Schema, Struct } from 'effect';
 import type { Publication } from '@/automation/types';
-import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
-import { generateCask } from '@/distribution/homebrew/generate';
-import { writeRendered } from '@/distribution/output';
-import type { ScoopConfiguration } from '@/distribution/scoop/generate';
-import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
-import { generateManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { managerNames, managerSpec } from '@/domain/catalog.ts';
 import type { Package } from '@/domain/inventory.ts';
+import { writeRendered } from '@/host/rendered-file.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -26,6 +21,11 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import type { HomebrewConfiguration } from '@/publication/distribution/homebrew.ts';
+import { generateCask } from '@/publication/distribution/homebrew.ts';
+import type { ScoopConfiguration } from '@/publication/distribution/scoop.ts';
+import { generateManifest, scoopConfiguration } from '@/publication/distribution/scoop.ts';
+import { generateManifests, wingetConfiguration } from '@/publication/distribution/winget/generate.ts';
 import { managerRegistry } from '@/publication/registries/builtins.ts';
 import { cargoManager, crateIndexUrl } from '@/publication/registries/cargo.ts';
 import { verifyPublication } from '@/publication/registries/verify.ts';

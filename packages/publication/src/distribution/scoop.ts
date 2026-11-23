@@ -1,5 +1,4 @@
 import { Effect, Schema } from 'effect';
-import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/distribution/assets';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Encoded } from '@/kernel/schema/structs.ts';
@@ -11,6 +10,7 @@ import {
 	refined,
 	strictStruct,
 } from '@/kernel/schema/structs.ts';
+import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/publication/distribution/assets.ts';
 
 const text = Schema.String.check(Schema.isMinLength(1));
 const executable = refined(

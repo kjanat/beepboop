@@ -1,10 +1,10 @@
 import { Effect, Schema } from 'effect';
-import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/distribution/assets';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Decoded, Encoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, matchesPattern, mutableArray, refined, strictStruct } from '@/kernel/schema/structs.ts';
+import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/publication/distribution/assets.ts';
 
 const text = Schema.String.check(Schema.isMinLength(1));
 const stagedPath = refined(
