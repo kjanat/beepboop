@@ -27,14 +27,12 @@ export const generatedJsr = Effect.fnUntraced(
 );
 
 const workspaceSpecifier = /^(?:@\/|@beepboop(?:bot)?\/)/;
+const requireHelper = /\b__require\(\s*"([^"]*)"\s*\)/g;
 const transpiler = new Bun.Transpiler({ loader: 'js' });
 
 export function leakedSpecifiers(bundle: string): string[] {
-	return [
-		...new Set(
-			transpiler.scanImports(bundle.replace(/^#![^\n]*/, '')).map(({ path }) => path).filter(path =>
-				workspaceSpecifier.test(path)
-			),
-		),
-	];
+	const code = bundle.replace(/^#![^\n]*/, '');
+	const imports = transpiler.scanImports(code).map(({ path }) => path);
+	const helpers = [...transpiler.transformSync(code).matchAll(requireHelper)].flatMap(([, path]) => path ?? []);
+	return [...new Set([...imports, ...helpers].filter(path => workspaceSpecifier.test(path)))];
 }
