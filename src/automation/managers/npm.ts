@@ -5,7 +5,7 @@ import { discoverNpmTargets } from '@/automation/managers/npm-targets';
 import { packageManifests } from '@/automation/managers/package-json';
 import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
-import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
+import { latestVersion, unpublished, verifyRegistry } from '@/automation/managers/verification';
 import type { Package } from '@/domain/inventory.ts';
 import { excluded, publishable, registry } from '@/domain/package-publication.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
@@ -66,7 +66,11 @@ export function npmLatest(name: string, request: Fetcher): Effect.Effect<Registr
 	return latestVersion(
 		request,
 		`https://registry.npmjs.org/${encodeURIComponent(name)}`,
-		body => object(object(body)['dist-tags']).latest,
+		body => {
+			const latest = object(object(body)['dist-tags']).latest;
+			const staged = typeof latest === 'string' && object(object(object(body).versions)[latest]).stub === true;
+			return staged ? unpublished : latest;
+		},
 	);
 }
 export const npmManager: Adapter<'npm'> = {

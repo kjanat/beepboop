@@ -41,6 +41,9 @@ test('a watched package version opens one issue directly in the subscribed repos
 	world.npm.publish('engine', '1.0.0');
 	await reconcile();
 	expect(issues).toEqual([]);
+	world.npm.stage('engine', '1.1.0');
+	await reconcile();
+	expect(issues).toEqual([]);
 	world.npm.publish('engine', '1.1.0');
 	await reconcile();
 	await reconcile();
