@@ -3022,21 +3022,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
 			const pathOf = (run: (typeof runs)[number]) =>
 				paths.get(/\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1] ?? '');
-			const settled = (run: (typeof runs)[number]) =>
-				run.status === 'completed' && passingConclusions.includes(String(run.conclusion));
+			const unfinished = runs.filter(run => run.status !== 'completed');
 			const deploying = new Map<string, string[]>();
-			for (const path of new Set(runs.filter(run => !settled(run)).flatMap(run => pathOf(run) ?? []))) {
+			for (const path of new Set(unfinished.flatMap(run => pathOf(run) ?? []))) {
+				if (releaseFiles.has(path)) continue;
 				const source = yield* gateway.file(execution.repository, path, execution.sourceSha, token);
 				deploying.set(path, source === null ? [] : deploymentJobs(source));
 			}
 			const gating = runs.filter(run => {
 				const path = pathOf(run);
-				return !(path && (releaseFiles.has(path) || deploys(String(run.name), deploying.get(path) ?? [])));
+				if (!path) return true;
+				if (releaseFiles.has(path)) return false;
+				return run.status === 'completed' || !deploys(String(run.name), deploying.get(path) ?? []);
 			});
 			if (!gating.length) pending.push('No checks have run on this commit');
 			for (const run of gating) {
 				if (run.status !== 'completed') pending.push(`${String(run.name)} is still running`);
-				else if (!settled(run)) {
+				else if (!passingConclusions.includes(String(run.conclusion))) {
 					problems.push(`${String(run.name)} ${String(run.conclusion)}`);
 				}
 			}

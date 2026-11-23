@@ -1207,15 +1207,46 @@ test('a promotion waits for the pending release of its dependency from an earlie
 	expect(world.github.dispatches).toEqual([]);
 }, 60_000);
 
-test.each([
-	['releases past a job that deploys to an environment', '    environment: tag\n', 1, undefined],
+test.each(
 	[
-		'waits for a job without an environment',
-		'',
-		0,
-		'Releases when the commit is verified and its checks pass: publish is still running',
-	],
-])('a promotion %s while that job still runs', async (_case, environment, dispatched, reason) => {
+		[
+			'releases while a job with an environment waits',
+			'    environment: tag\n',
+			'waiting',
+			null,
+			'actions.yml',
+			1,
+			undefined,
+		],
+		[
+			'waits for an unfinished job without an environment',
+			'',
+			'waiting',
+			null,
+			'actions.yml',
+			0,
+			'Releases when the commit is verified and its checks pass: publish is still running',
+		],
+		[
+			'waits for an unfinished job whose workflow file the commit lacks',
+			'    environment: tag\n',
+			'waiting',
+			null,
+			'removed.yml',
+			0,
+			'Releases when the commit is verified and its checks pass: publish is still running',
+		],
+		[
+			'stops at a failed job with an environment',
+			'    environment: tag\n',
+			'completed',
+			'failure',
+			'actions.yml',
+			0,
+			'Releases when the commit is verified and its checks pass: publish failure',
+		],
+	] as const,
+)('a promotion %s', async (_case, environment, status, conclusion, file, dispatched, reason) => {
 	const repository = widget(world.github, { configured: false });
 	world.github.push(repository, {
 		'.github/beepboop.json': JSON.stringify({
@@ -1251,7 +1282,7 @@ test.each([
 	const raised = world.github.push(repository, { 'package.json': manifest('widget', '1.1.0') }, 'Release widget 1.1.0');
 	repository.runs.push({
 		id: 77,
-		path: '.github/workflows/actions.yml',
+		path: `.github/workflows/${file}`,
 		event: 'push',
 		headSha: raised.sha,
 		headBranch: repository.defaultBranch,
@@ -1263,7 +1294,7 @@ test.each([
 	});
 	repository.checks.set(raised.sha, [
 		{ name: 'verify', status: 'completed', conclusion: 'success', runId: 77 },
-		{ name: 'publish', status: 'waiting', conclusion: null, runId: 77 },
+		{ name: 'publish', status, conclusion, runId: 77 },
 	]);
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(16_000);

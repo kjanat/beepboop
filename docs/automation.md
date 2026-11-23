@@ -782,9 +782,9 @@ any tool that the runner lacks.
    or run `beepboop runs publish <execution-id> --sourceSha <merge-commit-sha>`.
    `beepboop runs list` prints the execution ID.
 8. Publishing requires a verified commit signature, passing checks and a branch
-   head that still points at that commit. Beepboop skips the check of a job
-   with an `environment`, because that job deploys. `--force` publishes
-   despite a failed signature or check. Publishing also requires complete package metadata, as
+   head that still points at that commit. A release skips an unfinished
+   job that has an `environment`, and such a job that failed stops it.
+   `--force` publishes despite a failed signature or check. Publishing also requires complete package metadata, as
    described in [Package metadata](#package-metadata). `--force` does not
    override that check.
 9. Beepboop dispatches the promote workflow on the default branch, and the job
