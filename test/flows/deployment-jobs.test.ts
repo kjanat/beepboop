@@ -16,6 +16,13 @@ const workflow = [
 	'    name: pages (integration)',
 	'  secrets:',
 	'    environment: null',
+	'  release:',
+	'    name: Publish ${{ matrix.target }}.x',
+	'    environment: registry',
+	'    strategy: { matrix: { target: [npm, jsr] } }',
+	'  test:',
+	'    name: Test ${{ matrix.os }}',
+	'    strategy: { matrix: { os: [ubuntu-latest] } }',
 	'',
 ].join('\n');
 
@@ -26,6 +33,8 @@ test('checkJobs labels each job by name or id and marks matrices and environment
 		{ label: 'Deploy pages', matrix: false, deploys: true },
 		{ label: 'pages (integration)', matrix: false, deploys: false },
 		{ label: 'secrets', matrix: false, deploys: false },
+		{ label: 'Publish ${{ matrix.target }}.x', matrix: true, deploys: true },
+		{ label: 'Test ${{ matrix.os }}', matrix: true, deploys: false },
 	]);
 });
 
@@ -41,6 +50,9 @@ test.each([
 	['pages (integration)', false],
 	['publisher', false],
 	['verify', false],
+	['Publish npm.x', true],
+	['Publish npmx', false],
+	['Test ubuntu-latest', false],
 ])('deploys classifies the check %p as a deployment: %p', (check, expected) => {
 	expect(deploys(check, checkJobs(workflow))).toBe(expected);
 });
