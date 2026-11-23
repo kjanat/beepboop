@@ -38,8 +38,11 @@ import type { WinGetBindings } from '@/automation/winget';
 import { WinGetService } from '@/automation/winget';
 import { setupChoicesSchema } from '@/contract/setup';
 import { configuredGrant } from '@/credentials/access.ts';
+import { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
+import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
+import { SecretDeliveryStore } from '@/credentials/adapters/d1/secret-deliveries.ts';
 import type { Grant } from '@/credentials/grant.ts';
-import { isRuntimeGrant, parseGrant } from '@/credentials/grant.ts';
+import { isRuntimeGrant } from '@/credentials/grant.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration/schema.ts';
 import type { Package, RepositoryRecord, Snapshot } from '@/domain/inventory.ts';
@@ -79,7 +82,6 @@ import {
 } from '@/kernel/schema/structs.ts';
 import { ChangeLog } from '@/persistence/d1/changes';
 import type { CLISessionStore } from '@/persistence/d1/cli-sessions';
-import { CredentialStore } from '@/persistence/d1/credentials';
 import { Database, databaseLayer } from '@/persistence/d1/database';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
@@ -122,6 +124,12 @@ export class AutomationService {
 	}
 	get credentials() {
 		return this.dependencies.credentials;
+	}
+	get grants() {
+		return this.dependencies.grants;
+	}
+	get secretDeliveries() {
+		return this.dependencies.secretDeliveries;
 	}
 	get sessions() {
 		return this.dependencies.sessions;
@@ -221,8 +229,7 @@ export class AutomationService {
 				environments: 'read',
 			}).github,
 			cargoToken: (file, secrets) => Effect.gen({ self: this }, function*() {
-				const documents = yield* this.credentials.grantDocuments({ repositoryId: repository.id });
-				const grants = yield* Effect.forEach(documents, parseGrant);
+				const grants = yield* this.grants.list({ repositoryId: repository.id });
 				const aliases = [...new Set([
 					...grants.filter(grant =>
 						!isRuntimeGrant(grant) && grant.workflow === file && secrets.includes(grant.secretName)
@@ -936,10 +943,7 @@ export class AutomationService {
 			const current = yield* this.store.repository(repository.id);
 			if (!current) return;
 			const ready = yield* requireReady(current);
-			const existing = yield* Effect.forEach(
-				yield* this.credentials.grantDocuments({ repositoryId: repository.id }),
-				parseGrant,
-			);
+			const existing = yield* this.grants.list({ repositoryId: repository.id });
 			const granted: Grant[] = [];
 			for (const stream of choices.streams) {
 				const requested: { operation: string; alias: string; environment?: string }[] = [
@@ -1189,6 +1193,8 @@ export interface AutomationDependencies {
 	readonly vault: Pick<Vault, keyof Vault>;
 	readonly gateway: RepositoryGateway;
 	readonly credentials: CredentialStore;
+	readonly grants: GrantStore;
+	readonly secretDeliveries: SecretDeliveryStore;
 	readonly sessions: SessionStore;
 	readonly cliSessions: CLISessionStore;
 	readonly schedules: ScheduleStore;
@@ -1224,6 +1230,8 @@ export const makeAutomation = Effect.gen(function*() {
 		vault,
 		gateway: new RepositoryGateway(env, Number(env.OWNER_ID), transport, defer, github, app),
 		credentials: new CredentialStore(db),
+		grants: new GrantStore(db),
+		secretDeliveries: new SecretDeliveryStore(db),
 		sessions: auth.sessions,
 		cliSessions: auth.cliSessions,
 		schedules: new ScheduleStore(db),
@@ -1265,7 +1273,12 @@ export function applicationLayer(
 			const keys = yield* fromJson(env.VAULT_KEYS).pipe(
 				Effect.flatMap(value => fromSync(() => decodeSync(mutableRecord(Schema.String, Schema.String), value))),
 			);
-			return new Vault(new Store(db), new CredentialStore(db), keys, env.VAULT_ACTIVE_KEY);
+			return new Vault(
+				new Store(db),
+				{ credentials: new CredentialStore(db), grants: new GrantStore(db), deliveries: new SecretDeliveryStore(db) },
+				keys,
+				env.VAULT_ACTIVE_KEY,
+			);
 		}),
 	);
 

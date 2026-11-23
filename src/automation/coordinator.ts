@@ -104,7 +104,7 @@ import { unchangedSince } from '@/automation/unchanged-paths';
 import type { ClaimStep, LedgerManager, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
 import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
-import { parseGrant, runtimeGrant } from '@/credentials/grant.ts';
+import { runtimeGrant } from '@/credentials/grant.ts';
 import { identifiedManagers, isManagerName, managerSpec } from '@/domain/catalog.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
 import {
@@ -2657,10 +2657,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			});
 			const missing: string[] = [];
 			for (const alias of stream.credentials) {
-				const grants = yield* Effect.forEach(
-					yield* (yield* Automation).credentials.grantDocuments({ alias, repositoryId: execution.repositoryId }),
-					parseGrant,
-				);
+				const grants = yield* (yield* Automation).grants.list({ alias, repositoryId: execution.repositoryId });
 				if (
 					!bindings.some(binding =>
 						grants.some(grant =>

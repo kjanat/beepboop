@@ -2,11 +2,11 @@ import { Effect } from 'effect';
 import { validCredential } from '@/automation/vault';
 import { routes } from '@/contract/routes';
 import { configuredGrant } from '@/credentials/access.ts';
-import { grantRow, parseGrant } from '@/credentials/grant.ts';
+import type { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
+import { grantRow } from '@/credentials/grant.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';
-import type { CredentialStore } from '@/persistence/d1/credentials';
 import { admin, elevated, readyRepository } from '@/server/handlers/kit';
 
 function stored(credentials: CredentialStore, alias: string): Effect.Effect<void, DomainError> {
@@ -23,11 +23,8 @@ export const credentialEndpoints = {
 	credentialsList: admin(routes.credentialsList, (_, { service }) =>
 		Effect.all({
 			credentials: service.credentials.list(),
-			grants: service.credentials.grantDocuments().pipe(
-				Effect.flatMap(documents => Effect.forEach(documents, parseGrant)),
-				Effect.map(grants => grants.map(grantRow)),
-			),
-			deliveries: service.credentials.deliveries(),
+			grants: service.grants.list().pipe(Effect.map(grants => grants.map(grantRow))),
+			deliveries: service.secretDeliveries.list(),
 		})),
 	credentialsReplace: elevated(routes.credentialsReplace, (input, { service, actor }) =>
 		Effect.gen(function*() {
@@ -73,7 +70,7 @@ export const credentialEndpoints = {
 		})),
 	credentialsRevoke: elevated(routes.credentialsRevoke, (input, { service, actor }) =>
 		Effect.gen(function*() {
-			if (!(yield* service.credentials.hasGrant(input.grantId))) {
+			if (!(yield* service.grants.has(input.grantId))) {
 				return yield* notFound('grant', 'Unknown grant', input.grantId);
 			}
 			return { commit: service.vault().revoke(input.grantId, actor).pipe(Effect.as({ revoked: true })) };

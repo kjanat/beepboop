@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test';
+import { TestD1 } from '@root/test/support/d1.ts';
 import { Cause, Effect, Exit } from 'effect';
+import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
 import type { Grant } from '@/credentials/grant.ts';
 import { grantRow, parseGrant, requestGrant } from '@/credentials/grant.ts';
 import { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -49,6 +51,25 @@ for (const [name, tag, row] of shapes) {
 		expect(JSON.stringify(grantRow(grant))).toBe(JSON.stringify(row));
 	});
 }
+
+test('the grant store reads every row shape and writes the same documents back', async () => {
+	const db = new TestD1();
+	for (const [index, [, , row]] of shapes.entries()) {
+		db.sqlite.run('INSERT INTO grants(id,alias,repository_id,document) VALUES(?,?,?,?)', [
+			`grant-${index}`,
+			'npm-token',
+			42,
+			JSON.stringify({ ...row, id: `grant-${index}` }),
+		]);
+	}
+	const stored = () => db.sqlite.query('SELECT id,alias,repository_id,document FROM grants ORDER BY id').all();
+	const before = stored();
+	const store = new GrantStore(db);
+	const grants = await Effect.runPromise(store.list({ alias: 'npm-token', repositoryId: 42 }));
+	expect(grants.map(grant => grant._tag)).toEqual(shapes.map(([, tag]) => tag));
+	await Effect.runPromise(Effect.forEach(grants, grant => store.put(grant)));
+	expect(stored()).toEqual(before);
+});
 
 test('an encoded grant lists its keys in the stored order whatever order the request used', async () => {
 	const grant = await Effect.runPromise(requestGrant({

@@ -69,6 +69,7 @@
       "dependencies": {
         "@beepboopbot/domain": "workspace:*",
         "@beepboopbot/kernel": "workspace:*",
+        "@beepboopbot/persistence": "workspace:*",
         "effect": "^4.1.2",
       },
     },
