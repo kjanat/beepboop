@@ -1,4 +1,4 @@
 #!/usr/bin/env bun
-import { app } from '@/distribution/winget/cli.ts';
+import { app } from '@/publication/bins/winget.ts';
 
 await app.run();

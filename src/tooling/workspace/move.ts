@@ -22,7 +22,7 @@ import {
 	relativeSpecifier,
 	repositoryPath,
 	resolveReference,
-	shebangLength,
+	scannedImports,
 	specifierCandidates,
 	splitQuery,
 	trackedFiles,
@@ -248,28 +248,6 @@ function rewrite(
 		text = `${text.slice(0, edit.start)}${edit.text}${text.slice(edit.end)}`;
 	}
 	return { text, count: edits.length, problems, review };
-}
-
-const transpilers = {
-	ts: new Bun.Transpiler({ loader: 'ts' }),
-	tsx: new Bun.Transpiler({ loader: 'tsx' }),
-	js: new Bun.Transpiler({ loader: 'js' }),
-	jsx: new Bun.Transpiler({ loader: 'jsx' }),
-};
-
-function transpilerFor(path: string): Bun.Transpiler {
-	if (/\.[cm]?js$/.test(path)) return transpilers.js;
-	if (path.endsWith('.jsx')) return transpilers.jsx;
-	return path.endsWith('.tsx') ? transpilers.tsx : transpilers.ts;
-}
-
-function scannedImports(path: string, source: string): Use[] {
-	const loader = transpilerFor(path);
-	const body = path.endsWith('.astro') ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(source)?.[1] ?? '' : source;
-	return loader.scanImports(body.slice(shebangLength(body))).map(entry => ({
-		specifier: entry.path,
-		kind: entry.kind === 'require-call' || entry.kind === 'require-resolve' ? 'require' : 'import',
-	}));
 }
 
 export const verify = Effect.fn('verify')(function*(

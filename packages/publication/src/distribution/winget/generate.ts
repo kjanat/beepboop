@@ -1,30 +1,30 @@
 import { Effect, Schema, Struct } from 'effect';
-import { installerArchitecture, installerType } from '@/distribution/winget/schema';
 import type { Encoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, strictStruct } from '@/kernel/schema/structs.ts';
+import { installerArchitecture, installerType } from '@/publication/distribution/winget/schema.ts';
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kaj Kowalski; Copyright (c) 2021 rhysd
 
 import { stringify } from 'yaml';
-import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/distribution/assets';
-import { plainText } from '@/distribution/winget/notes';
+import { fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { unsafeRelativePath } from '@/kernel/path/relative-path.ts';
+import { assetName, checksumOf, expand, https, parseChecksums, releaseTag } from '@/publication/distribution/assets.ts';
+import { plainText } from '@/publication/distribution/winget/notes.ts';
 import type {
 	DefaultLocaleManifest,
 	InstallerManifest,
 	ManifestType,
 	VersionManifest,
-} from '@/distribution/winget/schema';
+} from '@/publication/distribution/winget/schema.ts';
 import {
 	defaultLocaleManifest,
 	installerManifest,
 	manifestTypes,
 	schemaVersion,
 	versionManifest,
-} from '@/distribution/winget/schema';
-import { fromSync } from '@/kernel/errors/classify.ts';
-import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { precondition } from '@/kernel/errors/domain-error.ts';
-import { unsafeRelativePath } from '@/kernel/path/relative-path.ts';
+} from '@/publication/distribution/winget/schema.ts';
 
 const metadata = strictStruct(
 	Struct.omit(defaultLocaleManifest.fields, [

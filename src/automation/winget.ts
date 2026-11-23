@@ -2,7 +2,6 @@ import { Clock, Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
-import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { readiness } from '@/domain/repository';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
@@ -25,6 +24,7 @@ import { decodeSync, mutableArray, mutableRecord, mutableStruct } from '@/kernel
 import type { Sql } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
 import { documentRow } from '@/persistence/d1/document-row';
+import { generateManifests, renderManifests, wingetConfiguration } from '@/publication/distribution/winget/generate.ts';
 
 const releaseListing = mutableArray(mutableStruct({
 	id: looseSchema,

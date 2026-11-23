@@ -1,9 +1,9 @@
 import { cli, command, flag } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import { stableVersion } from '@/distribution/assets';
-import { generateCask, homebrewConfiguration } from '@/distribution/homebrew/generate';
-import { releaseChecksums, writeRendered } from '@/distribution/output';
-import { parse, readJson } from '@/tooling/runtime';
+import { parse, readJson } from '@/host/files.ts';
+import { releaseChecksums, writeRendered } from '@/host/rendered-file.ts';
+import { stableVersion } from '@/publication/distribution/assets.ts';
+import { generateCask, homebrewConfiguration } from '@/publication/distribution/homebrew.ts';
 
 export const generate = command('generate')
 	.description('Write a Homebrew cask for a published release')

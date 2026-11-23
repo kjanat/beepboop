@@ -2,9 +2,9 @@ import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { cli, command, flag } from '@kjanat/dreamcli';
 import { Effect, Result } from 'effect';
-import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
+import { attemptPromise, HostFailure, parse, readJson } from '@/host/files.ts';
 import { outputEntry } from '@/host/github-output.ts';
-import { attemptPromise, parse, readJson, ToolFailure } from '@/tooling/runtime';
+import { generateManifests, renderManifests, wingetConfiguration } from '@/publication/distribution/winget/generate.ts';
 
 export const generate = command('generate')
 	.description('Write WinGet version, installer, and locale manifests for a published release')
@@ -46,7 +46,7 @@ export const generate = command('generate')
 				releaseDate: flags.releaseDate.toISOString().slice(0, 10),
 				checksums,
 				releaseNotes,
-			}).pipe(Effect.mapError(error => new ToolFailure({ message: error.detail ?? error.message, cause: error })));
+			}).pipe(Effect.mapError(error => new HostFailure({ message: error.detail ?? error.message, cause: error })));
 			const directory = resolve(flags.out);
 			const files: string[] = [];
 			for (const [name, content] of Object.entries(renderManifests(manifests))) {
@@ -59,7 +59,7 @@ export const generate = command('generate')
 				Result.all([outputEntry('directory', directory), outputEntry('files', JSON.stringify(files))]),
 			).pipe(
 				Effect.map(entries => entries.join('')),
-				Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })),
+				Effect.mapError(error => new HostFailure({ message: error.message, cause: error })),
 			);
 			const target = process.env.GITHUB_OUTPUT;
 			if (target) yield* attemptPromise(() => appendFile(target, output));
