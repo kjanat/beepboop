@@ -1,27 +1,24 @@
 import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
-import { Effect, Schema } from 'effect';
-import type { Client } from '@/cli/client';
-import { followRelease } from '@/cli/follow';
-import { lookOf, registryOf, step, table } from '@/cli/look';
-import { emit, failure, prompted, unprompted } from '@/cli/output';
+import { arg, flag, wasExplicit } from '@kjanat/dreamcli';
+import { Effect } from 'effect';
+import type { Client } from '@/cli/client/api';
+import { base, connected } from '@/cli/command';
+import type { ReleaseOptions } from '@/cli/commands/release/review';
+import {
+	decodeRelease,
+	printPreview,
+	streamSchema,
+	summarySchema,
+	versionPrMergeOf,
+} from '@/cli/commands/release/review';
+import { checkoutRepository } from '@/cli/git-checkout';
+import { followRelease } from '@/cli/render/follow';
+import { lookOf, step } from '@/cli/render/look';
+import { emit, failure, prompted, unprompted } from '@/cli/render/output';
 import { routes } from '@/contract/routes';
 import { packageLabel } from '@/domain/package-label';
-import { versionBump } from '@/domain/release-start.ts';
-import { repositoryReference } from '@/domain/repository-name.ts';
 import { semverPattern } from '@/domain/semver.ts';
-import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
-import {
-	publishWhenNames,
-	publishWhenSentences,
-	startFromEffect,
-	versionPrMerge,
-	versionPrMergeSentences,
-} from '@/domain/setup-terms.ts';
-import { git } from '@/host/git.ts';
-import { decodeWith } from '@/kernel/schema/decode.ts';
-import { shaSchema } from '@/kernel/schema/result.ts';
-import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
-import { looseStruct, mutableArray, mutableStruct, schemaIssues } from '@/kernel/schema/structs.ts';
+import { autoMergeMethods, startFromEffect } from '@/domain/setup-terms.ts';
 
 const bumps = ['patch', 'minor', 'major'] as const;
 export function releaseVersion(value: string): Effect.Effect<string | { bump: typeof bumps[number] }, CLIError> {
@@ -31,137 +28,7 @@ export function releaseVersion(value: string): Effect.Effect<string | { bump: ty
 		: Effect.fail(failure('Choose patch, minor, major or an explicit semantic version', 'INVALID_VERSION'));
 }
 
-function checkoutGit(cwd: string, args: string[]): Effect.Effect<string, CLIError> {
-	return Effect.sync(() => git(['-C', cwd, ...args], { timeout: 10_000, maxBuffer: 1024 * 1024 })).pipe(
-		Effect.flatMap(result =>
-			result.ok
-				? Effect.succeed(result.stdout)
-				: Effect.fail(failure(
-					'Could not read the current Git checkout',
-					'GIT_RESOLUTION_FAILED',
-					'Run this in a Git checkout or pass --repository owner/repository',
-				))
-		),
-	);
-}
-
-function remoteRepository(remote: string): Effect.Effect<string | undefined> {
-	return Effect.gen(function*() {
-		let address = remote;
-		if (/^(?:https?|ssh):\/\//i.test(remote)) {
-			const parsed = URL.parse(remote);
-			if (!parsed || !['github.com', 'www.github.com'].includes(parsed.hostname.toLowerCase())) return undefined;
-			address = `https://github.com${parsed.pathname}`;
-		} else if (!/^git@github\.com:/i.test(remote)) return undefined;
-		return yield* repositoryReference(address).pipe(
-			Effect.map(reference => reference.owner ? `${reference.owner}/${reference.name}` : undefined),
-			Effect.orElseSucceed(() => undefined),
-		);
-	});
-}
-
-export function checkoutRepository(cwd: string): Effect.Effect<string, CLIError> {
-	return Effect.gen(function*() {
-		const remotes = (yield* checkoutGit(cwd, ['remote'])).split('\n').filter(Boolean);
-		if (!remotes.length) {
-			return yield* Effect.fail(failure(
-				'This checkout has no Git remotes',
-				'REPOSITORY_REQUIRED',
-				'Pass --repository owner/repository',
-			));
-		}
-		const preferred = remotes.includes('origin') ? ['origin'] : remotes;
-		const repositories = new Map<string, string>();
-		for (const remote of preferred) {
-			const urls = (yield* checkoutGit(cwd, ['remote', 'get-url', '--all', remote])).split('\n').filter(Boolean);
-			for (const url of urls) {
-				const repository = yield* remoteRepository(url);
-				if (repository) repositories.set(repository.toLowerCase(), repository);
-				else if (remote === 'origin') {
-					return yield* Effect.fail(failure(
-						'The origin remote is not a supported GitHub repository',
-						'INVALID_REMOTE',
-						'Pass --repository owner/repository',
-					));
-				}
-			}
-		}
-		const [repository, ...more] = repositories.values();
-		if (!repository || more.length) {
-			return yield* Effect.fail(failure(
-				more.length
-					? 'Git remotes point to multiple GitHub repositories'
-					: 'No GitHub repository could be resolved from the remotes',
-				'REPOSITORY_REQUIRED',
-				'Pass --repository owner/repository',
-			));
-		}
-		return repository;
-	});
-}
-
-const streamSchema = looseStruct({
-	versioning: Schema.Literals(['workspace', 'independent', 'none']),
-	packages: Schema.optional(mutableArray(Schema.String)),
-	versionSource: Schema.optional(mutableStruct({ kind: Schema.Literal('tags') })),
-	versionFiles: Schema.optional(mutableArray(Schema.Unknown)),
-	prepare: looseStruct({
-		strategy: Schema.optional(Schema.String),
-		workflow: Schema.optional(mutableStruct({ file: Schema.String })),
-		bump: Schema.optional(versionBump),
-		versionPrMerge: Schema.optional(versionPrMerge),
-	}),
-	promote: looseStruct({
-		approval: Schema.Literals(['required', 'merge', 'push']),
-		workflow: Schema.optional(mutableStruct({ file: Schema.String })),
-	}),
-});
-const summarySchema = looseStruct({
-	version: Schema.String.check(Schema.isMinLength(1)),
-	sourceSha: shaSchema,
-	planId: Schema.String.check(Schema.isMinLength(1)),
-	packages: Schema.optional(
-		mutableArray(
-			mutableStruct({ name: Schema.String, manager: Schema.String, version: Schema.optional(Schema.String) }),
-		),
-	),
-	blockers: Schema.optional(mutableArray(Schema.String)),
-});
-function decode<S extends Contract>(schema: S, value: unknown): Effect.Effect<Decoded<S>, CLIError> {
-	return decodeWith(
-		schema,
-		value,
-		error =>
-			failure('Server returned an invalid release description', 'INVALID_RESPONSE', schemaIssues(error)[0]?.message),
-	);
-}
-
-export interface ReleaseOptions {
-	repository?: string;
-	stream?: string;
-	version?: string;
-	yes: boolean;
-	dryRun: boolean;
-	force: boolean;
-	auto?: boolean | undefined;
-	merge?: AutoMergeMethod | undefined;
-}
-
-function versionPrMergeOf(
-	options: ReleaseOptions,
-	configured: VersionPrMerge | undefined,
-): Effect.Effect<VersionPrMerge | undefined, CLIError> {
-	if (options.auto === false) {
-		return options.merge
-			? Effect.fail(failure('--no-auto turns auto-merge off, and --merge turns it on', 'INVALID_FLAGS'))
-			: Effect.succeed('manual');
-	}
-	if (options.merge) return Effect.succeed(options.merge);
-	if (options.auto) return Effect.succeed(configured && configured !== 'manual' ? configured : 'squash');
-	return Effect.undefined;
-}
-
-export function releaseRepository(
+function releaseRepository(
 	client: Client,
 	options: ReleaseOptions,
 	ask: Ask,
@@ -189,7 +56,7 @@ export function releaseRepository(
 		}
 		const streams = yield* Effect.forEach(
 			configured,
-			([name, raw]) => decode(streamSchema, raw).pipe(Effect.map(stream => ({ name, stream }))),
+			([name, raw]) => decodeRelease(streamSchema, raw).pipe(Effect.map(stream => ({ name, stream }))),
 		);
 		const starts = (name: string) => {
 			const kind = repository.releases[name]?.kind;
@@ -294,7 +161,7 @@ export function releaseRepository(
 			client.call(routes.releasesPlan, request),
 			planned => `Planned ${look.version(planned.version ?? version)} at ${look.sha(planned.sourceSha)}`,
 		);
-		const summary = yield* decode(summarySchema, plan);
+		const summary = yield* decodeRelease(summarySchema, plan);
 		if (summary.blockers?.length) return yield* Effect.fail(failure(summary.blockers.join('\n'), 'BLOCKED_PLAN'));
 		const started = plan.starts;
 		const committing = stream.prepare.bump === 'commit';
@@ -318,56 +185,20 @@ export function releaseRepository(
 		};
 		if (out.jsonMode && (options.dryRun || (!options.yes && !options.force))) return yield* emit(out, preview);
 		const policy = stream.promote.approval;
-		const after = committing
-			? `After Beepboop commits it to ${repository.defaultBranch}`
-			: 'After the version PR merges';
-		const publishing = `\`publishWhen: ${publishWhenNames[policy]}\`: ${publishWhenSentences[policy]}`;
 		if (!out.jsonMode) {
-			out.log(
-				look.heading(
-					`Release ${look.pkg(repository.name)} / ${selected} → ${look.version(summary.version)}`,
-				),
-			);
-			if (!started && pending && stream.versionSource?.kind !== 'tags') {
-				out.log(`This prepares ${look.version(summary.version)}. ${after}, ${publishing}`);
-			}
-			out.log(`Source: ${repository.defaultBranch} at ${look.sha(summary.sourceSha)}`);
-			out.log(
-				look.note(
-					'The server plans from the repository default branch. Local branch commits and uncommitted files are not included.',
-				),
-			);
-			if (summary.packages?.length) {
-				table(
-					out,
-					summary.packages.map(pkg => ({
-						package: look.pkg(pkg.name),
-						registry: registryOf(pkg.manager),
-						current: pkg.version ?? 'unknown',
-						release: look.version(summary.version),
-					})),
-				);
-			} else if (stream.packages?.length) {
-				table(
-					out,
-					stream.packages.map(id => ({
-						package: look.pkg(packageLabel(id)),
-						current: direct ? 'read from tags' : 'determined by preparation workflow',
-						release: look.version(summary.version),
-					})),
-				);
-			} else if (!direct) out.log('The configured preparation workflow determines the package versions.');
-			for (const note of plan.diagnostics ?? []) out.log(look.note(note));
-			for (const edit of plan.edits) out.log(`\n${edit.path}\nCurrent:\n${edit.before}\nProposed:\n${edit.after}`);
-			if (merging) out.log(`Version PR: ${versionPrMergeSentences[merging].replaceAll('`', '')}`);
-			if (direct) out.log(release.summary);
-			else if (!pending) {
-				out.log(
-					`${repository.defaultBranch} already carries ${look.version(summary.version)}. ${
-						started ? 'Starting publishes it.' : 'This creates its publication run.'
-					}`,
-				);
-			}
+			printPreview(out, look, {
+				repository,
+				stream: selected,
+				config: stream,
+				summary,
+				plan,
+				release,
+				started,
+				pending,
+				direct,
+				committing,
+				merging,
+			});
 		}
 		if (options.dryRun) return out.log(look.note('Dry run: Beepboop started nothing.'));
 		if (
@@ -464,3 +295,58 @@ export function releaseRepository(
 		}
 	});
 }
+
+export const releaseCommand = base(
+	'release',
+	'Release this Git checkout: preview a version on the server, confirm, then act',
+)
+	.details(
+		[
+			'The server plans the version from the repository default branch and prints a preview with the packages, their registries and the version file diffs. You confirm, and the stream setup decides what follows.',
+			'The release bumps the version and publishes it, and nothing asks again. A version that is already on the default branch publishes as it is.',
+			'A release group that versions each package on its own, a tag-based one without a tag-publishing workflow, and, when the release writes a new version, one that keeps its version only in version files or prepares it with `prepare.strategy: workflow`, only prepare the version: `versionLands: via-direct-commit` commits it to the default branch, and `versionLands: via-version-pr` opens the version PR. `publishWhen` decides how the prepared version publishes.',
+		].join('\n\n'),
+	)
+	.example('beepboop release', 'Ask for the stream (when several) and version, preview, confirm (default no)')
+	.example('beepboop release patch', 'Raise the patch version')
+	.example('beepboop release 1.2.0', 'Release an explicit version')
+	.example('beepboop release patch --yes', 'Skip only the confirmation')
+	.example('beepboop release patch --dry-run', 'Print the preview (packages, version file diffs), start nothing')
+	.example('beepboop release 1.2.0 --force', 'Publish without waiting on checks, the signature or package metadata')
+	.example('beepboop release minor --auto', 'GitHub auto-merges this version PR with the stream method, else squash')
+	.example('beepboop release minor --merge rebase', 'GitHub auto-merges this version PR with a rebase')
+	.example('beepboop release minor --no-auto', 'You merge this version PR yourself')
+	.arg('version', arg.string().optional().describe('patch, minor, major or an explicit semantic version'))
+	.flag('repository', flag.string().describe('Repository override; otherwise resolve the current Git remote'))
+	.flag('stream', flag.string().describe('Release stream; inferred when only one is configured'))
+	.flag('yes', flag.boolean().default(false).describe('Skip the confirmation; the preview still prints'))
+	.flag(
+		'dry-run',
+		flag.boolean().default(false).describe('Plan on the server, print the preview and start nothing'),
+	)
+	.flag(
+		'force',
+		flag.boolean().default(false).describe(
+			'Publish without waiting on commit checks, the commit signature or package metadata, and skip the confirmation. Restarts a release of this version that stopped',
+		),
+	)
+	.flag(
+		'auto',
+		flag.boolean().negatable().describe(
+			'Turn GitHub auto-merge of this version PR on or off; otherwise the stream versionPrMerge decides',
+		),
+	)
+	.flag('merge', flag.enum(autoMergeMethods).describe('Auto-merge this version PR with squash, merge or rebase'))
+	.action(connected((client, { flags, args, ask, out, sources }) =>
+		releaseRepository(
+			client,
+			{
+				...flags,
+				dryRun: flags['dry-run'],
+				version: args.version,
+				auto: wasExplicit(sources.flags.auto) ? flags.auto : undefined,
+			},
+			ask,
+			out,
+		)
+	));

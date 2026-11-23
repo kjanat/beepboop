@@ -1,10 +1,12 @@
 import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
+import { flag, group } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
-import type { Client } from '@/cli/client';
-import type { Look, State } from '@/cli/look';
-import { lookOf, step, table } from '@/cli/look';
-import { emit, failure, prompted, unprompted } from '@/cli/output';
-import { checkoutRepository } from '@/cli/release';
+import type { Client } from '@/cli/client/api';
+import { base, connected } from '@/cli/command';
+import { checkoutRepository } from '@/cli/git-checkout';
+import type { Look, State } from '@/cli/render/look';
+import { lookOf, step, table } from '@/cli/render/look';
+import { emit, failure, prompted, unprompted } from '@/cli/render/output';
 import { routes } from '@/contract/routes';
 import type { PackageTagView } from '@/contract/views';
 import { looseStruct, mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
@@ -64,7 +66,7 @@ function rows(look: Look, results: readonly PackageTagView[]) {
 	}));
 }
 
-export function backfillPackageTags(
+function backfillPackageTags(
 	client: Client,
 	options: PackageTagOptions,
 	ask: Ask,
@@ -154,3 +156,29 @@ export function backfillPackageTags(
 		if (results.some(result => result.outcome === 'failed' || result.outcome === 'conflict')) out.setExitCode(1);
 	});
 }
+
+export const tags = group('tags').description('Create the package tags of released versions')
+	.command(
+		base('backfill', 'Create the missing package tags of every released version')
+			.details(
+				[
+					'A stream with `packageTags` gets a tag per package, such as `svg-data-v1.2.3` beside `v1.2.3`, on the release commit. Beepboop creates these tags when a release succeeds. This command adds the tags that released versions are missing.',
+					'Beepboop lists every version tag of the stream, checks each package against its registry, and creates a signed tag only for a package that is published at that version. It never moves or replaces a tag.',
+				].join('\n\n'),
+			)
+			.example('beepboop tags backfill', "Preview and create the missing tags of this checkout's repository")
+			.example('beepboop tags backfill --dry-run', 'Print the missing tags and create nothing')
+			.example('beepboop tags backfill --repository octo/widget --stream main --yes', 'Create them without asking')
+			.flag('repository', flag.string().describe('Repository override; otherwise resolve the current Git remote'))
+			.flag('stream', flag.string().describe('Stream with packageTags; inferred when only one has them'))
+			.flag('yes', flag.boolean().default(false).describe('Skip the confirmation; the preview still prints'))
+			.flag('dry-run', flag.boolean().default(false).describe('Print the missing tags and create nothing'))
+			.action(connected((client, { flags, ask, out }) =>
+				backfillPackageTags(
+					client,
+					{ repository: flags.repository, stream: flags.stream, yes: flags.yes, dryRun: flags['dry-run'] },
+					ask,
+					out,
+				)
+			)),
+	);

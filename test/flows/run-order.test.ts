@@ -7,7 +7,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Store } from '@/automation/store';
-import type { Client } from '@/cli/client';
+import type { Client } from '@/cli/client/api';
 import type { executionFilter } from '@/contract/routes';
 import { routes } from '@/contract/routes';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';

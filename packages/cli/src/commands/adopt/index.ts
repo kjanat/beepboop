@@ -1,16 +1,21 @@
 import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
+import { flag } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupPlan } from '@/automation/setup-types';
-import type { Client } from '@/cli/client';
+import type { Client } from '@/cli/client/api';
+import type { repositoryArg } from '@/cli/command';
+import { base, checkoutArg, connected } from '@/cli/command';
+import { chooseSetup } from '@/cli/commands/adopt/choices';
+import { setupFlagRecord } from '@/cli/commands/adopt/flag-builders';
+import type { SetupFlagValues } from '@/cli/commands/adopt/flags';
+import { applySetupFlags, readSetupFlags } from '@/cli/commands/adopt/flags';
+import { checkoutRepository } from '@/cli/git-checkout';
 import { readJson } from '@/cli/json-file';
-import type { Look } from '@/cli/look';
-import { lookOf, registryOf, step, table } from '@/cli/look';
-import { emit, failure, prompted, unprompted } from '@/cli/output';
-import { chooseSetup } from '@/cli/setup-choices';
-import type { SetupFlagValues } from '@/cli/setup-flags';
-import { applySetupFlags, readSetupFlags } from '@/cli/setup-flags';
+import type { Look } from '@/cli/render/look';
+import { lookOf, registryOf, step, table } from '@/cli/render/look';
+import { emit, failure, prompted, unprompted } from '@/cli/render/output';
 import { routes } from '@/contract/routes';
 import { setupChoicesSchema } from '@/contract/setup';
 import { repositoryReference } from '@/domain/repository-name.ts';
@@ -20,7 +25,7 @@ import { listed } from '@/kernel/text/listing.ts';
 function parsePlan(value: unknown): Effect.Effect<SetupPlan, CLIError> {
 	return parseSetupPlan(value).pipe(Effect.mapError(error => failure(error.message, 'INVALID_PLAN')));
 }
-export function setupRepository(
+function setupRepository(
 	client: Client,
 	repository: string,
 	flags: Readonly<Record<string, unknown>> & { choices?: string; plan?: string; apply: boolean; output?: string },
@@ -209,6 +214,32 @@ export function setupRepository(
 		}
 	});
 }
+
+export const adoptCommand = (
+	name: string,
+	description: string,
+	target: typeof repositoryArg | typeof checkoutArg,
+) =>
+	base(name, description).arg('repository', target)
+		.flag(
+			'choices',
+			flag.path({ mustExist: true }).describe('Advanced: JSON setup choices to preview instead of the proposal'),
+		)
+		.flag('output', flag.path().describe('Advanced: save the preview as JSON instead of opening the PR'))
+		.flag('plan', flag.path({ mustExist: true }).describe('Advanced: saved preview to apply with --apply'))
+		.flag('apply', flag.boolean().default(false).describe('Advanced: apply the exact saved --plan'))
+		.flags(setupFlagRecord())
+		.action(connected((client, { flags, args, ask, out }) =>
+			Effect.gen(function*() {
+				const name = args.repository ?? (yield* checkoutRepository(process.cwd()));
+				yield* setupRepository(client, name, flags, ask, out);
+			})
+		));
+export const adopt = adoptCommand(
+	'adopt',
+	'Propose release setup for this checkout and open the setup PR',
+	checkoutArg,
+);
 
 function chosenWithFlags(file: string, given: SetupFlagValues, plan: SetupPlan) {
 	return Effect.gen(function*() {

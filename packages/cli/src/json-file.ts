@@ -1,6 +1,6 @@
 import type { CLIError } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import { failure } from '@/cli/output';
+import { failure } from '@/cli/render/output';
 
 export function readJson(path: string): Effect.Effect<unknown, CLIError> {
 	return Effect.tryPromise({

@@ -1,8 +1,8 @@
 import type { Out } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
-import type { Look, State } from '@/cli/look';
-import { lookOf, registryOf, table } from '@/cli/look';
-import { emit } from '@/cli/output';
+import type { Look, State } from '@/cli/render/look';
+import { lookOf, registryOf, table } from '@/cli/render/look';
+import { emit } from '@/cli/render/output';
 import type { CredentialsView, ExecutionView, RepositoryView } from '@/contract/views';
 import { planReview } from '@/contract/views';
 import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/kernel/schema/structs.ts';

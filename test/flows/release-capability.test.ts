@@ -20,7 +20,7 @@ import { adminSubject, eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
-import { app } from '@/cli/cli';
+import { app } from '@/cli/main';
 import { streamRelease } from '@/contract/views';
 import { startFromEffect } from '@/domain/setup-terms.ts';
 import { errorEnvelope } from '@/kernel/errors/domain-error.ts';

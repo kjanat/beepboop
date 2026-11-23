@@ -17,7 +17,7 @@ import { verifyRegistry } from '@/automation/managers/verification';
 import { vscodeManager } from '@/automation/managers/vscode';
 import { verifyImage } from '@/automation/oci';
 import type { Publication } from '@/automation/types';
-import { Client } from '@/cli/client';
+import { Client } from '@/cli/client/api';
 import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { fromSync, recover } from '@/kernel/errors/classify.ts';
 import { responseBytes } from '@/kernel/http/body.ts';

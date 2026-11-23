@@ -11,8 +11,8 @@ import {
 } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
-import { lookOf } from '@/cli/look';
-import { failure, prompted } from '@/cli/output';
+import { lookOf } from '@/cli/render/look';
+import { failure, prompted } from '@/cli/render/output';
 import { bumpable, setupStream, startable } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
