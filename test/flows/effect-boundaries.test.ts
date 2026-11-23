@@ -8,7 +8,7 @@ import { experimental_AstroContainer } from 'astro/container';
 import { createContext } from 'astro/middleware';
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
 import { applyVersionFiles } from '@/automation/editors';
-import { RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import { goManager } from '@/automation/managers/go';
 import { jsrManager, setUpJsrPackage } from '@/automation/managers/jsr';
 import { pypiManager } from '@/automation/managers/pypi';

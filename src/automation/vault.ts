@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
-import type { RepositoryGateway } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import type { Store } from '@/automation/store';
 import { workflowFilePattern } from '@/domain/catalog.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';

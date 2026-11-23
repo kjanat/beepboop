@@ -11,7 +11,7 @@ import { TestClock } from 'effect/testing';
 import { decodeJwt } from 'jose';
 import { administrator, workflowIdentity } from '@/automation/auth';
 import { AutomationCoordinator } from '@/automation/coordinator';
-import { RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import { Automation, applicationLayer } from '@/automation/service';
 import { routes } from '@/contract/routes';
 import { configurationSchema } from '@/domain/configuration/schema.ts';

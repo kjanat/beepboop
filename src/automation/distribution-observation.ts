@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import type { RepositoryGateway } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import type { Execution } from '@/automation/types';
 import type { RefPlan, RefState } from '@/domain/refs.ts';
 import { gitCommitSchema, gitRefSchema, repositorySchema, workflowRunSchema } from '@/github/resources.ts';

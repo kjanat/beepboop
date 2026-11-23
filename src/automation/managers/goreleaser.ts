@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import type { VerificationContext } from '@/automation/github';
+import type { VerificationContext } from '@/automation/gateway.ts';
 import { object } from '@/automation/managers/helpers';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';

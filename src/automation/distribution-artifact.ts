@@ -3,7 +3,7 @@ import { Effect, Schema } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { DistributionFile } from '@/automation/distribution';
 import { readDistributionFile } from '@/automation/distribution';
-import type { RepositoryGateway } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { filesFromZip, maxDirectoryEntries, maxDistributionFiles } from '@/kernel/archive/zip.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

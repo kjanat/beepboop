@@ -11,7 +11,7 @@ import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { pullSchema } from '@/github/resources.ts';

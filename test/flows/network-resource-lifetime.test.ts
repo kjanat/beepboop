@@ -3,7 +3,7 @@ import { virtualTime } from '@root/test/support/time.ts';
 import { Deferred, Effect, Exit, Fiber, Result } from 'effect';
 import { TestClock } from 'effect/testing';
 import { exportPKCS8, generateKeyPair } from 'jose';
-import { RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import { goManager } from '@/automation/managers/go';
 import { jsrManager, setUpJsrPackage } from '@/automation/managers/jsr';
 import { npmLatest } from '@/automation/managers/npm';

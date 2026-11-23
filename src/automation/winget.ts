@@ -1,5 +1,5 @@
 import { Clock, Effect, Schema } from 'effect';
-import type { RepositoryGateway } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';

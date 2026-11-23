@@ -8,10 +8,10 @@ import { virtualTime } from '@root/test/support/time.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Option } from 'effect';
-import { RepositoryGateway } from '@/automation/github';
-import { rawFile } from '@/automation/github-raw';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import { Automation } from '@/automation/service';
 import { repositorySnapshot } from '@/automation/snapshot';
+import { rawFile } from '@/github/raw.ts';
 
 let world: World;
 eachWorld(created => {

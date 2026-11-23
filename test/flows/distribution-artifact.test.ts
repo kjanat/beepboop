@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { Effect } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import { readDistributionArtifact } from '@/automation/distribution-artifact';
-import { RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 
 const repository = 'octo/widget';
 const sourceSha = 'a'.repeat(40);

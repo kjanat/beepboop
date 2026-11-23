@@ -1,5 +1,5 @@
 import { Effect, Result } from 'effect';
-import type { RepositoryGateway, SnapshotSource } from '@/automation/github';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object } from '@/automation/managers/helpers';
 import { workspaceMembers } from '@/automation/managers/workspaces';
@@ -18,6 +18,7 @@ import { isLockfile, managerNames, managerSpec } from '@/domain/catalog.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { safeVersionPath } from '@/domain/version-files.ts';
 import { tagQueries } from '@/domain/version-tags.ts';
+import type { SnapshotSource } from '@/github/contents.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
