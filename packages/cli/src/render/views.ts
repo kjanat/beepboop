@@ -4,8 +4,9 @@ import type { Look } from '@/cli/render/look';
 import { lookOf, registryOf, table } from '@/cli/render/look';
 import { emit } from '@/cli/render/output';
 import { stateOf } from '@/cli/render/states';
-import type { CredentialsView, ExecutionView, RepositoryView } from '@/contract/views';
+import type { CredentialsView, ExecutionView } from '@/contract/views';
 import { planReview } from '@/contract/views';
+import type { RepositoryView } from '@/discovery/contract.ts';
 import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/kernel/schema/structs.ts';
 import type { NotificationsView } from '@/notifications/contract.ts';
 
