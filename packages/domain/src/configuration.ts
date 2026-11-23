@@ -57,7 +57,6 @@ import {
 	mutableArray,
 	mutableRecord,
 	refined,
-	safeDecode,
 	schemaIssues,
 	strictStruct,
 	withValidation,
@@ -280,15 +279,7 @@ function streamSchema() {
 			Schema.withDecodingDefault(Effect.succeed('queue')),
 		),
 	});
-	const checked = withValidation(shape, (stream, ctx) => {
-		if (stream.prepare.strategy === 'workflow' && !stream.prepare.workflow) {
-			issue(ctx, 'binding-missing', 'The workflow preparation strategy needs prepare.workflow', [
-				'prepare',
-				'workflow',
-			]);
-		}
-	});
-	return mapped(checked, Schema.toType(streamValue), stream => ({
+	return mapped(shape, Schema.toType(streamValue), stream => ({
 		...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
 		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
 		...(stream.packages === undefined ? {} : { packages: stream.packages }),
@@ -510,20 +501,4 @@ export function configurationProblem(message: string, code: DiagnosticCode = 'in
 
 export function configurationDiagnostics(error: Schema.SchemaError): Diagnostic[] {
 	return schemaIssues(error).map(issue => configurationProblem(issueMessage(issue), codeOf(issue)));
-}
-
-export function configurationDrift(value: unknown, legacy: Configuration): Diagnostic[] {
-	const parsed = safeDecode(configurationSchema, value);
-	const drift = (message: string): Diagnostic => ({
-		code: 'configuration-drift',
-		severity: 'warning',
-		subject: { kind: 'file', path: configurationPath },
-		message,
-	});
-	if (!parsed.success) {
-		return schemaIssues(parsed.error).map(issue => drift(`The configuration schema rejects ${issueMessage(issue)}`));
-	}
-	return JSON.stringify(parsed.data) === JSON.stringify(legacy)
-		? []
-		: [drift('The configuration schema reads this file differently from the current parser')];
 }

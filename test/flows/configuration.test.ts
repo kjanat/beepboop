@@ -11,7 +11,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import type { ManagerName } from '@/domain/catalog.ts';
-import { configurationDrift, configurationSchema, issueMessage } from '@/domain/configuration';
+import { configurationSchema, issueMessage } from '@/domain/configuration';
 import { refPolicyValue } from '@/domain/configuration-value';
 import {
 	identityOf,
@@ -147,7 +147,6 @@ test('parsing a parsed configuration returns it unchanged, and stored copies dec
 		const parsed = decodeSync(configurationSchema, value);
 		const configuration = parseRepositoryConfiguration(value);
 		if (Result.isFailure(configuration)) throw configuration.failure;
-		expect(configurationDrift(value, configuration.success)).toEqual([]);
 		const encoded = JSON.stringify(parsed);
 		expect(JSON.stringify(decodeSync(configurationSchema, parsed))).toBe(encoded);
 		expect(JSON.stringify(decodeSync(storedConfiguration, JSON.parse(encoded)))).toBe(encoded);
@@ -321,7 +320,7 @@ test('stored repositories keep their plan identity and decode under the configur
 	expect(safeDecode(configurationSchema, legacy.configuration).success).toBe(false);
 });
 
-test('refresh records schema drift as a warning while the current parser keeps releasing', async () => {
+test('refresh blocks a prepare operation configured under workflows', async () => {
 	const repository = widget(world.github);
 	const configuration = widgetDocument();
 	configuration.streams.main.workflows = { prepare: { file: 'publish.yml' } };
@@ -331,17 +330,11 @@ test('refresh records schema drift as a warning while the current parser keeps r
 
 	const discovered = await api('/api/repositories/discover', { repository: 'octo/widget' });
 	expect(discovered.status).toBe(200);
-	expect(diagnostics(discovered)).toEqual([]);
-	const document = await stored(repository.id);
-	expect(document.diagnostics).toEqual([]);
-	expect(document.findings).toEqual([{
-		code: 'configuration-drift',
-		severity: 'warning',
-		message:
-			'The configuration schema rejects streams.main.workflows.prepare: prepare is configured under prepare.workflow',
-	}]);
+	expect(diagnostics(discovered)).toEqual([
+		'streams.main.workflows.prepare: prepare is configured under prepare.workflow',
+	]);
 	const plan = await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.1.0' });
-	expect(plan.status).toBe(200);
+	expect(plan.status).toBe(422);
 });
 
 test('editors validate with the published schema and refuse what refresh refuses', async () => {
@@ -466,7 +459,7 @@ const lateFailures: Finding[] = [
 const workingConfigurations: Finding[] = [
 	{
 		name: 'a workflow preparation strategy without a workflow',
-		codes: ['configuration-drift'],
+		codes: ['binding-missing'],
 		edit: stream => {
 			stream.prepare = { strategy: 'workflow' };
 		},
@@ -794,10 +787,9 @@ test('the parser and schema agree on job gates', () => {
 	expect(encoded?.needs).toEqual({ 'pkg:cargo/cli': ['pkg:cargo/core'] });
 	const legacy = parseRepositoryConfiguration(document({ release: ['plan'] }));
 	if (Result.isFailure(legacy)) throw new Error('The parser rejected a valid job gate');
-	expect(configurationDrift(document({ release: ['plan'] }), legacy.success)).toEqual([]);
 });
 
-test('the parser and schema agree on operation dependencies, schedules and WinGet settings', () => {
+test('the configuration schema checks operation dependencies, schedules and WinGet settings', () => {
 	const document = (workflows: Record<string, unknown>, winget?: unknown) => ({
 		streams: { main: { promote: { workflow: { file: 'publish.yml' } }, workflows } },
 		...(winget === undefined ? {} : { winget }),
@@ -819,26 +811,25 @@ test('the parser and schema agree on operation dependencies, schedules and WinGe
 		] as const
 	) {
 		expect(Result.isSuccess(parseRepositoryConfiguration(value))).toBe(valid);
-		expect(safeDecode(configurationSchema, value).success).toBe(valid);
 	}
 
-	const fourFields = parseRepositoryConfiguration(document({ nightly: { file: 'n.yml', schedule: '0 6 * *' } }));
-	expect(Result.isFailure(fourFields) && fourFields.failure.message).toBe('Schedules use five-field UTC cron');
+	const fourFields = safeDecode(configurationSchema, document({ nightly: { file: 'n.yml', schedule: '0 6 * *' } }));
+	expect(fourFields.success ? [] : schemaIssues(fourFields.error).map(issueMessage)).toEqual([
+		'streams.main.workflows.nightly.schedule: Schedules use five-field UTC cron',
+	]);
 	const winget = { config: 'winget/widget.json', tagPrefix: 'v', automatic: false };
 	expect(decodeSync(configurationSchema, document({}, { config: 'winget/widget.json' })).winget).toEqual(winget);
-	const legacy = parseRepositoryConfiguration(document({}, { config: 'winget/widget.json' }));
-	expect(Result.isSuccess(legacy) && legacy.success.winget).toEqual(winget);
 
 	const broken = document({ a: { file: 'a.yml', needs: ['b', 'missing'] }, b: { file: 'b.yml', needs: ['a'] } });
-	const legacyBroken = parseRepositoryConfiguration(broken);
-	expect(Result.isFailure(legacyBroken) && legacyBroken.failure.message).toBe('Operation dependency cycle');
 	const schema = safeDecode(configurationSchema, broken);
 	expect(schema.success ? [] : schemaIssues(schema.error).map(issueMessage)).toEqual([
 		'streams.main.workflows.a: Operation dependency cycle',
 		'streams.main.workflows.a.needs: Unknown dependency missing',
 	]);
-	const unknown = parseRepositoryConfiguration(document({ build: { file: 'build.yml', needs: ['missing'] } }));
-	expect(Result.isFailure(unknown) && unknown.failure.message).toBe('Unknown dependency missing');
+	const unknown = safeDecode(configurationSchema, document({ build: { file: 'build.yml', needs: ['missing'] } }));
+	expect(unknown.success ? [] : schemaIssues(unknown.error).map(issueMessage)).toEqual([
+		'streams.main.workflows.build.needs: Unknown dependency missing',
+	]);
 });
 
 test('invalid record keys and explicit null stay invalid in the runtime and published schema', async () => {

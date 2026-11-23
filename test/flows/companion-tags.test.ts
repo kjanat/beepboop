@@ -5,7 +5,7 @@ import { companionProposals } from '@/automation/companion-detection';
 import { createExecution } from '@/automation/execution';
 import type { SetupChoices } from '@/automation/setup-types';
 import { binaries } from '@/domain/binary-platforms.ts';
-import { configurationDrift, configurationSchema } from '@/domain/configuration';
+import { configurationSchema } from '@/domain/configuration';
 import type { Inventory, Package, RepositoryRecord, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { registry } from '@/domain/package-publication.ts';
@@ -96,7 +96,6 @@ test('companionModules reads the same through the schema, the parser and the sto
 	const configuration = parseRepositoryConfiguration(document);
 	if (Result.isFailure(configuration)) throw configuration.failure;
 	expect(configuration.success.streams.main?.companionModules).toEqual([module]);
-	expect(configurationDrift(document, configuration.success)).toEqual([]);
 	const encoded = JSON.stringify(parsed);
 	expect(JSON.stringify(decodeSync(storedConfiguration, JSON.parse(encoded)))).toBe(encoded);
 	document.streams.main.companionModules = 'pkg:golang/github.com/octo/shellcheck/go';

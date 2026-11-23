@@ -32,7 +32,7 @@ import {
 } from '@/automation/package-tags';
 import type { PackageTagView } from '@/contract/views';
 import { packageTagPage as pageSchema } from '@/contract/views';
-import { configurationDrift, configurationSchema } from '@/domain/configuration';
+import { configurationSchema } from '@/domain/configuration';
 import type { Inventory, Package } from '@/domain/inventory.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
 import { parseRepositoryConfiguration } from '@/domain/repository-configuration.ts';
@@ -293,14 +293,13 @@ const secretPackage: Package = {
 };
 const paths = { paths: ['.github/workflows/publish.yml', '.github/workflows/ci.yml'] };
 
-test('packageTags survive parsing, storage and drift checks', () => {
+test('packageTags survive parsing and storage', () => {
 	const document = JSON.parse(configuration(['pkg:npm/widget']));
 	const parsed = decodeSync(configurationSchema, document);
 	expect(parsed.streams.main?.packageTags).toEqual(['pkg:npm/widget']);
 	const repository = parseRepositoryConfiguration(document);
 	if (Result.isFailure(repository)) throw repository.failure;
 	expect(repository.success.streams.main?.packageTags).toEqual(['pkg:npm/widget']);
-	expect(configurationDrift(document, repository.success)).toEqual([]);
 	const encoded = JSON.stringify(parsed);
 	expect(JSON.stringify(decodeSync(storedConfiguration, JSON.parse(encoded)))).toBe(encoded);
 	document.streams.main.packageTags = 'pkg:npm/widget';

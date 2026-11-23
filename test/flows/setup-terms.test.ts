@@ -152,5 +152,4 @@ test('a repository setting overrides a preset whichever names each of them uses'
 	);
 	expect([resolved.configuration.streams.main?.versioning, resolved.configuration.streams.main?.promote.approval])
 		.toEqual(['independent', 'push']);
-	expect(resolved.drift).toEqual([]);
 });
