@@ -196,6 +196,10 @@
 		"specifier": "@/automation/snapshot"
 	},
 	{
+		"file": "packages/release/src/domain/capability.ts",
+		"specifier": "@/automation/types"
+	},
+	{
 		"file": "packages/release/src/domain/execution-order.ts",
 		"specifier": "@/automation/types.ts"
 	},
@@ -238,10 +242,6 @@
 	{
 		"file": "packages/release/src/domain/version.ts",
 		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/setup/src/draft.ts",
-		"specifier": "@/automation/release-capability"
 	},
 	{
 		"file": "packages/setup/src/server/maintenance.ts",

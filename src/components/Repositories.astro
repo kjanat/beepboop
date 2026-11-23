@@ -1,5 +1,4 @@
 ---
-import { streamReleases } from '@/automation/release-capability';
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Commit from '@/components/Commit.astro';
@@ -12,6 +11,7 @@ import { exclusionLabel, publishable } from '@/domain/package-publication.ts';
 import { readiness } from '@/domain/repository';
 import { wingetOutcome } from '@/publication/destinations.ts';
 import { githubHref } from '@/publication/links.ts';
+import { streamReleases } from '@/release/domain/capability.ts';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';
 import { repositoryStatus } from '@/server/views/tone.ts';

@@ -1,5 +1,4 @@
 import { Effect, Result, Schema } from 'effect';
-import { newVersionStartRefusal } from '@/automation/release-capability';
 import { binaryCandidates } from '@/discovery/analysis/binary-candidates.ts';
 import { companionProposals } from '@/discovery/analysis/companions.ts';
 import { discover } from '@/discovery/discover.ts';
@@ -28,6 +27,7 @@ import {
 	versionLandsSentences,
 	versionScopeNames,
 } from '@/domain/setup-terms.ts';
+import { newVersionStartRefusal } from '@/domain/start-refusal.ts';
 import { versionsInFiles } from '@/domain/version-tags.ts';
 import type { WorkflowSetupInput } from '@/domain/workflow-setup.ts';
 import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';

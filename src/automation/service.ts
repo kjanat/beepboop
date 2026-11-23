@@ -34,6 +34,7 @@ import { conflictMessage, streamModuleTagPrefixes, tagConflicts } from '@/domain
 import type { Access, ReadyRepository } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { compareVersions } from '@/domain/semver.ts';
+import { hasTagPromotion } from '@/domain/start-refusal.ts';
 import { semVer } from '@/domain/version.ts';
 import { latestTag, versionsInFiles } from '@/domain/version-tags.ts';
 import { GitHubApp, isolateGitHubApp } from '@/github/app.ts';
@@ -77,7 +78,6 @@ import { WinGetService } from '@/publication/winget/service.ts';
 import { planVersionFiles } from '@/release/domain/planning/editors.ts';
 import { planRelease } from '@/release/domain/planning/managers.ts';
 import {
-	hasTagPromotion,
 	manifestProblems,
 	releasedVersion,
 	releasePaths,

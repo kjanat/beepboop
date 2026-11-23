@@ -1,6 +1,5 @@
 import { Effect, Schema } from 'effect';
 import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
-import { streamReleases } from '@/automation/release-capability';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { routes } from '@/contract/routes';
 import { discover } from '@/discovery/discover.ts';
@@ -14,6 +13,7 @@ import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, domainError, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
+import { streamReleases } from '@/release/domain/capability.ts';
 import type { Context } from '@/server/handlers/kit';
 import { admin, storedRepository } from '@/server/handlers/kit';
 import { setupBody } from '@/setup/body.ts';
