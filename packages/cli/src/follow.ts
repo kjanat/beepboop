@@ -1,11 +1,13 @@
-import type { CLIError, Out, ProgressHandle } from '@kjanat/dreamcli';
+import type { Ask, CLIError, Out, ProgressHandle } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
 import type { Client } from '@/cli/client';
 import type { Look, State } from '@/cli/look';
 import { lookOf, registryOf, table } from '@/cli/look';
-import { failure } from '@/cli/output';
+import { failure, prompted, unprompted } from '@/cli/output';
 import { routes } from '@/contract/routes';
 import type { BinaryProgress } from '@/contract/views';
+import type { CheckChoice } from '@/domain/release-gates.ts';
+import { stoppedByGates } from '@/domain/release-gates.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, looseStruct, mutableArray, mutableRecord } from '@/kernel/schema/structs.ts';
 
@@ -191,10 +193,54 @@ function snapshot(client: Client, followed: Followed): Effect.Effect<Tracked[], 
 	);
 }
 
-export function followRelease(client: Client, out: Out, followed: Followed): Effect.Effect<void, CLIError> {
+export interface CheckAnswers {
+	ask?: Ask;
+	yes: boolean;
+}
+
+const checkOptions = [
+	{ value: 'rerun', label: 'Rerun the failed checks and wait' },
+	{ value: 'skip', label: 'Release without the check' },
+	{ value: 'always', label: 'Always release without the check' },
+	{ value: 'stop', label: 'Stop' },
+] as const satisfies readonly { value: CheckChoice | 'stop'; label: string }[];
+
+const chosenNote: Record<CheckChoice, string> = {
+	rerun: 'Beepboop reruns the failed checks and publishes once they pass.',
+	skip: 'This release ignores the checks that stopped it.',
+	always: 'Every later release of this stream ignores these checks too.',
+};
+
+function checkChoice(
+	answers: CheckAnswers,
+	reran: boolean,
+): Effect.Effect<CheckChoice | 'stop' | 'unanswered', CLIError> {
+	const ask = answers.ask;
+	if (answers.yes) return Effect.succeed(reran ? 'stop' : 'rerun');
+	if (!ask) return Effect.succeed('unanswered');
+	return unprompted(
+		prompted(() =>
+			ask({
+				kind: 'select',
+				message: 'The checks stopped the release. What next?',
+				choices: [...checkOptions],
+			})
+		),
+		() => Effect.succeed('unanswered'),
+	).pipe(
+		Effect.map(answer => checkOptions.find(option => option.value === answer)?.value ?? 'unanswered'),
+	);
+}
+
+export function followRelease(
+	client: Client,
+	out: Out,
+	followed: Followed,
+	answers: CheckAnswers = { yes: false },
+): Effect.Effect<void, CLIError> {
 	return Effect.gen(function*() {
 		const look = lookOf(out);
-		const spinner = out.spinner(
+		let spinner = out.spinner(
 			followed.bumped
 				? `Applying the ${look.version(followed.version)} version bump`
 				: `Starting the release of ${look.version(followed.version)}`,
@@ -219,14 +265,16 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 		};
 		let started = false;
 		let announced = !followed.bumped;
+		let promotionId = followed.promotion;
+		let reran = false;
 		for (;;) {
 			yield* client.pause(followInterval);
 			const rows = yield* snapshot(client, followed);
 			const preparation = rows.find(row => row.id === followed.execution.id);
 			const promotion = rows.find(row =>
-				followed.promotion === undefined
+				promotionId === undefined
 					? row.operation === 'promote' && row.version === followed.version && row.approvedBy === 'start'
-					: row.id === followed.promotion
+					: row.id === promotionId
 			);
 			if (!announced && preparation) {
 				const prepared = preparation.managed?.result ?? preparation.prepared?.result;
@@ -276,6 +324,25 @@ export function followRelease(client: Client, out: Out, followed: Followed): Eff
 				} else spinner.fail();
 				out.error(reason);
 				report();
+				if (promotion.state === 'failed' && stoppedByGates(promotion.reason) && !out.jsonMode) {
+					const choice: CheckChoice | 'stop' | 'unanswered' = yield* checkChoice(answers, reran);
+					if (choice === 'unanswered') {
+						out.error(`Choose with beepboop runs checks ${promotion.id} --choice rerun, skip or always`);
+					} else if (choice !== 'stop') {
+						yield* client.call(routes.executionsChecks, {
+							id: promotion.id,
+							repositoryId: promotion.repositoryId,
+							choice,
+						});
+						out.log(chosenNote[choice]);
+						reran ||= choice === 'rerun';
+						promotionId = promotion.id;
+						bars.clear();
+						started = false;
+						spinner = out.spinner(`Waiting for checks on ${sha}`);
+						continue;
+					}
+				}
 				out.setExitCode(1);
 				return;
 			}

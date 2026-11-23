@@ -1350,7 +1350,7 @@ test('release shows the wait for checks and stops with the failing check', async
 			await (steps.shift() ?? (() => world.wait(16_000)))();
 		})
 	);
-	const result = await run(['release', 'patch', '--repository', repository.name], [true]);
+	const result = await run(['release', 'patch', '--repository', repository.name], [true, 'stop']);
 	expect(result.exitCode).toBe(1);
 	const head = world.github.head(repository);
 	expect(result.activity).toContainEqual({
@@ -1360,6 +1360,103 @@ test('release shows the wait for checks and stops with the failing check', async
 	expect(result.activity.map(event => event.type)).toContain('spinner:fail');
 	expect(result.stderr.join('')).toBe('checks failed: test\n');
 	expect(repository.runs).toEqual([]);
+});
+
+function stoppedThenPublished(repository: Repository, rerun: boolean) {
+	const steps = [
+		() => world.wait(16_000),
+		async () => {
+			const head = world.github.head(repository);
+			repository.checks.set(head, [{ name: 'test', status: 'completed', conclusion: 'failure', runId: 50 }]);
+			repository.runs.push({
+				id: 50,
+				path: '.github/workflows/ci.yml',
+				event: 'push',
+				headSha: head,
+				headBranch: repository.defaultBranch,
+				status: 'completed',
+				conclusion: 'failure',
+				attempt: 1,
+				title: 'CI',
+				inputs: {},
+			});
+			expect((await world.push(repository)).status).toBe(202);
+			await world.wait(16_000);
+		},
+		async () => {
+			if (rerun) passChecks(repository, world.github.head(repository));
+			await world.wait(60_000);
+		},
+		async () => {
+			const run = repository.runs.at(-1);
+			const execution = run?.inputs.beepboop_execution_id;
+			if (!run || !execution) throw new Error('The release dispatched no run');
+			run.status = 'in_progress';
+			const identity = runIdentity(repository, run, 'publish.yml');
+			await begin(world, identity, execution, 'main', 'promote');
+			world.npm.publish('widget', '1.0.1');
+			await runAction(world, 'report', identity, {
+				EXECUTION_ID: execution,
+				PUBLICATIONS: JSON.stringify([
+					{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.0.1', outcome: 'succeeded' },
+				]),
+			});
+			run.status = 'completed';
+			run.conclusion = 'success';
+			await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
+			await world.wait(16_000);
+		},
+	];
+	spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			await (steps.shift() ?? (() => world.wait(16_000)))();
+		})
+	);
+}
+
+test('release asks what next when the checks stop it, and releases without the check', async () => {
+	const repository = await cliStarts();
+	stoppedThenPublished(repository, false);
+	const result = await run(['release', 'patch', '--repository', repository.name], [true, 'skip']);
+	expect([result.exitCode, result.stderr.join('')]).toEqual([0, 'checks failed: test\n']);
+	const output = result.stdout.join('');
+	expect(output).toContain('This release ignores the checks that stopped it.');
+	expect(output).toContain('Released 1.0.1 of octo/widget');
+});
+
+test('release --yes reruns the failed checks once and publishes once they pass', async () => {
+	const repository = await cliStarts();
+	stoppedThenPublished(repository, true);
+	const result = await run(['release', 'patch', '--repository', repository.name, '--yes']);
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout.join('')).toContain('Beepboop reruns the failed checks and publishes once they pass.');
+	expect(repository.runs.find(entry => entry.id === 50)?.attempt).toBe(2);
+});
+
+test('release --yes stops when the rerun checks fail again', async () => {
+	const repository = await cliStarts();
+	stoppedThenPublished(repository, false);
+	const result = await run(['release', 'patch', '--repository', repository.name, '--yes']);
+	expect([result.exitCode, result.stderr.join('')]).toEqual([1, 'checks failed: test\nchecks failed: test\n']);
+	expect(repository.runs.find(entry => entry.id === 50)?.attempt).toBe(2);
+});
+
+test('release without a terminal names the command that resolves the stopped checks', async () => {
+	const repository = await cliStarts();
+	stoppedThenPublished(repository, false);
+	const result = await app.execute(['release', 'patch', '--repository', repository.name], { isTTY: false, env: {} });
+	const [promotion] = await promotions();
+	expect([result.exitCode, result.stderr.join('')]).toEqual([
+		1,
+		`checks failed: test\nChoose with beepboop runs checks ${promotion?.id} --choice rerun, skip or always\n`,
+	]);
+	const chosen = await run(['runs', 'checks', promotion?.id ?? '', '--choice', 'always']);
+	expect(chosen.exitCode).toBe(0);
+	const short = promotion?.id.slice(0, 12);
+	expect(chosen.activity).toEqual([
+		{ type: 'spinner:start', text: `Switching off the checks of ${short}` },
+		{ type: 'spinner:succeed', text: `${short} is awaiting-approval` },
+	]);
 });
 
 test('release links the version PR of a started release and stops following for the merge', async () => {

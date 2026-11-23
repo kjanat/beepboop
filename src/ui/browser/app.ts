@@ -6,6 +6,7 @@ import { awaitWith } from '@/kernel/errors/refusal.ts';
 import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray, mutableRecord, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import { api, elevatedApi } from '@/ui/browser/api';
+import { chooseChecks } from '@/ui/browser/checks';
 import {
 	element,
 	FieldError,
@@ -508,6 +509,9 @@ function submitted(form: HTMLFormElement, action: string | undefined, clicked: s
 				Effect.onError(() => Effect.sync(undo)),
 			);
 			yield* navigate(`/repositories?repository=${encodeURIComponent(repository.name)}`);
+		} else if (action === 'checks') {
+			yield* chooseChecks(data.id ?? '', clicked);
+			yield* reload;
 		} else if (action === 'cancel') {
 			yield* api(routes.executionsCancel, { id: data.id ?? '' });
 			yield* reload;

@@ -133,8 +133,8 @@ import {
 	tagPrefixes,
 	versionTagged,
 } from '@/domain/refs.ts';
-import type { GateSkip, ReleaseGate } from '@/domain/release-gates.ts';
-import { gatedRelease, gateLabel, sameGate } from '@/domain/release-gates.ts';
+import type { CheckChoice, GateSkip, ReleaseGate } from '@/domain/release-gates.ts';
+import { gatedRelease, gateLabel, gateReasons, sameGate } from '@/domain/release-gates.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/domain/version.ts';
@@ -227,7 +227,7 @@ const projectionRetry = 10_000;
 const dependencyPoll = 30_000;
 const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
-const metadataReason = 'metadata incomplete: ';
+const metadataReason = gateReasons.metadata;
 const passingConclusions = ['success', 'neutral', 'skipped'];
 function missingReceipt(execution: Execution, record: LedgerRecord): boolean {
 	return released(record)
@@ -327,6 +327,7 @@ interface GateOutcome {
 	state: 'passed' | 'waiting' | 'failed';
 	fact: string;
 	detail?: string;
+	runId?: number;
 }
 interface CommitGates {
 	manifest: string[];
@@ -2844,7 +2845,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const skipOf = (gate: ReleaseGate) => skips.find(skip => sameGate(skip.gate, gate));
 				const gates: GateView[] = merged.map(outcome => {
 					const skip = skipOf(outcome.gate);
-					return { ...outcome, ...(skip ? { skipped: { actor: skip.actor, at: skip.at } } : {}) };
+					const { runId: _runId, ...shown } = outcome;
+					return { ...shown, ...(skip ? { skipped: { actor: skip.actor, at: skip.at } } : {}) };
 				});
 				for (const skip of skips) {
 					if (merged.some(outcome => sameGate(outcome.gate, skip.gate))) continue;
@@ -2864,6 +2866,81 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}),
 			'coordinator.gates',
 			{ repositoryId, stream },
+		);
+	}
+	resolveChecks(id: string, choice: CheckChoice, actor: string): Promise<Execution> {
+		return this.serial(
+			Effect.gen({ self: this }, function*() {
+				const clock = yield* Clock.Clock;
+				const execution = yield* this.get(id);
+				if (execution.operation !== 'promote' || !['failed', 'awaiting-approval'].includes(execution.state)) {
+					return yield* precondition('Only a release that waits on its checks or stopped on them takes this choice');
+				}
+				if (execution.state === 'failed' && (execution.attempts > 0 || execution.approvedAt !== undefined)) {
+					return yield* precondition('This release already ran its workflow; retry it instead');
+				}
+				const [{ outcomes }, skips, metadata] = yield* Effect.all([
+					this.commitGates(execution),
+					this.gateSkips(execution),
+					this.metadataProblemsOf(execution),
+				], { concurrency: 'unbounded' });
+				const stopping = mergedOutcomes([
+					...outcomes,
+					...(metadata.length
+						? [{ gate: { kind: 'metadata' as const }, state: 'failed' as const, fact: 'incomplete' }]
+						: []),
+				]).filter(outcome => outcome.state !== 'passed' && !skips.some(skip => sameGate(skip.gate, outcome.gate)));
+				if (!stopping.length) return yield* precondition('No check stops this release');
+				const store = yield* this.store;
+				const at = clock.currentTimeMillisUnsafe();
+				const labels = stopping.map(outcome => gateLabel(outcome.gate));
+				const next: Execution = execution.state === 'failed'
+					? { ...execution, state: 'awaiting-approval', publications: reopened(execution.publications) }
+					: { ...execution };
+				delete next.reason;
+				if (choice === 'rerun') {
+					const runs = [
+						...new Set(
+							mergedOutcomes(outcomes).flatMap(outcome =>
+								outcome.state === 'failed' && outcome.runId !== undefined
+									&& stopping.some(entry => sameGate(entry.gate, outcome.gate))
+									? [outcome.runId]
+									: []
+							),
+						),
+					];
+					if (!runs.length) return yield* precondition('No failed check run to rerun');
+					const gateway = yield* this.gateway;
+					const token = yield* gateway.token(execution.repository, execution.repositoryId, {
+						contents: 'read',
+						actions: 'write',
+					});
+					for (const run of runs) {
+						yield* gateway.call(`/repos/${execution.repository}/actions/runs/${run}/rerun-failed-jobs`, token, 'POST');
+					}
+					yield* store.audit(actor, 'promotion.checks.rerun', `${id}: ${runs.join(', ')}`);
+				} else if (choice === 'skip') {
+					next.skippedGates = [
+						...(execution.skippedGates ?? []),
+						...stopping.map(outcome => ({ gate: outcome.gate, actor, at })),
+					];
+					yield* store.audit(actor, 'promotion.checks.skip', `${id}: ${labels.join(', ')}`);
+				} else {
+					for (const outcome of stopping) {
+						yield* store.gateSkips.skip(execution.repositoryId, execution.stream, outcome.gate, actor);
+						yield* store.audit(
+							actor,
+							'stream.gate.skip',
+							`${execution.repository}:${execution.stream}:${gateLabel(outcome.gate)}`,
+						);
+					}
+				}
+				yield* this.put(next);
+				yield* this.wakeUp();
+				return next;
+			}),
+			'coordinator.resolveChecks',
+			{ executionId: id },
 		);
 	}
 	private metadataBlocks(execution: Execution): CoordinatorEffect<string[], DomainError> {
@@ -3121,8 +3198,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				),
 			);
 			const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
-			const pathOf = (run: (typeof runs)[number]) =>
-				paths.get(/\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1] ?? '');
+			const runOf = (run: (typeof runs)[number]) => /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
+			const pathOf = (run: (typeof runs)[number]) => paths.get(runOf(run) ?? '');
 			const unfinished = runs.filter(run => run.status !== 'completed');
 			const deploying = new Map<string, CheckJob[]>();
 			for (const path of new Set(unfinished.flatMap(run => pathOf(run) ?? []))) {
@@ -3138,7 +3215,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			});
 			for (const run of gating) {
 				const conclusion = String(run.conclusion);
+				const runId = runOf(run);
 				outcomes.push({
+					...(runId ? { runId: Number(runId) } : {}),
 					gate: { kind: 'check', name: String(run.name) },
 					state: run.status !== 'completed'
 						? 'waiting'
@@ -3165,8 +3244,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return metadata ? { ...view(record), force: true } : view(record);
 		});
 	}
-	private gateSkips(subject: Pick<Execution, 'repositoryId' | 'stream'>): CoordinatorEffect<GateSkip[], DomainError> {
-		return Effect.flatMap(this.store, store => store.gateSkips.list(subject.repositoryId, subject.stream));
+	private gateSkips(
+		subject: Pick<Execution, 'repositoryId' | 'stream' | 'skippedGates'>,
+	): CoordinatorEffect<GateSkip[], DomainError> {
+		return Effect.flatMap(this.store, store => store.gateSkips.list(subject.repositoryId, subject.stream)).pipe(
+			Effect.map(skips => [...skips, ...(subject.skippedGates ?? [])]),
+		);
 	}
 	private commitChecks(
 		execution: Execution,
@@ -3180,7 +3263,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const kept = outcomes.filter(outcome => !skipOf(outcome.gate));
 			const failed = [...manifest], pending: string[] = [];
 			if (kept.some(outcome => outcome.gate.kind === 'signature' && outcome.state === 'failed')) {
-				failed.push('signature unverified');
+				failed.push(gateReasons.signature);
 			}
 			if (truncated) failed.push('over 100 check runs');
 			if (!runs) pending.push('no checks yet');
@@ -3193,10 +3276,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const failing = checks.flatMap(check =>
 				check.state !== 'failed' ? [] : [check.fact === 'failure' ? check.name : `${check.name} (${check.fact})`]
 			);
-			if (failing.length) failed.push(`checks failed: ${failing.join(', ')}`);
+			if (failing.length) failed.push(`${gateReasons.checks}${failing.join(', ')}`);
 			const status = kept.find(outcome => outcome.gate.kind === 'status');
 			if (status && status.state !== 'passed') {
-				(status.state === 'waiting' ? pending : failed).push(`commit status ${status.fact}`);
+				(status.state === 'waiting' ? pending : failed).push(`${gateReasons.status}${status.fact}`);
 			}
 			const skipped = mergedOutcomes(outcomes).flatMap(outcome => {
 				const skip = skipOf(outcome.gate);

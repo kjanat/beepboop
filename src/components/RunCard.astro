@@ -150,6 +150,38 @@ const card = runCard(run, now);
 			</button>
 		</form>
 	)}
+	{card.checksStop && (
+		<form
+			data-action="checks"
+			method="post"
+			action="/api/executions/checks"
+			class="actions"
+		>
+			<input type="hidden" name="id" value={run.id}>
+			<button
+				class="primary"
+				name="choice"
+				value="rerun"
+				title="Rerun the failed jobs of each failing check and publish once they pass"
+			>
+				Rerun and wait
+			</button>
+			<button
+				name="choice"
+				value="skip"
+				title="This release ignores the checks that stop it"
+			>
+				Release without the check
+			</button>
+			<button
+				name="choice"
+				value="always"
+				title="Every later release of this stream ignores these checks"
+			>
+				Always release without the check
+			</button>
+		</form>
+	)}
 	{card.retryable && (
 		<RecoverForm id={run.id} recovery="retry" label={`Retry ${card.name}`}>
 			Retry

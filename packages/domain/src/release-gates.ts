@@ -29,6 +29,22 @@ export function gateLabel(gate: ReleaseGate): string {
 	}
 }
 
+export const checkChoices = ['rerun', 'skip', 'always'] as const;
+export type CheckChoice = (typeof checkChoices)[number];
+export const gateReasons = {
+	checks: 'checks failed: ',
+	signature: 'signature unverified',
+	status: 'commit status ',
+	metadata: 'metadata incomplete: ',
+} as const;
+
+export function stoppedByGates(reason: string | undefined): boolean {
+	return (reason ?? '').split('; ').some(part =>
+		part.startsWith(gateReasons.checks) || part === gateReasons.signature || part.startsWith(gateReasons.metadata)
+		|| (part.startsWith(gateReasons.status) && part !== `${gateReasons.status}pending`)
+	);
+}
+
 const waiting = ['pending', 'blocked', 'awaiting-approval'];
 export function gatedRelease<T extends { operation: string; stream: string; state: string; createdAt: number }>(
 	executions: readonly T[],

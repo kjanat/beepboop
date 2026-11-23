@@ -605,6 +605,22 @@ release then follows `promote.publishWhen`. Failing checks or package metadata p
 reason on the runs page. Starting the same version again restarts a stopped
 release whose workflow has not run yet, and Retry on the runs page does the same.
 
+When the commit signature, a check, the commit status or package metadata
+stops a release, `beepboop release` asks what comes next, and the card of the
+release on the runs page shows the same choices as buttons:
+
+- **Rerun and wait** reruns the failed jobs of each failing check, waits for
+  the new results and publishes once they pass. `--yes` takes this choice once.
+- **Release without the check** makes this release ignore the gates that stop
+  it. The activity log names who skipped them.
+- **Always release without the check** switches those gates off for every later
+  release of the stream. The repositories page lists them under **Release
+  gates** with **Switch on**.
+- **Stop** leaves the release stopped.
+
+`beepboop runs checks ID --choice rerun`, `skip` or `always` makes the same
+choice from a script.
+
 `beepboop release <version> --force` publishes without waiting on commit
 checks, the commit signature or package metadata, and asks nothing. It also
 restarts a release of that version that stopped, and runs its workflow again
