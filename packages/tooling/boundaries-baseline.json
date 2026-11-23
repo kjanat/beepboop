@@ -184,6 +184,10 @@
 		"specifier": "@/contract/changes"
 	},
 	{
+		"file": "packages/publication/src/ledger-plan.ts",
+		"specifier": "@/automation/types"
+	},
+	{
 		"file": "packages/publication/src/ledger.ts",
 		"specifier": "@/automation/types"
 	},
