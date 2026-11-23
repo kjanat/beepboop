@@ -9,6 +9,7 @@ export type Tone = (typeof tones)[number];
 export interface Status {
 	tone: Tone;
 	label: string;
+	detail?: string;
 }
 
 export const executionStates = [

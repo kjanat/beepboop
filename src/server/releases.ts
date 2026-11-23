@@ -14,8 +14,10 @@ export function publishesAutomatically(run: Execution): boolean {
 		&& (run.configuration.streams[run.stream]?.promote.approval === 'push' || run.approvedBy !== undefined);
 }
 
+export const checksPolicy = 'Releases once the commit is verified and its checks pass';
+
 export function runStateLabel(run: Execution): string {
-	if (publishesAutomatically(run)) return 'publishing once its checks pass';
+	if (publishesAutomatically(run)) return 'waiting for checks';
 	if (
 		run.github && run.github.kind !== 'succeeded' && ['running', 'blocked', 'uncertain', 'failed'].includes(run.state)
 	) {

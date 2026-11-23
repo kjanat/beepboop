@@ -483,7 +483,7 @@ test('failing checks on the bump commit stop a started release with a reason', a
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(16_000);
 	expect(await promotions(api)).toEqual([
-		expect.objectContaining({ state: 'failed', reason: 'The release stopped: test failure', approvedBy: 'start' }),
+		expect.objectContaining({ state: 'failed', reason: 'checks failed: test', approvedBy: 'start' }),
 	]);
 	expect(repository.runs).toEqual([]);
 });
@@ -497,7 +497,7 @@ test('starting a release that stopped on checks again publishes it once its chec
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(16_000);
 	const [stopped] = await promotions(api);
-	expect(stopped).toMatchObject({ state: 'failed', reason: 'The release stopped: test cancelled' });
+	expect(stopped).toMatchObject({ state: 'failed', reason: 'checks failed: test (cancelled)' });
 	passChecks(repository, head);
 	const restarted = await release(api, repository.id, { version: '1.0.1' });
 	expect(restarted).toMatchObject({ id: stopped?.id, state: 'awaiting-approval' });

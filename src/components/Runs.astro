@@ -156,7 +156,7 @@ const pipelines = releaseSummaries(
 				 <p class="eyebrow">{release.repository} / {release.stream}</p>
 				 <h2>Version {release.version}</h2>
 			 </div>
-			 <Badge tone={view.status.tone} label={view.status.label} />
+			 <Badge {...view.status} />
 		 </div>
 		 <ol class="pipeline">
 			 {view.stages.map(stage => (
