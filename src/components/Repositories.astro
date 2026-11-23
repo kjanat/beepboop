@@ -402,6 +402,30 @@ function wingetDestination(repository: RepositoryRecord) {
 					))}
 				</details>
 			)}
+			{Object.keys(repository.configuration?.streams ?? {}).map(stream => (
+				<details
+					data-gates
+					data-repository-id={repository.id}
+					data-stream={stream}
+				>
+					<summary aria-label={`Release gates of ${repository.name} ${stream}`}>
+						Release gates: {stream}
+					</summary>
+					<form>
+						<p class="gate-commit hint">Loading…</p>
+						<table hidden>
+							<thead>
+								<tr>
+									<th>Gate</th>
+									<th>State</th>
+									<th>For this stream</th>
+								</tr>
+							</thead>
+							<tbody></tbody>
+						</table>
+					</form>
+				</details>
+			))}
 			{repository.inventory.diagnostics.map(entry => (
 				<p class="notice">{entry.message}</p>
 			))}

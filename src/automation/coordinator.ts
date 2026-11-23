@@ -104,7 +104,7 @@ import { unchangedSince } from '@/automation/unchanged-paths';
 import { parseGrant, runtimeGrant } from '@/automation/vault';
 import type { ClaimStep, LedgerManager, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
-import type { BinaryProgress, PackageTagPage } from '@/contract/views';
+import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
 import { identifiedManagers, isManagerName, managerSpec } from '@/domain/catalog.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
 import {
@@ -133,6 +133,8 @@ import {
 	tagPrefixes,
 	versionTagged,
 } from '@/domain/refs.ts';
+import type { GateSkip, ReleaseGate } from '@/domain/release-gates.ts';
+import { gatedRelease, gateLabel, sameGate } from '@/domain/release-gates.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/domain/version.ts';
@@ -158,7 +160,7 @@ import { GitHubRejection } from '@/github/transport.ts';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/kernel/errors/classify.ts';
 import { decodeError, isDecodingFailure } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { precondition } from '@/kernel/errors/domain-error.ts';
+import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { parseRetryAfter } from '@/kernel/http/http-date.ts';
 import { retryTransient } from '@/kernel/http/retry.ts';
 import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
@@ -248,9 +250,6 @@ function freshRun(execution: Execution, workflow: Execution['workflow']): Execut
 		publications: reopened(execution.publications),
 	};
 }
-function forcedView(execution: Execution, record: LedgerRecord): LedgerPackage {
-	return execution.started?.force ? { ...view(record), force: true } : view(record);
-}
 function reopened(publications: Publication[]): Publication[] {
 	return publications.map(publication =>
 		publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
@@ -322,6 +321,33 @@ function referenceProbe(reference: string, version: string): Publication | undef
 	};
 }
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, Automation>;
+type GateSubject = Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>;
+interface GateOutcome {
+	gate: ReleaseGate;
+	state: 'passed' | 'waiting' | 'failed';
+	fact: string;
+	detail?: string;
+}
+interface CommitGates {
+	manifest: string[];
+	truncated: boolean;
+	runs: number;
+	outcomes: GateOutcome[];
+}
+const gateRank = { passed: 0, waiting: 1, failed: 2 } as const;
+function mergedOutcomes(outcomes: readonly GateOutcome[]): GateOutcome[] {
+	const merged: GateOutcome[] = [];
+	for (const outcome of outcomes) {
+		const index = merged.findIndex(entry => sameGate(entry.gate, outcome.gate));
+		const prior = merged[index];
+		if (!prior) merged.push(outcome);
+		else if (gateRank[outcome.state] > gateRank[prior.state]) merged[index] = outcome;
+	}
+	return merged;
+}
+function skippedNote(gate: ReleaseGate, fact: string, skip: GateSkip): string {
+	return `${gateLabel(gate)} ${fact}, skipped by ${skip.actor}`;
+}
 
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private readonly application: Layer.Layer<Automation, DomainError>;
@@ -2080,7 +2106,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					if (!record) continue;
 					const open = availability(record, holder, now);
 					if (open.kind === 'settled' || open.kind === 'uploaded') continue;
-					if (open.kind === 'held') return { kind: 'publish' as const, package: forcedView(execution, record) };
+					if (open.kind === 'held') {
+						return { kind: 'publish' as const, package: yield* this.ledgerView(execution, record) };
+					}
 					if (open.kind === 'wait') {
 						waits.push(open);
 						continue;
@@ -2089,7 +2117,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					if (blocked?.kind === 'failed') {
 						ledger = yield* this.settleRecord(ledger, fail(record, holder, blocked.reason, false, now));
 					} else if (blocked) waits.push({ until: blocked.until, reason: blocked.reason });
-					else return { kind: 'publish' as const, package: forcedView(execution, record) };
+					else return { kind: 'publish' as const, package: yield* this.ledgerView(execution, record) };
 				}
 				const [wait] = waits.sort((a, b) => a.until - b.until);
 				if (wait) {
@@ -2162,7 +2190,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const claimed = yield* Effect.fromResult(claim(record, holder, digest, now));
 				yield* this.settleRecord(ledger, claimed);
-				return { kind: 'publish' as const, package: forcedView(execution, claimed) };
+				return { kind: 'publish' as const, package: yield* this.ledgerView(execution, claimed) };
 			}),
 			'coordinator.publishClaim',
 			{ executionId: id },
@@ -2580,7 +2608,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return false;
 			}
 			const forced = execution.started?.force === true;
-			const { pending, failed } = forced ? { pending: [], failed: [] } : yield* this.commitChecks(execution);
+			const { pending, failed, skipped } = forced
+				? { pending: [], failed: [], skipped: [] }
+				: yield* this.commitChecks(execution);
 			if (execution.approvedBy === 'start' && failed.length) {
 				yield* this.put({ ...execution, state: 'failed', reason: failed.join('; ') });
 				return true;
@@ -2594,7 +2624,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			yield* (yield* this.store).audit(
 				'beepboop',
 				'promotion.approve',
-				`${execution.id}:${execution.sourceSha}:${execution.approvedBy ?? 'push'}${forced ? ':forced' : ''}`,
+				`${execution.id}:${execution.sourceSha}:${execution.approvedBy ?? 'push'}${forced ? ':forced' : ''}${
+					skipped.length ? ` skipping: ${skipped.join('; ')}` : ''
+				}`,
 			);
 			const next: Execution = { ...execution, state: 'ready', approvedAt: clock.currentTimeMillisUnsafe() };
 			delete next.reason;
@@ -2694,12 +2726,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (conflict) return yield* precondition(conflict);
 				const incomplete = yield* this.metadataBlocks(execution);
 				if (incomplete.length) return yield* precondition(incomplete.join('; '));
-				const problems = yield* this.approvalProblems(execution);
+				const checks = yield* this.commitChecks(execution);
+				const problems = [...checks.failed, ...checks.pending];
 				if (problems.length && !force) return yield* precondition(problems.join('; '));
 				yield* (yield* this.store).audit(
 					actor,
 					'promotion.approve',
-					`${id}:${commit}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}`,
+					`${id}:${commit}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}${
+						checks.skipped.length ? ` skipping: ${checks.skipped.join('; ')}` : ''
+					}`,
 				);
 				const next: Execution = { ...execution, state: 'ready', approvedAt: clock.currentTimeMillisUnsafe() };
 				delete next.reason;
@@ -2784,11 +2819,66 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
+	gates(repositoryId: number, stream: string): Promise<StreamGates> {
+		return this.run(
+			Effect.gen({ self: this }, function*() {
+				const record = yield* (yield* this.store).repository(repositoryId);
+				const configuration = record?.configuration;
+				if (!record || !configuration || !Object.hasOwn(configuration.streams, stream)) {
+					return yield* notFound('stream', `Unknown stream ${stream}`, stream);
+				}
+				const release = gatedRelease(yield* this.executions(), stream);
+				const subject: GateSubject = release
+					?? { repository: record.name, repositoryId, sourceSha: record.sha, configuration, stream };
+				const [{ outcomes }, skips, metadata] = yield* Effect.all([
+					this.commitGates(subject),
+					this.gateSkips(subject),
+					this.metadataProblemsOf(subject),
+				], { concurrency: 'unbounded' });
+				const merged = mergedOutcomes([...outcomes, {
+					gate: { kind: 'metadata' },
+					state: metadata.length ? 'failed' : 'passed',
+					fact: metadata.length ? 'incomplete' : 'complete',
+					...(metadata.length ? { detail: metadata.join('; ') } : {}),
+				}]);
+				const skipOf = (gate: ReleaseGate) => skips.find(skip => sameGate(skip.gate, gate));
+				const gates: GateView[] = merged.map(outcome => {
+					const skip = skipOf(outcome.gate);
+					return { ...outcome, ...(skip ? { skipped: { actor: skip.actor, at: skip.at } } : {}) };
+				});
+				for (const skip of skips) {
+					if (merged.some(outcome => sameGate(outcome.gate, skip.gate))) continue;
+					gates.push({
+						gate: skip.gate,
+						state: 'absent',
+						fact: 'not on this commit',
+						skipped: { actor: skip.actor, at: skip.at },
+					});
+				}
+				return {
+					stream,
+					commit: subject.sourceSha,
+					...(release?.version ? { version: release.version } : {}),
+					gates,
+				};
+			}),
+			'coordinator.gates',
+			{ repositoryId, stream },
+		);
+	}
 	private metadataBlocks(execution: Execution): CoordinatorEffect<string[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const record = yield* (yield* this.store).repository(execution.repositoryId);
-			if (!record || execution.operation !== 'promote') return [];
-			const references = execution.configuration.streams[execution.stream]?.packages;
+			if (execution.operation !== 'promote') return [];
+			const skips = yield* this.gateSkips(execution);
+			if (skips.some(skip => skip.gate.kind === 'metadata')) return [];
+			return yield* this.metadataProblemsOf(execution);
+		});
+	}
+	private metadataProblemsOf(subject: GateSubject): CoordinatorEffect<string[], DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const record = yield* (yield* this.store).repository(subject.repositoryId);
+			if (!record) return [];
+			const references = subject.configuration.streams[subject.stream]?.packages;
 			return metadataProblems(record.inventory, publishablePackages(record.inventory.packages, references));
 		});
 	}
@@ -2987,16 +3077,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private approvalProblems(execution: Execution): CoordinatorEffect<string[], DomainError> {
 		return this.commitChecks(execution).pipe(Effect.map(({ pending, failed }) => [...failed, ...pending]));
 	}
-	private commitChecks(execution: Execution): CoordinatorEffect<{ pending: string[]; failed: string[] }, DomainError> {
+	private commitGates(subject: GateSubject): CoordinatorEffect<CommitGates, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const gateway = yield* this.gateway;
-			const token = yield* gateway.token(execution.repository, execution.repositoryId);
-			const base = `/repos/${execution.repository}`;
-			const problems: string[] = [], pending: string[] = [];
-			const repository = yield* (yield* this.store).repository(execution.repositoryId);
-			const references = execution.configuration.streams[execution.stream]?.packages;
+			const token = yield* gateway.token(subject.repository, subject.repositoryId);
+			const base = `/repos/${subject.repository}`;
+			const manifest: string[] = [];
+			const repository = yield* (yield* this.store).repository(subject.repositoryId);
+			const references = subject.configuration.streams[subject.stream]?.packages;
 			if (repository) {
-				problems.push(...manifestProblems(
+				manifest.push(...manifestProblems(
 					repository.inventory,
 					repository.inventory.packages.filter(pkg =>
 						!references || references.some(reference => matchesPackage(reference, pkg))
@@ -3004,24 +3094,28 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				));
 			}
 			const [commit, checks, { workflow_runs: workflowRuns }, status] = yield* Effect.all([
-				gateway.read(commitSchema, `${base}/commits/${execution.sourceSha}`, token),
+				gateway.read(commitSchema, `${base}/commits/${subject.sourceSha}`, token),
 				gateway.read(
 					checkRunsSchema,
-					`${base}/commits/${execution.sourceSha}/check-runs?per_page=100&filter=latest`,
+					`${base}/commits/${subject.sourceSha}/check-runs?per_page=100&filter=latest`,
 					token,
 				),
 				gateway.read(
 					workflowRunsSchema,
-					`${base}/actions/runs?head_sha=${execution.sourceSha}&per_page=100`,
+					`${base}/actions/runs?head_sha=${subject.sourceSha}&per_page=100`,
 					token,
 				),
-				gateway.read(commitStatusSchema, `${base}/commits/${execution.sourceSha}/status`, token),
+				gateway.read(commitStatusSchema, `${base}/commits/${subject.sourceSha}/status`, token),
 			], { concurrency: 'unbounded' });
-			if (commit.commit.verification.verified !== true) problems.push('signature unverified');
+			const verified = commit.commit.verification.verified === true;
+			const outcomes: GateOutcome[] = [{
+				gate: { kind: 'signature' },
+				state: verified ? 'passed' : 'failed',
+				fact: verified ? 'verified' : 'unverified',
+			}];
 			const runs = checks.check_runs;
-			if (checks.total_count !== runs.length) problems.push('over 100 check runs');
 			const releaseFiles = new Set(
-				Object.values(execution.configuration.streams).flatMap(stream =>
+				Object.values(subject.configuration.streams).flatMap(stream =>
 					[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
 						.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
 				),
@@ -3033,7 +3127,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const deploying = new Map<string, CheckJob[]>();
 			for (const path of new Set(unfinished.flatMap(run => pathOf(run) ?? []))) {
 				if (releaseFiles.has(path)) continue;
-				const source = yield* gateway.file(execution.repository, path, execution.sourceSha, token);
+				const source = yield* gateway.file(subject.repository, path, subject.sourceSha, token);
 				deploying.set(path, source === null ? [] : checkJobs(source));
 			}
 			const gating = runs.filter(run => {
@@ -3042,20 +3136,78 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (releaseFiles.has(path)) return false;
 				return run.status === 'completed' || !deploys(String(run.name), deploying.get(path) ?? []);
 			});
-			if (!runs.length) pending.push('no checks yet');
-			else if (!gating.length) pending.push('no verification check yet');
-			const running = gating.filter(run => run.status !== 'completed').map(run => String(run.name));
-			if (running.length) pending.push(`${running.join(', ')} running`);
-			const failing = gating.flatMap(run =>
-				run.status !== 'completed' || passingConclusions.includes(String(run.conclusion))
-					? []
-					: [run.conclusion === 'failure' ? String(run.name) : `${String(run.name)} (${String(run.conclusion)})`]
-			);
-			if (failing.length) problems.push(`checks failed: ${failing.join(', ')}`);
-			if (Number(status.total_count) > 0 && status.state !== 'success') {
-				(status.state === 'pending' ? pending : problems).push(`commit status ${String(status.state)}`);
+			for (const run of gating) {
+				const conclusion = String(run.conclusion);
+				outcomes.push({
+					gate: { kind: 'check', name: String(run.name) },
+					state: run.status !== 'completed'
+						? 'waiting'
+						: passingConclusions.includes(conclusion)
+						? 'passed'
+						: 'failed',
+					fact: run.status === 'completed' ? conclusion : 'running',
+				});
 			}
-			return { pending, failed: problems };
+			if (Number(status.total_count) > 0) {
+				outcomes.push({
+					gate: { kind: 'status' },
+					state: status.state === 'success' ? 'passed' : status.state === 'pending' ? 'waiting' : 'failed',
+					fact: String(status.state),
+				});
+			}
+			return { manifest, truncated: checks.total_count !== runs.length, runs: runs.length, outcomes };
+		});
+	}
+	private ledgerView(execution: Execution, record: LedgerRecord): CoordinatorEffect<LedgerPackage, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const metadata = execution.started?.force === true
+				|| (yield* this.gateSkips(execution)).some(skip => skip.gate.kind === 'metadata');
+			return metadata ? { ...view(record), force: true } : view(record);
+		});
+	}
+	private gateSkips(subject: Pick<Execution, 'repositoryId' | 'stream'>): CoordinatorEffect<GateSkip[], DomainError> {
+		return Effect.flatMap(this.store, store => store.gateSkips.list(subject.repositoryId, subject.stream));
+	}
+	private commitChecks(
+		execution: Execution,
+	): CoordinatorEffect<{ pending: string[]; failed: string[]; skipped: string[] }, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const [{ manifest, truncated, runs, outcomes }, skips] = yield* Effect.all([
+				this.commitGates(execution),
+				this.gateSkips(execution),
+			], { concurrency: 'unbounded' });
+			const skipOf = (gate: ReleaseGate) => skips.find(skip => sameGate(skip.gate, gate));
+			const kept = outcomes.filter(outcome => !skipOf(outcome.gate));
+			const failed = [...manifest], pending: string[] = [];
+			if (kept.some(outcome => outcome.gate.kind === 'signature' && outcome.state === 'failed')) {
+				failed.push('signature unverified');
+			}
+			if (truncated) failed.push('over 100 check runs');
+			if (!runs) pending.push('no checks yet');
+			else if (!outcomes.some(outcome => outcome.gate.kind === 'check')) pending.push('no verification check yet');
+			const checks = kept.flatMap(outcome =>
+				outcome.gate.kind === 'check' ? [{ ...outcome, name: outcome.gate.name }] : []
+			);
+			const running = checks.filter(check => check.state === 'waiting').map(check => check.name);
+			if (running.length) pending.push(`${running.join(', ')} running`);
+			const failing = checks.flatMap(check =>
+				check.state !== 'failed' ? [] : [check.fact === 'failure' ? check.name : `${check.name} (${check.fact})`]
+			);
+			if (failing.length) failed.push(`checks failed: ${failing.join(', ')}`);
+			const status = kept.find(outcome => outcome.gate.kind === 'status');
+			if (status && status.state !== 'passed') {
+				(status.state === 'waiting' ? pending : failed).push(`commit status ${status.fact}`);
+			}
+			const skipped = mergedOutcomes(outcomes).flatMap(outcome => {
+				const skip = skipOf(outcome.gate);
+				return skip && outcome.state !== 'passed' ? [skippedNote(outcome.gate, outcome.fact, skip)] : [];
+			});
+			const metadata = skipOf({ kind: 'metadata' });
+			if (metadata) {
+				const incomplete = yield* this.metadataProblemsOf(execution);
+				if (incomplete.length) skipped.push(skippedNote({ kind: 'metadata' }, 'incomplete', metadata));
+			}
+			return { pending, failed, skipped };
 		});
 	}
 	private refHead(

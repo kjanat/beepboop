@@ -31,6 +31,7 @@ import { CompletionStore } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
 import { documentRow, rowDocument } from '@/persistence/d1/document-row';
+import { GateSkipStore } from '@/persistence/d1/gate-skips';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import { readyRead } from '@/persistence/d1/ready-read';
 
@@ -81,9 +82,11 @@ export function onboardingPulls(
 
 export class Store {
 	private readonly auditLog: AuditStore;
+	readonly gateSkips: GateSkipStore;
 	private readonly sql: Sql;
 	constructor(readonly db: SqlDatabase | Sql) {
 		this.auditLog = new AuditStore(db);
+		this.gateSkips = new GateSkipStore(db);
 		this.sql = sql(db);
 	}
 	repository(id: number): Effect.Effect<RepositoryRecord | undefined, DomainError> {

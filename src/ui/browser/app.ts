@@ -24,6 +24,7 @@ import {
 	watchValidity,
 } from '@/ui/browser/dom.ts';
 import { rememberFolds } from '@/ui/browser/folds';
+import { gates } from '@/ui/browser/gates';
 import { pollChanges } from '@/ui/browser/polling';
 import { submitRelease } from '@/ui/browser/release';
 import { canApplySetup, setup } from '@/ui/browser/setup';
@@ -383,6 +384,9 @@ repositorySelection?.addEventListener('change', () => {
 });
 
 rememberFolds(document, () => sessionStorage);
+for (const details of findAll(document, 'details[data-gates]', HTMLDetailsElement)) {
+	Effect.runFork(report(gates(details)));
+}
 const runsLatest = find(document, '[data-runs-latest]', HTMLElement);
 if (runsLatest) {
 	pollChanges({

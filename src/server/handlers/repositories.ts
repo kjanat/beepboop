@@ -11,6 +11,7 @@ import { routes } from '@/contract/routes';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
+import { gateLabel } from '@/domain/release-gates.ts';
 import { repositoryName, repositoryReference } from '@/domain/repository-name.ts';
 import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -18,7 +19,7 @@ import { conflict, domainError, invalid, notFound, precondition } from '@/kernel
 import { record } from '@/kernel/schema/result.ts';
 import { encodeRepository } from '@/persistence/codecs/stored';
 import type { Context } from '@/server/handlers/kit';
-import { admin } from '@/server/handlers/kit';
+import { admin, storedRepository } from '@/server/handlers/kit';
 
 function reference(input: string) {
 	return repositoryReference(input).pipe(Effect.mapError(error => invalid(error.message, ['repository'])));
@@ -46,6 +47,30 @@ export const repositoryEndpoints = {
 				)
 			),
 	),
+	repositoriesGates: admin(
+		routes.repositoriesGates,
+		(input, { service }) =>
+			fromPromise(() => service.coordinator(input.repositoryId).gates(input.repositoryId, input.stream)),
+	),
+	repositoriesGateSkip: admin(routes.repositoriesGateSkip, (input, { service, actor }) =>
+		Effect.gen(function*() {
+			const repository = yield* storedRepository(service, input.repositoryId, 'Repository is not enrolled');
+			if (!repository.configuration || !Object.hasOwn(repository.configuration.streams, input.stream)) {
+				return yield* notFound('stream', `Unknown stream ${input.stream}`, input.stream);
+			}
+			const skips = service.store.gateSkips;
+			yield* input.skip
+				? skips.skip(repository.id, input.stream, input.gate, actor)
+				: skips.restore(repository.id, input.stream, input.gate);
+			yield* service.store.audit(
+				actor,
+				input.skip ? 'stream.gate.skip' : 'stream.gate.restore',
+				`${repository.name}:${input.stream}:${gateLabel(input.gate)}`,
+			);
+			const coordinator = service.coordinator(repository.id);
+			yield* fromPromise(() => coordinator.wake());
+			return yield* fromPromise(() => coordinator.gates(repository.id, input.stream));
+		})),
 	repositoriesList: admin(
 		routes.repositoriesList,
 		(_, { service }) => service.store.repositories().pipe(Effect.map(rows => rows.map(shown))),
