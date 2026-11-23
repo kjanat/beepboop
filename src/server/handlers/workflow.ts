@@ -5,6 +5,7 @@ import { repositorySnapshot } from '@/automation/snapshot';
 import type { Artifact, Execution, Publication } from '@/automation/types';
 import type { ClaimStep, NextStep, ReportStep } from '@/contract/ledger';
 import { routes } from '@/contract/routes';
+import { deliverCredentials } from '@/credentials/http/credentials.ts';
 import { isLockfile, reportableManagerNames } from '@/domain/catalog.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
@@ -299,12 +300,11 @@ export const workflowEndpoints = {
 	workflowCredentials: workflow(routes.workflowCredentials, (input, context) =>
 		Effect.gen(function*() {
 			const execution = yield* bound(context, input.executionId);
-			const allowed = execution.configuration.streams[execution.stream]?.credentials ?? [];
-			const values: Record<string, string> = {};
-			for (const alias of input.aliases) {
-				if (!allowed.includes(alias)) return yield* forbidden('Alias not requested by the stream');
-				values[alias] = yield* context.service.vault().runtime(alias, execution.operation, context.identity);
-			}
-			return values;
+			return yield* deliverCredentials(context.service.vault(), {
+				allowed: execution.configuration.streams[execution.stream]?.credentials ?? [],
+				aliases: input.aliases,
+				operation: execution.operation,
+				run: context.identity,
+			});
 		})),
 } as const;
