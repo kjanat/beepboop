@@ -37,15 +37,7 @@ import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import type { Command, Runner } from '@/actions/publish.ts';
-import {
-	command,
-	distributionLicensed,
-	main,
-	publicRepository,
-	publishPackages,
-	pythonMissing,
-	requireAll,
-} from '@/actions/publish.ts';
+import { command, main, publicRepository, publishPackages, requireAll } from '@/actions/publish.ts';
 import type { Execution } from '@/automation/types';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -62,6 +54,7 @@ import {
 } from '@/kernel/schema/structs.ts';
 import { publishWaitMinutes } from '@/publication/contract.ts';
 import { ledgerSchema } from '@/publication/ledger.ts';
+import { distributionLicensed, pythonMissing } from '@/publication/runner/metadata.ts';
 import { publishMinutes } from '@/setup/workflows/integrate.ts';
 
 let world: World;
