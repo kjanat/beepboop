@@ -18,9 +18,9 @@ import type { ClaimStep, NextStep, ReportStep } from '@/publication/contract.ts'
 import type { Publication } from '@/publication/publication.ts';
 import { createExecution, dispatchedExecution } from '@/release/domain/execution/execution.ts';
 import type { Artifact, Execution } from '@/release/domain/execution/types.ts';
+import { beginRelease, releasePlan } from '@/release/http/releases.ts';
 import type { EnrolledContext } from '@/server/handlers/kit';
 import { workflow, workflowToken } from '@/server/handlers/kit';
-import { beginRelease, releasePlan } from '@/server/handlers/releases';
 
 const outcomes = ['pending', 'succeeded', 'failed', 'cancelled', 'uncertain', 'skipped', 'rate-limited'] as const;
 const reportedFields = mutableStruct({

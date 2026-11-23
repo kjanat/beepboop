@@ -156,6 +156,50 @@
 		"specifier": "@/contract/views"
 	},
 	{
+		"file": "packages/release/src/http/executions.ts",
+		"specifier": "@/automation/service"
+	},
+	{
+		"file": "packages/release/src/http/executions.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/release/src/http/executions.ts",
+		"specifier": "@/server/handlers/kit"
+	},
+	{
+		"file": "packages/release/src/http/releases.ts",
+		"specifier": "@/automation/preparation-pull-requests"
+	},
+	{
+		"file": "packages/release/src/http/releases.ts",
+		"specifier": "@/automation/service"
+	},
+	{
+		"file": "packages/release/src/http/releases.ts",
+		"specifier": "@/automation/snapshot"
+	},
+	{
+		"file": "packages/release/src/http/releases.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/release/src/http/releases.ts",
+		"specifier": "@/server/handlers/kit"
+	},
+	{
+		"file": "packages/release/src/http/workflow.ts",
+		"specifier": "@/automation/snapshot"
+	},
+	{
+		"file": "packages/release/src/http/workflow.ts",
+		"specifier": "@/contract/routes"
+	},
+	{
+		"file": "packages/release/src/http/workflow.ts",
+		"specifier": "@/server/handlers/kit"
+	},
+	{
 		"file": "packages/setup/src/server/maintenance.ts",
 		"specifier": "@/automation/gateway.ts"
 	},

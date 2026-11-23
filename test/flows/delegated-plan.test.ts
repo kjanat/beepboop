@@ -5,7 +5,7 @@ import { discover } from '@/discovery/discover.ts';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { decodeSync } from '@/kernel/schema/structs.ts';
-import { delegatedPlan } from '@/server/handlers/releases';
+import { delegatedPlan } from '@/release/http/releases.ts';
 
 const files: Record<string, string> = {
 	'Cargo.toml': '[workspace]\nmembers = ["a", "b"]\n[workspace.package]\nversion = "1.2.0"\n',
