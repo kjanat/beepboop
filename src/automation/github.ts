@@ -27,7 +27,7 @@ import {
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { platformFetch } from '@/automation/managers/registry';
 import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/automation/release-graph/calls';
-import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
+import { marked, placeBlock, setupBlock } from '@/automation/setup-body';
 import { setupBranches } from '@/automation/setup-changes';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
@@ -704,64 +704,6 @@ export class RepositoryGateway {
 			return login;
 		});
 	}
-	private generatedComparison(name: string, head: string, token: string) {
-		const self = this;
-		return Effect.gen(function*() {
-			const base = (yield* self.read(repositorySchema, `/repos/${name}`, token)).default_branch;
-			const comparison = yield* self.read(
-				comparisonSchema,
-				`/repos/${name}/compare/${encodeURIComponent(base)}...${head}`,
-				token,
-			);
-			const commits = comparison.commits;
-			if (!commits.length || commits.length !== Number(comparison.ahead_by) || commits.at(-1)?.sha !== head) {
-				return undefined;
-			}
-			const bot = yield* self.botIdentity;
-			const generated = commits.every(commit =>
-				commit.author.id === bot.id && commit.commit.verification.verified === true
-			);
-			return generated ? comparison : undefined;
-		});
-	}
-	generatedHead(name: string, id: number, head: string): Effect.Effect<boolean, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(name, id, { contents: 'read' });
-			return (yield* self.generatedComparison(name, head, token)) !== undefined;
-		});
-	}
-	generatedFiles(name: string, id: number, head: string): Effect.Effect<Edit[] | undefined, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(name, id, { contents: 'read' });
-			const comparison = yield* self.generatedComparison(name, head, token);
-			if (!comparison) return undefined;
-			const files = comparison.files;
-			if (files.length >= 300) return undefined;
-			const mergeBase = comparison.merge_base_commit.sha;
-			const paths = yield* Effect.fromResult(decode(mutableArray(textSchema), files.map(file => file.filename)));
-			return yield* Effect.forEach(paths, path => {
-				return Effect.all({
-					path: Effect.succeed(path),
-					before: self.file(name, path, mergeBase, token).pipe(Effect.map(content => content ?? '')),
-					after: self.file(name, path, head, token).pipe(Effect.map(content => content ?? '')),
-				});
-			}, { concurrency: ioConcurrency });
-		});
-	}
-	setupHead(name: string, id: number, branch: string): Effect.Effect<string | null, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(name, id);
-			const ref = yield* self.read(
-				Schema.NullOr(gitRefSchema),
-				`/repos/${name}/git/ref/heads/${branch}`,
-				token,
-			);
-			return ref ? ref.object.sha : null;
-		});
-	}
 	pullRequest<R = never>(
 		snapshot: Snapshot,
 		branch: string,
@@ -1086,7 +1028,7 @@ export class RepositoryGateway {
 			return seen;
 		});
 	}
-	private mergeCommit(
+	mergeCommit(
 		repository: string,
 		number: string,
 		token: string,
@@ -1150,89 +1092,7 @@ export class RepositoryGateway {
 			return yield* self.finishPullRequest(snapshot, branch, title, body, head, token);
 		});
 	}
-	/** Inspect the existing setup proposal; automatic maintenance never opens a replacement PR. */
-	openSetupPull(
-		name: string,
-		id: number,
-	): Effect.Effect<
-		{ number: number; head: string; branch: string; url: string; body: string } | undefined,
-		DomainError
-	> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(name, id, { contents: 'read', pull_requests: 'read' });
-			const rows: Decoded<typeof pullSchema>[] = [];
-			for (const branch of setupBranches) {
-				rows.push(
-					...yield* self.read(
-						mutableArray(pullSchema),
-						`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:${branch}`)}`,
-						token,
-					),
-				);
-			}
-			if (rows.length > 1) return yield* precondition('Multiple open setup pull requests');
-			const pull = rows[0];
-			if (!pull) return;
-			if (pull.head.repo.id !== id || !setupBranches.includes(pull.head.ref)) {
-				return yield* precondition('Setup pull request repository mismatch');
-			}
-			return {
-				number: pull.number,
-				head: pull.head.sha,
-				branch: pull.head.ref,
-				url: pull.html_url,
-				body: typeof pull.body === 'string' ? pull.body : '',
-			};
-		});
-	}
-	setupMerge(
-		name: string,
-		id: number,
-		url: string,
-	): Effect.Effect<{ sha: string; body: string } | undefined, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const prefix = `https://github.com/${name}/pull/`;
-			const number = url.startsWith(prefix) ? url.slice(prefix.length) : '';
-			if (!/^[1-9][0-9]*$/.test(number)) return undefined;
-			const token = yield* self.token(name, id, { contents: 'read', pull_requests: 'read' });
-			const pull = yield* self.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
-			if (pull.merged !== true || pull.head.repo.id !== id || !setupBranches.includes(pull.head.ref)) {
-				return undefined;
-			}
-			const sha = yield* self.mergeCommit(name, number, token);
-			return sha === undefined ? undefined : { sha, body: typeof pull.body === 'string' ? pull.body : '' };
-		});
-	}
-	/** Update only the bot's status section, including when a human changed the proposal branch. */
-	setupStatus(
-		name: string,
-		id: number,
-		number: number,
-		status: string,
-		proposal?: { title: string; body: string },
-	): Effect.Effect<void, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(name, id, { pull_requests: 'write' });
-			const pull = yield* self.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
-			if (pull.state !== 'open' || !setupBranches.includes(pull.head.ref) || pull.head.repo.id !== id) return;
-			const current = typeof pull.body === 'string' ? pull.body : '';
-			const body = proposal === undefined
-				? withStatus(current, status)
-				: placeBlock(
-					current,
-					setupBlock(proposal.body, status),
-					yield* self.previousRender(name, number, current, token),
-				);
-			const title = proposal && proposal.title !== pull.title ? { title: proposal.title } : {};
-			if (body !== current || 'title' in title) {
-				yield* self.call(`/repos/${name}/pulls/${number}`, token, 'PATCH', { body, ...title });
-			}
-		});
-	}
-	private previousRender(
+	previousRender(
 		name: string,
 		number: number,
 		current: string,

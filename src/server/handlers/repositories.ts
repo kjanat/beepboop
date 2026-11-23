@@ -4,6 +4,7 @@ import { streamReleases } from '@/automation/release-capability';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
+import { generatedFiles, openSetupPull, setupHead } from '@/automation/setup-pull-requests';
 import { routes } from '@/contract/routes';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
@@ -167,12 +168,12 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const document = yield* service.onboarding.document(id);
 		const saved = document === undefined ? undefined : yield* Effect.fromResult(record(yield* fromJson(document)));
 		const branch = setupBranch(snapshot);
-		const head = yield* service.gateway.setupHead(name, id, branch);
-		const branchFiles = head ? yield* service.gateway.generatedFiles(name, id, head) : undefined;
+		const head = yield* setupHead(service.gateway, name, id, branch);
+		const branchFiles = head ? yield* generatedFiles(service.gateway, name, id, head) : undefined;
 		const branchConflict = !!head && saved?.head !== head && !branchFiles;
 		const previous = branchFiles ?? setupEdits(saved);
 		const priorConfiguration = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
-		const open = typeof saved?.url === 'string' ? yield* service.gateway.openSetupPull(name, id) : undefined;
+		const open = typeof saved?.url === 'string' ? yield* openSetupPull(service.gateway, name, id) : undefined;
 		const proposed = open !== undefined && (snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration
 			&& !followsProposal(saved, open.body);
 		const choices = input.choices ?? (proposed ? saved?.choices : undefined);

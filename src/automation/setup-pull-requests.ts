@@ -1,0 +1,149 @@
+import { Effect, Schema } from 'effect';
+import type { RepositoryGateway } from '@/automation/github';
+import { comparisonSchema, gitRefSchema, pullSchema, repositorySchema } from '@/automation/github-resources';
+import { placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
+import { setupBranches } from '@/automation/setup-changes';
+import type { Edit } from '@/domain/inventory.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { ioConcurrency } from '@/kernel/http/retry.ts';
+import { decode, textSchema } from '@/kernel/schema/result.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray } from '@/kernel/schema/structs.ts';
+
+function generatedComparison(gateway: RepositoryGateway, name: string, head: string, token: string) {
+	return Effect.gen(function*() {
+		const base = (yield* gateway.read(repositorySchema, `/repos/${name}`, token)).default_branch;
+		const comparison = yield* gateway.read(
+			comparisonSchema,
+			`/repos/${name}/compare/${encodeURIComponent(base)}...${head}`,
+			token,
+		);
+		const commits = comparison.commits;
+		if (!commits.length || commits.length !== Number(comparison.ahead_by) || commits.at(-1)?.sha !== head) {
+			return undefined;
+		}
+		const bot = yield* gateway.botIdentity;
+		const generated = commits.every(commit =>
+			commit.author.id === bot.id && commit.commit.verification.verified === true
+		);
+		return generated ? comparison : undefined;
+	});
+}
+export function generatedFiles(
+	gateway: RepositoryGateway,
+	name: string,
+	id: number,
+	head: string,
+): Effect.Effect<Edit[] | undefined, DomainError> {
+	return Effect.gen(function*() {
+		const token = yield* gateway.token(name, id, { contents: 'read' });
+		const comparison = yield* generatedComparison(gateway, name, head, token);
+		if (!comparison) return undefined;
+		const files = comparison.files;
+		if (files.length >= 300) return undefined;
+		const mergeBase = comparison.merge_base_commit.sha;
+		const paths = yield* Effect.fromResult(decode(mutableArray(textSchema), files.map(file => file.filename)));
+		return yield* Effect.forEach(paths, path => {
+			return Effect.all({
+				path: Effect.succeed(path),
+				before: gateway.file(name, path, mergeBase, token).pipe(Effect.map(content => content ?? '')),
+				after: gateway.file(name, path, head, token).pipe(Effect.map(content => content ?? '')),
+			});
+		}, { concurrency: ioConcurrency });
+	});
+}
+export function setupHead(
+	gateway: RepositoryGateway,
+	name: string,
+	id: number,
+	branch: string,
+): Effect.Effect<string | null, DomainError> {
+	return Effect.gen(function*() {
+		const token = yield* gateway.token(name, id);
+		const ref = yield* gateway.read(
+			Schema.NullOr(gitRefSchema),
+			`/repos/${name}/git/ref/heads/${branch}`,
+			token,
+		);
+		return ref ? ref.object.sha : null;
+	});
+}
+/** Inspect the existing setup proposal; automatic maintenance never opens a replacement PR. */
+export function openSetupPull(gateway: RepositoryGateway, name: string, id: number): Effect.Effect<
+	{ number: number; head: string; branch: string; url: string; body: string } | undefined,
+	DomainError
+> {
+	return Effect.gen(function*() {
+		const token = yield* gateway.token(name, id, { contents: 'read', pull_requests: 'read' });
+		const rows: Decoded<typeof pullSchema>[] = [];
+		for (const branch of setupBranches) {
+			rows.push(
+				...yield* gateway.read(
+					mutableArray(pullSchema),
+					`/repos/${name}/pulls?state=open&head=${encodeURIComponent(`${name.split('/')[0]}:${branch}`)}`,
+					token,
+				),
+			);
+		}
+		if (rows.length > 1) return yield* precondition('Multiple open setup pull requests');
+		const pull = rows[0];
+		if (!pull) return;
+		if (pull.head.repo.id !== id || !setupBranches.includes(pull.head.ref)) {
+			return yield* precondition('Setup pull request repository mismatch');
+		}
+		return {
+			number: pull.number,
+			head: pull.head.sha,
+			branch: pull.head.ref,
+			url: pull.html_url,
+			body: typeof pull.body === 'string' ? pull.body : '',
+		};
+	});
+}
+export function setupMerge(
+	gateway: RepositoryGateway,
+	name: string,
+	id: number,
+	url: string,
+): Effect.Effect<{ sha: string; body: string } | undefined, DomainError> {
+	return Effect.gen(function*() {
+		const prefix = `https://github.com/${name}/pull/`;
+		const number = url.startsWith(prefix) ? url.slice(prefix.length) : '';
+		if (!/^[1-9][0-9]*$/.test(number)) return undefined;
+		const token = yield* gateway.token(name, id, { contents: 'read', pull_requests: 'read' });
+		const pull = yield* gateway.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
+		if (pull.merged !== true || pull.head.repo.id !== id || !setupBranches.includes(pull.head.ref)) {
+			return undefined;
+		}
+		const sha = yield* gateway.mergeCommit(name, number, token);
+		return sha === undefined ? undefined : { sha, body: typeof pull.body === 'string' ? pull.body : '' };
+	});
+}
+/** Update only the bot's status section, including when a human changed the proposal branch. */
+export function setupStatus(
+	gateway: RepositoryGateway,
+	name: string,
+	id: number,
+	number: number,
+	status: string,
+	proposal?: { title: string; body: string },
+): Effect.Effect<void, DomainError> {
+	return Effect.gen(function*() {
+		const token = yield* gateway.token(name, id, { pull_requests: 'write' });
+		const pull = yield* gateway.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
+		if (pull.state !== 'open' || !setupBranches.includes(pull.head.ref) || pull.head.repo.id !== id) return;
+		const current = typeof pull.body === 'string' ? pull.body : '';
+		const body = proposal === undefined
+			? withStatus(current, status)
+			: placeBlock(
+				current,
+				setupBlock(proposal.body, status),
+				yield* gateway.previousRender(name, number, current, token),
+			);
+		const title = proposal && proposal.title !== pull.title ? { title: proposal.title } : {};
+		if (body !== current || 'title' in title) {
+			yield* gateway.call(`/repos/${name}/pulls/${number}`, token, 'PATCH', { body, ...title });
+		}
+	});
+}
