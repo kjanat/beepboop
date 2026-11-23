@@ -2,11 +2,6 @@ import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
-import type { DistributionFile } from '@/automation/distribution';
-import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
-import type { DistributionArtifact } from '@/automation/distribution-artifact';
-import { readDistributionArtifact } from '@/automation/distribution-artifact';
-import { observedDistribution } from '@/automation/distribution-observation';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
@@ -116,6 +111,11 @@ import {
 	verifySecondaryPublications,
 } from '@/publication/registries/verify.ts';
 import { projectionRules } from '@/release/adapters/d1/completions.ts';
+import type { DistributionArtifact } from '@/release/distribution/artifact.ts';
+import { readDistributionArtifact } from '@/release/distribution/artifact.ts';
+import { observedDistribution } from '@/release/distribution/observation.ts';
+import type { DistributionFile } from '@/release/distribution/validation.ts';
+import { createDistribution, readDistributionFile, readDistributionMode } from '@/release/distribution/validation.ts';
 import { decodeEventV1, decodeExecutionV1, identifyExecution } from '@/release/domain/execution/codec-v1.ts';
 import {
 	createExecution,
