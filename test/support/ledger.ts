@@ -5,17 +5,18 @@ import { tokenHost, tokenRequest } from '@root/test/support/actions.ts';
 import { withConsoleLog, withEnvironment } from '@root/test/support/process.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import type { Command, Runner } from '@/actions/publish.ts';
-import { publishPackages } from '@/actions/publish.ts';
+import type { Invalid } from '@/actions/protocol.ts';
 import { call } from '@/actions/session.ts';
+import type { Command, Runner } from '@/publication/runner/publish.ts';
+import { publishPackages } from '@/publication/runner/publish.ts';
 
 export interface Publishing {
-	run: Runner['run'];
+	run: Runner<Invalid>['run'];
 	scratch: string;
 	credentials?: Record<string, string>;
 	provenance?: boolean;
 	tarballs?: string;
-	exists?: Runner['exists'];
+	exists?: Runner<Invalid>['exists'];
 }
 
 export async function withIdentity<A>(
@@ -34,7 +35,7 @@ export function workflowCall(world: World, path: `/api/workflow/${string}`, body
 
 export async function publishWith(world: World, identity: RunIdentity, executionId: string, options: Publishing) {
 	const logs: string[] = [];
-	const runner: Runner = {
+	const runner: Runner<Invalid> = {
 		executionId,
 		credentials: options.credentials ?? {},
 		provenance: options.provenance === true,

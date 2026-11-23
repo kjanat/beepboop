@@ -1,0 +1,419 @@
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import type { Scope } from 'effect';
+import { Data, Effect, Schema } from 'effect';
+import { filled, lacking, licenseFile, readmeFile } from '@/discovery/analysis/metadata-fields.ts';
+import { terminate } from '@/host/process.ts';
+import { mask } from '@/host/workflow-commands.ts';
+import { sha256Hex } from '@/kernel/crypto/sha256.ts';
+import { attemptWith, awaitWith, failWith } from '@/kernel/errors/refusal.ts';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
+import { decodeSync, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
+import type { LedgerEntry, LedgerPackage } from '@/publication/contract.ts';
+import { claimStep, nextStep, publishWaitMinutes, settledStep } from '@/publication/contract.ts';
+import { distributionLicensed, npmManifest, npmMissing, pythonMissing } from '@/publication/runner/metadata.ts';
+
+export class RunnerFailure extends Data.TaggedError('RunnerFailure')<{ readonly message: string }> {}
+
+function runnerFailure(message: string): RunnerFailure {
+	return new RunnerFailure({ message });
+}
+
+const fail = failWith(runnerFailure);
+const attempt = attemptWith(runnerFailure);
+const attemptAsync = awaitWith(runnerFailure);
+
+export interface Command {
+	code: number;
+	stdout: string;
+	output: string;
+}
+export interface Runner<E> {
+	executionId: string;
+	credentials: Record<string, string>;
+	provenance: boolean;
+	tarballs?: string;
+	call(path: `/api/workflow/${string}`, body: unknown): Effect.Effect<unknown, E>;
+	run(command: string[], options: { cwd: string; env?: Record<string, string> }): Effect.Effect<Command, RunnerFailure>;
+	sleep(milliseconds: number): Effect.Effect<void>;
+	exists(path: string): boolean;
+	now(): number;
+	log(line: string): void;
+}
+interface Artifact {
+	digest: string;
+	files: string[];
+	missing: string[];
+}
+
+const longestWait = publishWaitMinutes * 60_000;
+const workspacePackers: readonly { readonly lockfiles: readonly string[]; readonly command: readonly string[] }[] = [
+	{ lockfiles: ['bun.lock', 'bun.lockb'], command: ['bun', 'pm', 'pack', '--destination'] },
+	{ lockfiles: ['pnpm-lock.yaml'], command: ['pnpm', 'pack', '--pack-destination'] },
+];
+const packageAttempts = 8;
+
+function sha256(path: string): Effect.Effect<string, RunnerFailure> {
+	return Effect.fromResult(attempt(() => sha256Hex(readFileSync(path))));
+}
+
+function scratch(name: string): Effect.Effect<string, RunnerFailure, Scope.Scope> {
+	return Effect.acquireRelease(
+		Effect.sync(() =>
+			attempt(() =>
+				mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), `beepboop-${name.replace(/[^\w.-]+/g, '-')}-`))
+			)
+		).pipe(Effect.flatMap(Effect.fromResult)),
+		directory => Effect.sync(() => rmSync(directory, { recursive: true, force: true })),
+	);
+}
+
+const cargoMetadata = mutableStruct({
+	target_directory: Schema.String,
+	packages: mutableArray(mutableStruct({
+		name: Schema.String,
+		description: Schema.optional(Schema.NullOr(Schema.String)),
+		license: Schema.optional(Schema.NullOr(Schema.String)),
+		license_file: Schema.optional(Schema.NullOr(Schema.String)),
+		repository: Schema.optional(Schema.NullOr(Schema.String)),
+	})),
+});
+const secretValues = mutableRecord(Schema.String, Schema.String);
+const tarball = mutableStruct({
+	filename: Schema.String,
+	integrity: Schema.String,
+	files: mutableArray(mutableStruct({ path: Schema.String })),
+});
+const packed = Schema.mutable(Schema.TupleWithRest(Schema.Tuple([tarball]), [tarball]));
+
+function checked(runner: Runner<unknown>, command: string[], cwd: string): Effect.Effect<string, RunnerFailure> {
+	return runner.run(command, { cwd }).pipe(Effect.flatMap(result =>
+		result.code === 0
+			? Effect.succeed(result.stdout)
+			: fail(`${command.slice(0, 2).join(' ')} exited ${result.code}\n${result.output.trim()}`)
+	));
+}
+
+function packedManifest(
+	runner: Runner<unknown>,
+	file: string,
+): Effect.Effect<Decoded<typeof npmManifest>, RunnerFailure> {
+	return checked(runner, ['tar', '-xzOf', file, 'package/package.json'], '.').pipe(
+		Effect.flatMap(packaged => Effect.fromResult(attempt(() => decodeSync(npmManifest, JSON.parse(packaged))))),
+	);
+}
+
+function tarballIndex(runner: Runner<unknown>): Effect.Effect<Map<string, string>, RunnerFailure> {
+	return Effect.gen(function*() {
+		const index = new Map<string, string>();
+		if (!runner.tarballs) return index;
+		const directory = resolve(runner.tarballs);
+		const names = yield* Effect.fromResult(
+			attempt(() => readdirSync(directory).filter(name => name.endsWith('.tgz')).sort()),
+		);
+		for (const name of names) {
+			const file = join(directory, name);
+			const manifest = yield* packedManifest(runner, file);
+			const key = `${String(manifest.name)}@${String(manifest.version)}`;
+			if (index.has(key)) return yield* fail(`${runner.tarballs} holds two tarballs for ${key}`);
+			index.set(key, file);
+		}
+		return index;
+	});
+}
+
+function prebuilt(runner: Runner<unknown>, file: string): Effect.Effect<Artifact, RunnerFailure> {
+	return Effect.gen(function*() {
+		const listing = yield* checked(runner, ['tar', '-tzf', file], '.');
+		const files = listing.split('\n').map(line => line.trim().replace(/^package\//, ''))
+			.filter(line => line !== '' && !line.endsWith('/'));
+		const manifest = yield* packedManifest(runner, file);
+		const bytes = yield* Effect.fromResult(attempt(() => readFileSync(file)));
+		return {
+			digest: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+			files: [file],
+			missing: npmMissing(files, manifest),
+		};
+	});
+}
+
+function build(
+	runner: Runner<unknown>,
+	pkg: LedgerPackage,
+	toolchain: Effect.Effect<void, RunnerFailure>,
+	tarballs: ReadonlyMap<string, string>,
+): Effect.Effect<Artifact, RunnerFailure, Scope.Scope> {
+	return Effect.gen(function*() {
+		const dir = dirname(pkg.manifest);
+		if (pkg.manager === 'cargo') {
+			yield* toolchain;
+			const metadata = yield* checked(runner, [
+				'cargo',
+				'metadata',
+				'--format-version',
+				'1',
+				'--no-deps',
+				'--manifest-path',
+				pkg.manifest,
+			], '.');
+			const target = yield* Effect.fromResult(attempt(() => decodeSync(cargoMetadata, JSON.parse(metadata))));
+			const listed = yield* checked(runner, ['cargo', 'package', '--list', '--manifest-path', pkg.manifest], '.');
+			const own = target.packages.find(entry => entry.name === pkg.name);
+			const lines = listed.split('\n').map(line => line.trim());
+			const missing = lacking({
+				README: lines.some(line => readmeFile.test(line)),
+				description: filled(own?.description),
+				license: filled(own?.license) || filled(own?.license_file),
+				'a license file': lines.some(line =>
+					licenseFile.test(line) || (own?.license_file && [own.license_file, basename(own.license_file)].includes(line))
+				),
+				repository: filled(own?.repository),
+			});
+			yield* checked(runner, ['cargo', 'package', '--manifest-path', pkg.manifest, '--locked'], '.');
+			const file = join(target.target_directory, 'package', `${pkg.name}-${pkg.version}.crate`);
+			return { digest: yield* sha256(file), files: [file], missing };
+		}
+		if (pkg.manager === 'pypi') {
+			const out = yield* scratch(pkg.name);
+			yield* checked(runner, ['uv', 'build', '--project', dir, '--out-dir', out], '.');
+			const files = yield* Effect.fromResult(attempt(() => readdirSync(out).sort().map(file => join(out, file))));
+			const sdist = files.find(file => file.endsWith('.tar.gz')) ?? files[0];
+			if (!sdist) return yield* fail(`uv build produced no distribution for ${pkg.name}`);
+			const metadata = yield* checked(
+				runner,
+				sdist.endsWith('.tar.gz')
+					? ['tar', '-xzOf', sdist, `${basename(sdist, '.tar.gz')}/PKG-INFO`]
+					: ['unzip', '-p', sdist, '*.dist-info/METADATA'],
+				'.',
+			);
+			const listings = yield* Effect.forEach(
+				files,
+				file =>
+					checked(runner, file.endsWith('.tar.gz') ? ['tar', '-tzf', file] : ['unzip', '-Z1', file], '.').pipe(
+						Effect.map(listing => distributionLicensed(file, listing.split('\n').map(line => line.trim()))),
+					),
+			);
+			return { digest: yield* sha256(sdist), files, missing: pythonMissing(metadata, listings.includes(true)) };
+		}
+		const tarball = tarballs.get(`${pkg.name}@${pkg.version}`);
+		if (tarball) return yield* prebuilt(runner, tarball);
+		if (pkg.generated) {
+			return yield* fail(
+				runner.tarballs
+					? `${runner.tarballs} holds no tarball for ${pkg.name} ${pkg.version}`
+					: `${pkg.name} is generated; pass its tarball through the npm-tarballs input`,
+			);
+		}
+		const out = yield* scratch(pkg.name);
+		const packer = workspacePackers.find(({ lockfiles }) => lockfiles.some(file => runner.exists(file)));
+		if (packer) {
+			yield* checked(runner, [...packer.command, out], dir);
+			const written = yield* Effect.fromResult(attempt(() => readdirSync(out).filter(name => name.endsWith('.tgz'))));
+			const [file, ...extra] = written;
+			if (!file || extra.length) {
+				return yield* fail(`${packer.command.join(' ')} wrote ${written.length} tarballs for ${pkg.name}`);
+			}
+			return yield* prebuilt(runner, join(out, file));
+		}
+		const output = yield* checked(runner, ['npm', 'pack', '--json', '--pack-destination', out], dir);
+		const start = output.startsWith('[') ? 0 : output.lastIndexOf('\n[') + 1;
+		const [first] = yield* Effect.fromResult(attempt(() => decodeSync(packed, JSON.parse(output.slice(start)))));
+		const file = join(out, first.filename);
+		const manifest = yield* packedManifest(runner, file);
+		const missing = npmMissing(first.files.map(entry => entry.path), manifest);
+		return { digest: first.integrity, files: [file], missing };
+	});
+}
+
+function publishCommand(
+	pkg: LedgerPackage,
+	artifact: Artifact,
+	provenance: boolean,
+): { command: string[]; cwd: string } {
+	if (pkg.manager === 'cargo') {
+		return { command: ['cargo', 'publish', '--manifest-path', pkg.manifest, '--locked', '--no-verify'], cwd: '.' };
+	}
+	if (pkg.manager === 'pypi') {
+		return { command: ['uv', 'publish', '--check-url', 'https://pypi.org/simple/', ...artifact.files], cwd: '.' };
+	}
+	return {
+		command: [
+			'npm',
+			'publish',
+			...artifact.files,
+			'--access',
+			'public',
+			...(pkg.channel ? ['--tag', pkg.channel] : []),
+			...(provenance ? ['--provenance'] : []),
+		],
+		cwd: dirname(pkg.manifest),
+	};
+}
+
+const httpDate = String.raw`, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT`;
+const retryAfter = new RegExp(`try again after ((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)${httpDate})`, 'i');
+const retryHeader = new RegExp(String.raw`retry-after:\s*(\d+|[A-Z][a-z]{2}${httpDate})`, 'i');
+
+type Report =
+	| { outcome: 'published' }
+	| { outcome: 'failed'; message: string }
+	| { outcome: 'rate-limited'; retryAfter?: string };
+
+function classify(result: Command): Report {
+	if (result.code === 0) return { outcome: 'published' };
+	if (/\b429\b|too many requests/i.test(result.output)) {
+		const after = retryAfter.exec(result.output)?.[1] ?? retryHeader.exec(result.output)?.[1];
+		return { outcome: 'rate-limited', ...(after ? { retryAfter: after } : {}) };
+	}
+	const lines = result.output.trim().split('\n');
+	return { outcome: 'failed', message: lines.slice(-20).join('\n') || `exited ${result.code}` };
+}
+
+export function publishPackages<E>(runner: Runner<E>): Effect.Effect<LedgerEntry[], E | RunnerFailure> {
+	const step = <S extends Contract>(path: `/api/workflow/publish/${string}`, schema: S, body: object) =>
+		runner.call(path, { executionId: runner.executionId, ...body }).pipe(
+			Effect.flatMap(value =>
+				Effect.fromResult(attempt((): Decoded<S> => decodeSync(schema, value))).pipe(
+					Effect.mapError(() => new RunnerFailure({ message: `Beepboop answered ${path} with an unknown step` })),
+				)
+			),
+		);
+	const next = () => step('/api/workflow/publish/next', nextStep, {});
+	const claim = (pkg: LedgerPackage, digest: string) =>
+		step('/api/workflow/publish/claim', claimStep, { purl: pkg.purl, digest });
+	const report = (pkg: LedgerPackage, outcome: Report) =>
+		step('/api/workflow/publish/report', settledStep, {
+			purl: pkg.purl,
+			...outcome,
+			...(outcome.outcome === 'published' ? { moveOn: true } : {}),
+		});
+	const show = (entry: LedgerEntry) => `${entry.state}${entry.error ? ` (${entry.error})` : ''}`;
+	let secrets: Record<string, string> | undefined;
+	const environment = Effect.gen(function*() {
+		if (secrets) return secrets;
+		const aliases = [...new Set(Object.values(runner.credentials))];
+		const granted = aliases.length
+			? yield* runner.call('/api/workflow/credentials', { executionId: runner.executionId, aliases })
+			: {};
+		const values = yield* Effect.fromResult(attempt(() => decodeSync(secretValues, granted)));
+		for (const value of Object.values(values)) yield* mask(value);
+		const env: Record<string, string> = {};
+		for (const [name, alias] of Object.entries(runner.credentials)) {
+			const value = values[alias];
+			if (value !== undefined) env[name] = value;
+		}
+		const npm = env.NODE_AUTH_TOKEN ?? env.NPM_TOKEN;
+		if (npm) env['npm_config_//registry.npmjs.org/:_authToken'] = npm;
+		secrets = env;
+		return env;
+	});
+	const deadline = runner.now() + longestWait;
+	const sleep = (until: number, reason: string) =>
+		Effect.gen(function*() {
+			const wait = until - runner.now();
+			runner.log(`${reason}; waiting ${Math.ceil(Math.max(0, wait) / 1000)}s`);
+			if (wait > 0) yield* runner.sleep(wait);
+		});
+	const pause = (until: number, reason: string) =>
+		until > deadline ? Effect.succeed(false) : sleep(until, reason).pipe(Effect.as(true));
+	let installed = false;
+	const toolchain = Effect.gen(function*() {
+		if (installed || !['rust-toolchain.toml', 'rust-toolchain'].some(file => runner.exists(file))) return;
+		yield* checked(runner, ['rustup', 'toolchain', 'install'], '.');
+		installed = true;
+	});
+	const one = (pkg: LedgerPackage, tarballs: ReadonlyMap<string, string>) =>
+		Effect.gen(function*() {
+			runner.log(`Building ${pkg.name} ${pkg.version}`);
+			const built = yield* Effect.result(build(runner, pkg, toolchain, tarballs));
+			if (built._tag === 'Failure') {
+				const reported = yield* report(pkg, { outcome: 'failed', message: built.failure.message });
+				if (reported.kind === 'settled') runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
+				return;
+			}
+			const artifact = built.success;
+			if (artifact.missing.length && !pkg.force) {
+				const reported = yield* report(pkg, {
+					outcome: 'failed',
+					message: `The ${pkg.name} ${pkg.version} package lacks ${artifact.missing.join(', ')}`,
+				});
+				if (reported.kind === 'settled') runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
+				return;
+			}
+			for (;;) {
+				const claimed = yield* claim(pkg, artifact.digest);
+				if (claimed.kind === 'publish') break;
+				if (claimed.kind === 'settled') {
+					runner.log(`${pkg.name} ${pkg.version}: ${show(claimed.entry)}`);
+					return;
+				}
+				if (!(yield* pause(claimed.until, claimed.reason))) return;
+			}
+			const { command, cwd } = publishCommand(pkg, artifact, runner.provenance);
+			runner.log(`Publishing ${pkg.name} ${pkg.version}`);
+			const result = yield* runner.run(command, { cwd, env: yield* environment });
+			const reported = yield* report(pkg, classify(result));
+			runner.log(`${pkg.name} ${pkg.version}: ${show(reported.entry)}`);
+		}).pipe(Effect.scoped);
+	return Effect.gen(function*() {
+		const tarballs = yield* tarballIndex(runner);
+		const tries = new Map<string, number>();
+		for (;;) {
+			const handed = yield* next();
+			if (handed.kind === 'done') {
+				for (const entry of handed.entries) runner.log(`${entry.purl}: ${show(entry)}`);
+				return handed.entries;
+			}
+			if (handed.kind === 'wait') {
+				if (yield* pause(handed.until, handed.reason)) continue;
+				return yield* fail(`${handed.reason}; the next attempt is due after this run`);
+			}
+			const count = (tries.get(handed.package.purl) ?? 0) + 1;
+			if (count > packageAttempts) return yield* fail(`${handed.package.purl} did not settle in this run`);
+			tries.set(handed.package.purl, count);
+			yield* one(handed.package, tarballs);
+		}
+	});
+}
+
+export function requireAll(entries: LedgerEntry[]): Effect.Effect<void, RunnerFailure> {
+	const missing = entries.filter(entry => entry.required && !['uploaded', 'published', 'reused'].includes(entry.state));
+	if (!missing.length) return Effect.void;
+	return fail(
+		`${missing.length} required publication${missing.length === 1 ? '' : 's'} did not publish: ${
+			missing.map(entry => entry.purl).join(', ')
+		}`,
+	);
+}
+
+export function publicRepository(privateValue: string | undefined): boolean {
+	return privateValue === 'false';
+}
+
+export function command(argv: string[], options: { cwd: string; env?: Record<string, string> }) {
+	return Effect.acquireUseRelease(
+		Effect.sync(() => attempt(() => Bun.spawn(argv, {
+			cwd: options.cwd,
+			env: { ...process.env, ...options.env },
+			stdout: 'pipe',
+			stderr: 'pipe',
+		}))).pipe(Effect.flatMap(Effect.fromResult)),
+		child => attemptAsync(async (): Promise<Command> => {
+			const chunks: string[] = [], out: string[] = [];
+			const drain = async (stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream, own?: string[]) => {
+				const decoder = new TextDecoder();
+				for await (const chunk of stream) {
+					sink.write(chunk);
+					const text = decoder.decode(chunk, { stream: true });
+					chunks.push(text);
+					own?.push(text);
+				}
+			};
+			await Promise.all([drain(child.stdout, process.stdout, out), drain(child.stderr, process.stderr)]);
+			return { code: await child.exited, stdout: out.join(''), output: chunks.join('') };
+		}),
+		terminate,
+	);
+}

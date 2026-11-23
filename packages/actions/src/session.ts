@@ -2,15 +2,10 @@ import { Effect } from 'effect';
 import type { Environment, Invalid } from '@/actions/protocol.ts';
 import { ActionFailure, attempt, fail, required, retried } from '@/actions/protocol.ts';
 import { bearerHeaders } from '@/contract/http.ts';
+import { mask } from '@/host/workflow-commands.ts';
 import { errorMessage } from '@/kernel/errors/refusal.ts';
 import { responseJson } from '@/kernel/http/body.ts';
 import { record } from '@/kernel/schema/result.ts';
-
-export function mask(value: string): Effect.Effect<void> {
-	return Effect.sync(() =>
-		console.log(`::add-mask::${value.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`)
-	);
-}
 
 export function post(url: URL | string, init: RequestInit): Effect.Effect<Response, ActionFailure> {
 	return Effect.tryPromise({

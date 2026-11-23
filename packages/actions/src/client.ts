@@ -3,9 +3,10 @@ import { join } from 'node:path';
 import { Clock, Effect } from 'effect';
 import type { Environment, Mode } from '@/actions/protocol.ts';
 import { attempt, endpoints, exchange, fail, parseMode, requestBody, required } from '@/actions/protocol.ts';
-import { identityToken, mask, postJson, readServiceOrigin } from '@/actions/session.ts';
+import { identityToken, postJson, readServiceOrigin } from '@/actions/session.ts';
 import { writeOutputTo } from '@/host/github-output.ts';
 import { runMain } from '@/host/main.ts';
+import { mask } from '@/host/workflow-commands.ts';
 import { record, text } from '@/kernel/schema/result.ts';
 
 function writeResult(mode: Mode, data: Record<string, unknown>, environment: Environment) {

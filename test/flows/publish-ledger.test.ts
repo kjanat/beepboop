@@ -36,8 +36,7 @@ import {
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import type { Command, Runner } from '@/actions/publish.ts';
-import { command, main, publicRepository, publishPackages, requireAll } from '@/actions/publish.ts';
+import { main } from '@/actions/publish.ts';
 import type { Execution } from '@/automation/types';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -55,6 +54,8 @@ import {
 import { publishWaitMinutes } from '@/publication/contract.ts';
 import { ledgerSchema } from '@/publication/ledger.ts';
 import { distributionLicensed, pythonMissing } from '@/publication/runner/metadata.ts';
+import type { Command, Runner } from '@/publication/runner/publish.ts';
+import { command, publicRepository, publishPackages, requireAll } from '@/publication/runner/publish.ts';
 import { publishMinutes } from '@/setup/workflows/integrate.ts';
 
 let world: World;
@@ -881,7 +882,7 @@ interface Bindings {
 	entries?: Record<string, unknown>;
 	added?: string[];
 }
-function bindings(state: Bindings, version: string): Runner['run'] {
+function bindings(state: Bindings, version: string): Runner<unknown>['run'] {
 	return (argv, options) =>
 		Effect.sync((): Command => {
 			const flags = argv.filter(arg => !arg.startsWith(target));
@@ -1762,7 +1763,7 @@ test('node loads or excludes exactly the npm exports the publisher accepts', () 
 function workspacePacker(files: readonly string[], main: string) {
 	const commands: string[] = [];
 	let tarball = '';
-	const run: Runner['run'] = (argv, options) =>
+	const run: Runner<unknown>['run'] = (argv, options) =>
 		Effect.sync((): Command => {
 			if (argv[0] === 'bun' || argv[0] === 'pnpm') {
 				commands.push(`${argv.slice(0, -1).join(' ')} in ${options.cwd}`);
