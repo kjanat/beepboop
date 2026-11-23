@@ -112,6 +112,57 @@ test('a configuration without extends that states every value gets no format PR 
 	expect([after.extends, after.streams.main.versionScope]).toEqual([undefined, 'one-for-stream']);
 });
 
+const discoveredShape = looseStruct({
+	configuration: Schema.optional(looseStruct({ streams: looseStruct({}) })),
+	findings: Schema.Array(looseStruct({ code: Schema.String })),
+});
+
+test('a repository without the configuration file releases when its workflows run the Beepboop actions', async () => {
+	const { repository } = await managed();
+	world.github.push(repository, { [configurationPath]: null }, 'Drop the configuration file');
+	const api = bearer(world, await world.cliSession());
+	const discovered = decodeSync(
+		discoveredShape,
+		(await api('/api/repositories/discover', { repository: repository.name })).body,
+	);
+	expect(Object.keys(discovered.configuration?.streams ?? {})).toEqual(['main']);
+	expect(discovered.findings.map(entry => entry.code)).not.toContain('unconfigured');
+	const planned = await api('/api/releases/plan', { repositoryId: repository.id, stream: 'main', version: '1.0.1' });
+	expect(planned.status).toBe(200);
+});
+
+test('a repository without the configuration file stays unconfigured while setup would rewrite its workflow', async () => {
+	const { repository } = await managed();
+	const workflow = world.github.file(repository, '.github/workflows/release.yml') ?? '';
+	world.github.push(repository, {
+		[configurationPath]: null,
+		'.github/workflows/release.yml': workflow.replace('    timeout-minutes: 90\n', ''),
+	}, 'Drop the configuration file');
+	const api = bearer(world, await world.cliSession());
+	const discovered = decodeSync(
+		discoveredShape,
+		(await api('/api/repositories/discover', { repository: repository.name })).body,
+	);
+	expect(discovered.configuration).toBeUndefined();
+	expect(discovered.findings.map(entry => entry.code)).toContain('unconfigured');
+});
+
+test('a repository without the configuration file stays unconfigured when no workflow runs the Beepboop actions', async () => {
+	const repository = world.github.create('octo/tool', {
+		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n',
+		'src/main.rs': 'fn main() {}\n',
+		'.github/workflows/ci.yml':
+			'on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo test\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	const discovered = decodeSync(
+		discoveredShape,
+		(await api('/api/repositories/discover', { repository: repository.name })).body,
+	);
+	expect(discovered.configuration).toBeUndefined();
+	expect(discovered.findings.map(entry => entry.code)).toContain('unconfigured');
+});
+
 test('auto-merge uses a merge method the repository allows', async () => {
 	const { repository } = await managed();
 	repository.allowAutoMerge = true;

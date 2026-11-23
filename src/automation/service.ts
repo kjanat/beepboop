@@ -24,7 +24,7 @@ import {
 	releasePaths,
 	unreleasedManifestVersion,
 } from '@/automation/release-version';
-import { bodyChoices, releaseAfterMerge } from '@/automation/setup';
+import { bodyChoices, inferredConfiguration, releaseAfterMerge } from '@/automation/setup';
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import { openSetupPull, setupMerge, setupStatus } from '@/automation/setup-pull-requests';
@@ -288,7 +288,10 @@ export class AutomationService {
 				diagnostics: [],
 				updatedAt: clock.currentTimeMillisUnsafe(),
 			};
-			const document = snapshot.files['.github/beepboop.json'];
+			const document = snapshot.files['.github/beepboop.json']
+				?? (yield* inferredConfiguration(snapshot, discover(snapshot)).pipe(
+					Effect.catch(error => logFailure('setup.inference-failed', error).pipe(Effect.as(undefined))),
+				));
 			if (document) {
 				yield* Effect.gen({ self: this }, function*() {
 					const raw = yield* fromSync((): unknown => JSON.parse(document));
