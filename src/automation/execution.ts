@@ -1,12 +1,11 @@
 import { Clock, Effect } from 'effect';
 import { outputsComplete } from '@/automation/execution-outputs';
 import type { GitHubRunResult } from '@/automation/github-state';
-import { githubFailureReason, githubRunLabel } from '@/automation/github-state';
 import type { DiscoveredWorkflow, Package, RepositoryRecord } from '@/automation/inventory';
-import { canVerifyPublication } from '@/automation/managers';
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/automation/package-identity';
 import { freezePackageTags, packageTagGroups } from '@/automation/package-tags';
 import { streamModuleTags } from '@/automation/refs';
+import { githubFailureReason, githubRunLabel } from '@/automation/run-labels';
 import type { Configuration, Execution, Publication, ReleaseReference, WorkflowBinding } from '@/automation/types';
 import { managerSpec } from '@/contract/catalog';
 import type { ReadyRepository } from '@/domain/repository';
@@ -251,11 +250,11 @@ export function rechecked(execution: Execution): Execution {
 		: execution;
 }
 export function recheckable(publication: Publication): boolean {
-	return canVerifyPublication(publication.manager)
+	return managerSpec(publication.manager).verifiable
 		&& ['pending', 'uncertain'].includes(publication.outcome);
 }
 export function verifiableCancellation(publication: Publication): boolean {
-	return publication.outcome === 'cancelled' && canVerifyPublication(publication.manager);
+	return publication.outcome === 'cancelled' && managerSpec(publication.manager).verifiable;
 }
 export function recheckedPublication(prior: Publication, checked: Publication): Publication {
 	return prior.outcome === 'cancelled' && !['succeeded', 'failed'].includes(checked.outcome) ? prior : checked;

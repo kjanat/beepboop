@@ -1,5 +1,5 @@
 import type { Inventory, RepositoryRecord } from '@/automation/inventory';
-import { versionsInFiles } from '@/automation/managers';
+import { versionsInFiles } from '@/automation/managers/tags';
 import { publishablePackages } from '@/automation/package-identity';
 import { hasTagPromotion } from '@/automation/release-version';
 import type { ReleasePlan, Stream, WorkflowBinding } from '@/automation/types';

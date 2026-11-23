@@ -42,7 +42,7 @@ import {
 	workflowRunsSchema,
 } from '@/automation/github-resources';
 import type { GitHubRunResult } from '@/automation/github-state';
-import { classifyJob, classifyRun, githubFailureReason, jobProgressState } from '@/automation/github-state';
+import { classifyJob, classifyRun, jobProgressState } from '@/automation/github-state';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
@@ -119,6 +119,7 @@ import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
 import { manifestProblems, releasePaths } from '@/automation/release-version';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
+import { githubFailureReason } from '@/automation/run-labels';
 import type { AutomationBindings } from '@/automation/service';
 import { Automation, applicationLayer, withAutomation } from '@/automation/service';
 import { binaryLegs } from '@/automation/setup-binaries';

@@ -11,7 +11,7 @@ import { resolvePackageVersion } from '@/automation/release-version';
 import type { Publication, ReleasePlan } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
 import type { ManagerName } from '@/contract/catalog';
-import { isLockfile } from '@/contract/catalog';
+import { isLockfile, managerSpec } from '@/contract/catalog';
 import type { VersionFile } from '@/contract/version-files';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -104,7 +104,7 @@ export function planRelease(
 
 export type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 export function canVerifyPublication(manager: ManagerName): boolean {
-	return managerRegistry.canVerify(manager);
+	return managerSpec(manager).verifiable;
 }
 export function verifyPublication(
 	publication: Publication,
@@ -133,7 +133,4 @@ export function observedVersion(pkg: Package, tag: string, release?: string): st
 	const prefix = tagPrefix(pkg.versionSource);
 	if (prefix === undefined) return placeholderVersion(pkg.version) && release !== undefined ? release : pkg.version;
 	return tag.startsWith(prefix) ? tag.slice(prefix.length).replace(/^v/, '') : undefined;
-}
-export function versionsInFiles(inventory: Inventory): boolean {
-	return inventory.packages.some(p => publishable(p) && tagPrefix(p.versionSource) === undefined);
 }

@@ -7,8 +7,9 @@ import {
 	runFailedNote,
 	settleRun,
 } from '@/automation/execution';
-import { classifyJob, classifyRun, githubFailureReason } from '@/automation/github-state';
+import { classifyJob, classifyRun } from '@/automation/github-state';
 import type { RunJob } from '@/automation/job-gate';
+import { githubFailureReason } from '@/automation/run-labels';
 import type { Execution } from '@/automation/types';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { runStateLabel } from '@/server/releases';

@@ -89,6 +89,7 @@ export interface ManagerSpec {
 	lockfiles: readonly string[];
 	destinations: ManagerDestinations | undefined;
 	versionPolicy: 'equals-execution' | 'free';
+	verifiable: boolean;
 }
 export const managerCatalog = {
 	'pre-commit': {
@@ -98,6 +99,7 @@ export const managerCatalog = {
 		purlType: undefined,
 		destinations: undefined,
 		versionPolicy: 'free',
+		verifiable: false,
 	},
 	cargo: {
 		manifests: [/(?:^|\/)Cargo\.toml$/],
@@ -106,6 +108,7 @@ export const managerCatalog = {
 		purlType: 'cargo',
 		destinations: { primary: 'crates-io', secondary: [] },
 		versionPolicy: 'equals-execution',
+		verifiable: true,
 	},
 	npm: {
 		manifests: [packageJson, npmTargets],
@@ -114,6 +117,7 @@ export const managerCatalog = {
 		purlType: 'npm',
 		destinations: { primary: 'npm', secondary: [] },
 		versionPolicy: 'equals-execution',
+		verifiable: true,
 	},
 	jsr: {
 		manifests: [jsrManifest],
@@ -122,6 +126,7 @@ export const managerCatalog = {
 		purlType: 'jsr',
 		destinations: { primary: 'jsr', secondary: [] },
 		versionPolicy: 'equals-execution',
+		verifiable: true,
 	},
 	pypi: {
 		manifests: [/(?:^|\/)pyproject\.toml$/],
@@ -130,6 +135,7 @@ export const managerCatalog = {
 		purlType: 'pypi',
 		destinations: { primary: 'pypi', secondary: [] },
 		versionPolicy: 'equals-execution',
+		verifiable: true,
 	},
 	'github-release': {
 		manifests: [],
@@ -138,6 +144,7 @@ export const managerCatalog = {
 		purlType: 'github',
 		destinations: { primary: 'github-release', secondary: [] },
 		versionPolicy: 'free',
+		verifiable: false,
 	},
 	oci: {
 		manifests: [],
@@ -146,6 +153,7 @@ export const managerCatalog = {
 		purlType: undefined,
 		destinations: { primary: 'oci', secondary: [] },
 		versionPolicy: 'free',
+		verifiable: true,
 	},
 	goreleaser: {
 		manifests: [goreleaserConfig],
@@ -154,6 +162,7 @@ export const managerCatalog = {
 		purlType: 'github',
 		destinations: { primary: 'github-release', secondary: [] },
 		versionPolicy: 'free',
+		verifiable: true,
 	},
 	go: {
 		manifests: [/(?:^|\/)go\.mod$/],
@@ -162,6 +171,7 @@ export const managerCatalog = {
 		purlType: 'golang',
 		destinations: { primary: 'go-proxy', secondary: [] },
 		versionPolicy: 'free',
+		verifiable: true,
 	},
 	vscode: {
 		manifests: [packageJson],
@@ -170,6 +180,7 @@ export const managerCatalog = {
 		purlType: 'vscode-extension',
 		destinations: { primary: 'vscode-marketplace', secondary: ['open-vsx'] },
 		versionPolicy: 'equals-execution',
+		verifiable: true,
 	},
 	manifest: {
 		manifests: [],
@@ -178,6 +189,7 @@ export const managerCatalog = {
 		purlType: undefined,
 		destinations: undefined,
 		versionPolicy: 'free',
+		verifiable: false,
 	},
 	workflow: {
 		manifests: [/^\.github\/workflows\/[^/]+\.ya?ml$/],
@@ -186,6 +198,7 @@ export const managerCatalog = {
 		purlType: undefined,
 		destinations: undefined,
 		versionPolicy: 'free',
+		verifiable: false,
 	},
 } as const satisfies Record<ManagerName, ManagerSpec>;
 
