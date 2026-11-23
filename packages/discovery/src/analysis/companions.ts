@@ -1,9 +1,18 @@
-import type { SetupChoices } from '@/automation/setup-types';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';
 
-type Stream = SetupChoices['streams'][number];
+interface Stream {
+	readonly name: string;
+	readonly packages: readonly string[];
+	readonly companionModules?: readonly string[];
+	readonly versionSource?: { readonly prefix: string };
+	readonly observe?: readonly { readonly ref?: string }[];
+	readonly promote?: { readonly tagPrefix?: string; readonly binaries?: unknown };
+}
+export interface CompanionChoices {
+	readonly streams: readonly Stream[];
+}
 
 const release = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const code = /(?:^|\/)(?:go\.mod|go\.sum)$|\.go$/;
@@ -49,7 +58,7 @@ function moduleOf(pkg: Package): string | undefined {
 		? pkg.versionSource.slice('tags:'.length)
 		: undefined;
 }
-export function companionProposals(choices: SetupChoices, snapshot: Snapshot, inventory: Inventory): string[] {
+export function companionProposals(choices: CompanionChoices, snapshot: Snapshot, inventory: Inventory): string[] {
 	return inventory.packages.flatMap(pkg => {
 		const module = moduleOf(pkg);
 		const id = packageId(pkg);

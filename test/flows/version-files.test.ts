@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from 'bun:test';
 import { Cause, Effect, Exit, Result } from 'effect';
 import { RE2JS } from 're2js';
-import { applyVersionFiles } from '@/automation/editors';
+import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { versionFileSchema } from '@/domain/version-files.ts';
 import { decodeSync, safeDecode } from '@/kernel/schema/structs.ts';
 
