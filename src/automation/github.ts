@@ -24,6 +24,7 @@ import {
 	userSchema,
 	workflowRunSchema,
 } from '@/automation/github-resources';
+import type { Edit, Snapshot } from '@/automation/inventory';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { parsePresetReference } from '@/automation/preset';
 import type { RefState } from '@/automation/refs';
@@ -33,7 +34,7 @@ import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-b
 import { setupBranches } from '@/automation/setup-changes';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
-import type { AutoMerge, Edit, PreparationResult, Snapshot } from '@/automation/types';
+import type { AutoMerge, PreparationResult } from '@/automation/types';
 import { githubApiVersion } from '@/contract/http';
 import type { AutoMergeMethod } from '@/contract/setup-terms';
 import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';

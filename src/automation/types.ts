@@ -1,6 +1,5 @@
-import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
+import type { Edit, Package } from '@/automation/inventory';
 import type { ResolvedInput } from '@/automation/outputs';
-import type { PackagePublication } from '@/automation/package-publication';
 import type { FrozenPackageTag } from '@/automation/package-tags';
 import type { ModuleTag, RefPlan, RefState } from '@/automation/refs';
 import type { ManagerName } from '@/contract/catalog';
@@ -9,65 +8,9 @@ import type { StartChannel } from '@/contract/release-start';
 import type { AutoMergeMethod, VersionPrMerge } from '@/contract/setup-terms';
 import type { ExecutionStateView } from '@/contract/views';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration';
-import type { Access } from '@/domain/repository';
-import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { PackageIdentity } from '@/package-url';
 
 export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration';
-export interface Snapshot {
-	repository: { id: number; name: string; defaultBranch: string };
-	sha: string;
-	files: Record<string, string>;
-	paths: string[];
-	links?: string[];
-	tags?: string[];
-}
-export interface Package {
-	/** Absent only on legacy records; normalized at discovery and persistence boundaries. */
-	identity?: PackageIdentity;
-	previousModule?: { name: string; version: string };
-	publicationStatus?: 'published' | 'missing' | 'failed' | 'unchecked';
-	destinations?: RegistryOutcome[];
-	channels?: Channel[];
-	generated?: boolean;
-	optional?: boolean;
-	manager: ManagerName;
-	name: string;
-	version?: string;
-	published?: string;
-	manifest: string;
-	versionSource: string;
-	publication: PackagePublication;
-	dependencies: string[];
-}
-export interface DiscoveredWorkflow {
-	tagPatterns?: string[];
-	branchPatterns?: string[];
-	createsRelease?: boolean;
-	ledger?: boolean;
-	file: string;
-	name: string;
-	events: string[];
-	jobs: string[];
-	localActions: string[];
-	dispatchInputs: string[];
-	publication: boolean;
-}
-export interface Inventory {
-	references?: import('@/automation/precommit').HookReference[];
-	channels?: Channel[];
-	destinations?: ChannelOutcome[];
-	packages: Package[];
-	workflows: DiscoveredWorkflow[];
-	managers: ManagerName[];
-	diagnostics: Diagnostic[];
-	publicationOrder: string[];
-}
-export interface Edit {
-	path: string;
-	before: string;
-	after: string;
-}
 export interface ReleasePlan {
 	lockfiles?: string[];
 	version: string;
@@ -216,18 +159,6 @@ export interface Execution {
 	createdAt: number;
 	updatedAt: number;
 	reason?: string;
-}
-export interface RepositoryRecord {
-	access: Access;
-	id: number;
-	name: string;
-	defaultBranch: string;
-	sha: string;
-	configuration?: Configuration;
-	presetShas: Record<string, string>;
-	inventory: Inventory;
-	diagnostics: Diagnostic[];
-	updatedAt: number;
 }
 
 export interface ActivityEntry {

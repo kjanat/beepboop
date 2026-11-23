@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
 import type { Alias, Document, Node } from 'yaml';
 import { isAlias, isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
+import type { Package, Snapshot } from '@/automation/inventory';
 import { jobNeeds } from '@/automation/job-gate';
 import { object } from '@/automation/managers/helpers';
 import { packageId } from '@/automation/package-identity';
@@ -22,7 +23,6 @@ import {
 } from '@/automation/setup-binaries';
 import { crateOutcome, ledgerCommand, plainCrateNames } from '@/automation/setup-defaults';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
-import type { Package, Snapshot } from '@/automation/types';
 import { ledgerManagers, publishWaitMinutes } from '@/contract/ledger';
 import { hostedRunners } from '@/contract/runners';
 import { toDomainError } from '@/kernel/errors/classify.ts';

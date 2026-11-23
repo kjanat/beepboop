@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
 import { applyEdits, modify, parseTree } from 'jsonc-parser';
+import type { Package } from '@/automation/inventory';
 import { jsonIndent, object } from '@/automation/managers/helpers';
 import { discoverNpmTargets } from '@/automation/managers/npm-targets';
 import { packageManifests } from '@/automation/managers/package-json';
@@ -7,7 +8,6 @@ import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/re
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
 import { excluded, publishable, registry } from '@/automation/package-publication';
-import type { Package } from '@/automation/types';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

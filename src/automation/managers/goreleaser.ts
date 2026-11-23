@@ -1,13 +1,14 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import type { Channel } from '@/automation/destinations';
+import type { Snapshot } from '@/automation/inventory';
 import { object } from '@/automation/managers/helpers';
 import type { Adapter, RegistryVersion, VerificationContext } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, tagSource } from '@/automation/managers/tags';
 import { publicationResult } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
-import type { Publication, Snapshot } from '@/automation/types';
+import type { Publication } from '@/automation/types';
 import { goreleaserConfig } from '@/contract/catalog';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';

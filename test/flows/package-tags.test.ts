@@ -20,6 +20,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Fiber, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { parseRepositoryConfiguration } from '@/automation/configuration';
+import type { Inventory, Package } from '@/automation/inventory';
 import { excluded, registry } from '@/automation/package-publication';
 import type { PackageTagRow } from '@/automation/package-tags';
 import {
@@ -32,7 +33,6 @@ import {
 	packageTagWindow,
 	taggedReleases,
 } from '@/automation/package-tags';
-import type { Inventory, Package } from '@/automation/types';
 import type { PackageTagView } from '@/contract/views';
 import { packageTagPage as pageSchema } from '@/contract/views';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';

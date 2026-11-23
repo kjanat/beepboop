@@ -3,7 +3,6 @@ import { legacyConfiguration } from '@/automation/configuration-names';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { parseReleaseIdentity } from '@/automation/package-identity';
 import { parsePresetReference } from '@/automation/preset';
-import type { Configuration, Stream, WorkflowBinding } from '@/automation/types';
 import {
 	defaultWinGetTagPrefix,
 	jobKeyPattern,
@@ -27,6 +26,7 @@ import {
 } from '@/contract/setup-terms';
 import { versionFileSchema } from '@/contract/version-files';
 import { actionsRevisionPattern, workflowSetup } from '@/contract/workflow-setup';
+import type { Configuration, Stream, WorkflowBinding } from '@/domain/configuration';
 import {
 	configurationDrift,
 	configurationSchema,

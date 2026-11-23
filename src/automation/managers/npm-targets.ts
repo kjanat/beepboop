@@ -1,10 +1,10 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
+import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { object } from '@/automation/managers/helpers';
 import { packageManifests } from '@/automation/managers/package-json';
 import { latestTag, tagPrefix } from '@/automation/managers/tags';
 import { publishable, registry } from '@/automation/package-publication';
-import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { npmTargets } from '@/contract/catalog';
 import { npmTargetDescriptor, platformMap, targetFields, targetsSchema } from '@/contract/targets';
 import { safeVersionPath } from '@/contract/version-files';

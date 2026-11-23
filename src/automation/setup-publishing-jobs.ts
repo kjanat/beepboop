@@ -1,3 +1,4 @@
+import type { Snapshot } from '@/automation/inventory';
 import { object } from '@/automation/managers/helpers';
 import {
 	disabled,
@@ -10,7 +11,6 @@ import {
 import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/automation/release-graph/calls';
 import type { Job } from '@/automation/release-graph/workflows';
 import { buildJob } from '@/automation/release-graph/workflows';
-import type { Snapshot } from '@/automation/types';
 
 export interface PublishingJob {
 	file: string;

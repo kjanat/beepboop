@@ -1,5 +1,6 @@
 import { Effect, Schema } from 'effect';
 import { resolveConfiguration } from '@/automation/configuration';
+import type { RepositoryRecord } from '@/automation/inventory';
 import { discover } from '@/automation/managers';
 import { encodeRepository } from '@/automation/package-identity';
 import { streamReleases } from '@/automation/release-capability';
@@ -7,7 +8,6 @@ import { repositoryName, repositoryReference } from '@/automation/repository-nam
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
-import type { RepositoryRecord } from '@/automation/types';
 import { routes } from '@/contract/routes';
 import { configurationDiagnostics } from '@/domain/configuration';
 import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';

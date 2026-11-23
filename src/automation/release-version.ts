@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
+import type { Inventory, Package } from '@/automation/inventory';
 import { tagPrefix } from '@/automation/managers/tags';
 import { matchesPackage } from '@/automation/package-identity';
-import type { Inventory, Package, Stream } from '@/automation/types';
+import type { Stream } from '@/automation/types';
 import type { VersionRequest } from '@/automation/version';
 import { nextVersion } from '@/automation/version';
 import { compareVersions } from '@/contract/semver';

@@ -1,5 +1,6 @@
+import type { RepositoryRecord } from '@/automation/inventory';
 import type { DeliveryState, NotificationDelivery } from '@/automation/notifications.ts';
-import type { ExecutionState, Publication, RepositoryRecord } from '@/automation/types.ts';
+import type { ExecutionState, Publication } from '@/automation/types.ts';
 import type { WinGetSubmission } from '@/automation/winget.ts';
 import type { Status, Tone } from '@/contract/views';
 import type { Readiness } from '@/domain/repository';

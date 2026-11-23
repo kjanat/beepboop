@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
 import { alreadyPrepared, applyVersionFiles, fileEdits } from '@/automation/editors';
+import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -7,7 +8,7 @@ import { matchesPackage, packageId, publishablePackages } from '@/automation/pac
 import { metadataDiagnostics } from '@/automation/package-metadata';
 import { publishable } from '@/automation/package-publication';
 import { resolvePackageVersion } from '@/automation/release-version';
-import type { Inventory, Package, Publication, ReleasePlan, Snapshot } from '@/automation/types';
+import type { Publication, ReleasePlan } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
 import type { ManagerName } from '@/contract/catalog';
 import { isLockfile } from '@/contract/catalog';

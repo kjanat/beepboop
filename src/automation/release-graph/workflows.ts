@@ -2,6 +2,7 @@ import { Result } from 'effect';
 import type { ParseError } from 'jsonc-parser';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
+import type { Snapshot } from '@/automation/inventory';
 import { glob, object } from '@/automation/managers/helpers';
 import { bindInputs, bindStep, disabled, expandStep, staticGuard } from '@/automation/release-graph/bindings';
 import {
@@ -24,7 +25,6 @@ import {
 	workspaceSelectors,
 } from '@/automation/release-graph/package-managers';
 import { executed, isolatedLines, posixShell, walkDirectories } from '@/automation/release-graph/shell';
-import type { Snapshot } from '@/automation/types';
 import { yaml } from '@/kernel/parse/yaml.ts';
 import { escapeRegExp, globMatches, within } from '@/kernel/text/patterns.ts';
 

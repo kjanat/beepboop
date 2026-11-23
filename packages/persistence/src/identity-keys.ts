@@ -1,6 +1,7 @@
 import type { Effect } from 'effect';
+import type { RepositoryRecord } from '@/automation/inventory';
 import type { ReleaseSetPlan } from '@/automation/planning';
-import type { Execution, ReleasePlan, RepositoryRecord } from '@/automation/types';
+import type { Execution, ReleasePlan } from '@/automation/types';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';

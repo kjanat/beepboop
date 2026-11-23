@@ -1,5 +1,6 @@
 import { parse as parseToml } from 'smol-toml';
 import { cargoBinaryNames } from '@/automation/binary-candidates';
+import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { object } from '@/automation/managers/helpers';
 import { isPyproject, privateProject } from '@/automation/managers/pyproject';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -16,7 +17,6 @@ import {
 import { packDirectories } from '@/automation/release-graph/shell';
 import type { Destination, Job, StepEffect, Workflow } from '@/automation/release-graph/workflows';
 import { declaredWorkspaces, inWorkspaces, literalPrefix, workflowModels } from '@/automation/release-graph/workflows';
-import type { Inventory, Package, Snapshot } from '@/automation/types';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { escapeRegExp, globMatches, within } from '@/kernel/text/patterns.ts';

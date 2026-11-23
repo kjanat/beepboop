@@ -1,6 +1,7 @@
 import { Schema, Struct } from 'effect';
 import type { ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import { completion } from '@/automation/execution';
+import type { DiscoveredWorkflow, Edit, Package, RepositoryRecord } from '@/automation/inventory';
 import type { ResolvedInput } from '@/automation/outputs';
 import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import type { StoredInventory, StoredRepository } from '@/automation/package-identity';
@@ -12,14 +13,10 @@ import type { SetupEdit } from '@/automation/setup-types';
 import type {
 	Artifact,
 	AutomationEvent,
-	DiscoveredWorkflow,
-	Edit,
 	Execution,
-	Package,
 	Publication,
 	ReleasePlan,
 	ReleaseReference,
-	RepositoryRecord,
 	SubscriptionDelivery,
 } from '@/automation/types';
 import { managerDestinationIds, managerNames } from '@/contract/catalog';

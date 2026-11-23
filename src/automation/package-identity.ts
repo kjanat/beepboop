@@ -1,7 +1,8 @@
 import { Result } from 'effect';
+import type { Inventory, Package, RepositoryRecord } from '@/automation/inventory';
 import type { PackagePublication } from '@/automation/package-publication';
 import { excluded, publishable, registry } from '@/automation/package-publication';
-import type { Execution, Inventory, Package, Publication, RepositoryRecord } from '@/automation/types';
+import type { Execution, Publication } from '@/automation/types';
 import { identifiedManagers, legacyJsrIdentity } from '@/contract/catalog';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { blocking, legacyDiagnostic, messages } from '@/kernel/errors/diagnostics.ts';

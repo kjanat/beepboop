@@ -3,6 +3,7 @@ import { binaryCandidates } from '@/automation/binary-candidates';
 import { companionProposals } from '@/automation/companion-detection';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/automation/configuration';
 import { legacyConfiguration, readableConfiguration } from '@/automation/configuration-names';
+import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { canVerifyPublication, discover, versionsInFiles } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { tagPrefix } from '@/automation/managers/tags';
@@ -36,7 +37,7 @@ import {
 	workflowCredentials,
 	workflowEvidence,
 } from '@/automation/setup-workflows';
-import type { Configuration, Inventory, Package, Snapshot } from '@/automation/types';
+import type { Configuration } from '@/automation/types';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/contract/binary-platforms';
 import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/contract/binary-platforms';
 import { isLockfile } from '@/contract/catalog';

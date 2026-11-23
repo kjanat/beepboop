@@ -1,10 +1,11 @@
 import { Effect } from 'effect';
+import type { RepositoryRecord } from '@/automation/inventory';
 import { packageWatches } from '@/automation/package-watch.ts';
 import type { Automation, AutomationBindings, AutomationService } from '@/automation/service.ts';
 import { withAutomation } from '@/automation/service.ts';
 import type { UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
 import { readableValues } from '@/automation/store.ts';
-import type { Execution, RepositoryRecord } from '@/automation/types.ts';
+import type { Execution } from '@/automation/types.ts';
 import { parseGrant } from '@/automation/vault.ts';
 import { recover } from '@/kernel/errors/classify.ts';
 import type { Readable } from '@/kernel/errors/decoding.ts';

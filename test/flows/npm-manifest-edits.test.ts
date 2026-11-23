@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
 import { Effect } from 'effect';
+import type { Snapshot } from '@/automation/inventory';
 import { discover, planRelease } from '@/automation/managers';
 import { npmManager } from '@/automation/managers/npm';
-import type { Snapshot } from '@/automation/types';
 
 const root = [
 	'{',

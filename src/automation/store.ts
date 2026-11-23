@@ -1,14 +1,9 @@
 import { Clock, Effect, Schema } from 'effect';
 import { executionOrderSql, newestActiveFirst, validJson } from '@/automation/execution-order';
+import type { RepositoryRecord } from '@/automation/inventory';
 import { encodeRepository, identifyRepository } from '@/automation/package-identity';
 import { documentRow, rowDocument } from '@/automation/schemas';
-import type {
-	ActivityEntry,
-	AutomationEvent,
-	Execution,
-	RepositoryRecord,
-	SubscriptionDelivery,
-} from '@/automation/types';
+import type { ActivityEntry, AutomationEvent, Execution, SubscriptionDelivery } from '@/automation/types';
 import type { ExecutionFilter } from '@/contract/routes';
 import type { Access, RepositoryDiscovery } from '@/domain/repository';
 import { fromJson, fromSync, recover } from '@/kernel/errors/classify.ts';

@@ -225,7 +225,7 @@
 	},
 	{
 		"file": "packages/persistence/src/codecs/repository.ts",
-		"specifier": "@/automation/types"
+		"specifier": "@/automation/inventory"
 	},
 	{
 		"file": "packages/persistence/src/codecs/repository.ts",
@@ -238,6 +238,10 @@
 	{
 		"file": "packages/persistence/src/codecs/v1.ts",
 		"specifier": "@/automation/execution"
+	},
+	{
+		"file": "packages/persistence/src/codecs/v1.ts",
+		"specifier": "@/automation/inventory"
 	},
 	{
 		"file": "packages/persistence/src/codecs/v1.ts",
@@ -326,6 +330,10 @@
 	{
 		"file": "packages/persistence/src/d1/sessions.ts",
 		"specifier": "@/automation/schemas"
+	},
+	{
+		"file": "packages/persistence/src/identity-keys.ts",
+		"specifier": "@/automation/inventory"
 	},
 	{
 		"file": "packages/persistence/src/identity-keys.ts",

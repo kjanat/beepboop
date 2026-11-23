@@ -7,10 +7,10 @@ import {
 	gitCommitSchema,
 	gitRefSchema,
 } from '@/automation/github-resources';
+import type { RepositoryRecord } from '@/automation/inventory';
 import { repositoryNamePattern } from '@/automation/repository-name';
 import { documentRow } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
-import type { RepositoryRecord } from '@/automation/types';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { readiness } from '@/domain/repository';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';

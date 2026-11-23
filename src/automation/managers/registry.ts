@@ -1,11 +1,12 @@
 import { Context, Effect, Layer, Result } from 'effect';
 import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
 import { channelKey, isChannelOutcome } from '@/automation/destinations';
+import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { checkChannel, pkgbuildChannels } from '@/automation/managers/channels';
 import { publicationOrder } from '@/automation/managers/order';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import type { Inventory, Package, Publication, Snapshot } from '@/automation/types';
+import type { Publication } from '@/automation/types';
 import type { ManagerDestinationId, ManagerName } from '@/contract/catalog';
 import { destinationsOf, managerSpec } from '@/contract/catalog';
 import { fromPromise } from '@/kernel/errors/classify.ts';
