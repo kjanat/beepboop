@@ -36,9 +36,8 @@ import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
 import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/domain/binary-platforms.ts';
 import { isLockfile } from '@/domain/catalog.ts';
-import { builtinPresets } from '@/domain/configuration/builtin-presets.ts';
 import { canonicalConfiguration } from '@/domain/configuration/canonical.ts';
-import { withoutInherited } from '@/domain/configuration/minimal.ts';
+import { withoutDefaults } from '@/domain/configuration/minimal.ts';
 import { legacyConfiguration } from '@/domain/configuration/names.ts';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
@@ -937,10 +936,7 @@ function drafted(
 		}
 		const before = snapshot.files['.github/beepboop.json'] ?? '';
 		const stored = yield* fromSync((): unknown => JSON.parse(before || '{}'));
-		const canonical = canonicalConfiguration(configuration, inventory.packages);
-		const written = Array.isArray(configuration.extends) && configuration.extends.includes(defaultPreset)
-			? withoutInherited(canonical, builtinPresets.default, stored)
-			: canonical;
+		const written = withoutDefaults(canonicalConfiguration(configuration, inventory.packages), stored);
 		// Do not reformat an unchanged configuration simply to make a PR.
 		const after = JSON.stringify(stored) === JSON.stringify(written)
 			? before

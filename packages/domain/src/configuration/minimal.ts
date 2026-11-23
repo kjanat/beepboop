@@ -1,4 +1,7 @@
 import { Predicate } from 'effect';
+import { builtinPresets } from '@/domain/configuration/builtin-presets.ts';
+import { readableConfiguration } from '@/domain/configuration/names.ts';
+import { defaultPreset } from '@/domain/preset.ts';
 
 function same(left: unknown, right: unknown): boolean {
 	return JSON.stringify(left) === JSON.stringify(right);
@@ -25,12 +28,15 @@ function unstated(value: Record<string, unknown>, inherited: unknown, stated: un
 	return kept;
 }
 
-export function withoutInherited(written: unknown, preset: unknown, stored: unknown): unknown {
-	if (!Predicate.isObject(written) || !Predicate.isObject(written.streams) || !Predicate.isObject(preset)) {
-		return written;
-	}
+export function withoutDefaults(written: unknown, stored: unknown): unknown {
+	const preset = builtinPresets.default;
+	if (
+		!Predicate.isObject(written) || !Predicate.isObject(written.streams) || !Predicate.isObject(preset)
+		|| !Array.isArray(written.extends) || written.extends.at(-1) !== defaultPreset
+	) return written;
 	const inherited = preset.streams;
-	const storedStreams = Predicate.isObject(stored) ? stored.streams : undefined;
+	const readable = readableConfiguration(stored);
+	const storedStreams = Predicate.isObject(readable) ? readable.streams : undefined;
 	return {
 		...written,
 		streams: Object.fromEntries(
