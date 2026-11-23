@@ -2,12 +2,13 @@ import type { APIRoute } from 'astro';
 import type { Layer } from 'effect';
 import { Cause, Effect } from 'effect';
 import { Automation, applicationLayer } from '@/automation/service.ts';
+import { outageLine } from '@/github/status.ts';
 import { failure } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { bindings } from '@/server/bindings.ts';
-import { knownOutage, outageLine, refreshOutage } from '@/server/github-status.ts';
+import { knownOutage, refreshOutage } from '@/server/github-status.ts';
 import { dispatch } from '@/server/router.ts';
 
 /** Preserve the Actions and webhook contracts while Astro owns HTTP routing. */
