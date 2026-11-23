@@ -232,6 +232,14 @@
 		"specifier": "@/automation/types"
 	},
 	{
+		"file": "packages/publication/src/winget/service.ts",
+		"specifier": "@/automation/gateway.ts"
+	},
+	{
+		"file": "packages/publication/src/winget/service.ts",
+		"specifier": "@/automation/snapshot"
+	},
+	{
 		"file": "packages/setup/src/draft.ts",
 		"specifier": "@/automation/release-capability"
 	}

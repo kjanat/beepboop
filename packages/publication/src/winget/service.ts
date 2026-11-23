@@ -1,7 +1,6 @@
 import { Clock, Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { repositorySnapshot } from '@/automation/snapshot';
-import type { Store } from '@/automation/store';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { readiness } from '@/domain/repository';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
@@ -12,7 +11,7 @@ import {
 	gitCommitSchema,
 	gitRefSchema,
 } from '@/github/resources.ts';
-import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import { fromPromise, fromSync, recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -20,11 +19,14 @@ import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
 import { countSchema, decode, looseSchema, record, shaSchema, text, textSchema } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
-import { decodeSync, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
-import type { Sql } from '@/persistence/d1/database';
-import { parse, sql } from '@/persistence/d1/database';
-import { documentRow } from '@/persistence/d1/document-row';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import { AuditStore } from '@/persistence/d1/audit';
+import type { Sql, SqlDatabase } from '@/persistence/d1/database';
+import { sql } from '@/persistence/d1/database';
+import { WinGetSubmissions } from '@/publication/adapters/d1/winget-submissions.ts';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/publication/distribution/winget/generate.ts';
+import type { WinGetPlan, WinGetRelease, WinGetSubmission } from '@/publication/winget/submission.ts';
+import { parseSubmission, submissionBranch } from '@/publication/winget/submission.ts';
 
 const releaseListing = mutableArray(mutableStruct({
 	id: looseSchema,
@@ -67,65 +69,6 @@ const branchComparison = mutableStruct({
 const fileContent = mutableStruct({ content: textSchema });
 const reviewList = mutableArray(mutableStruct({ state: looseSchema, user: looseSchema }));
 
-export interface WinGetPlan {
-	id: string;
-	repositoryId: number;
-	repository: string;
-	releaseId: number;
-	tag: string;
-	version: string;
-	packageIdentifier: string;
-	sourceSha: string;
-	configurationSha: string;
-	files: Record<string, string>;
-	digest: string;
-	releaseUrl: string;
-}
-export interface WinGetSubmission {
-	plan: WinGetPlan;
-	state: 'pending' | 'open' | 'merged' | 'closed' | 'failed';
-	number?: number;
-	url?: string;
-	head?: string;
-	checks?: string;
-	reviews?: string;
-	reason?: string;
-	updatedAt: number;
-}
-export interface WinGetRelease {
-	id: number;
-	tag: string;
-	name: string;
-	publishedAt: number;
-}
-const submissionSchema: Schema.Codec<WinGetSubmission, unknown> = mutableStruct({
-	plan: mutableStruct({
-		id: Schema.String,
-		repositoryId: Schema.Finite,
-		repository: Schema.String,
-		releaseId: Schema.Finite,
-		tag: Schema.String,
-		version: Schema.String,
-		packageIdentifier: Schema.String,
-		sourceSha: Schema.String,
-		configurationSha: Schema.String,
-		files: mutableRecord(Schema.String, Schema.String),
-		releaseUrl: Schema.String,
-		digest: Schema.String,
-	}),
-	state: Schema.Literals(['pending', 'open', 'merged', 'closed', 'failed']),
-	number: Schema.optional(Schema.Finite),
-	url: Schema.optional(Schema.String),
-	head: Schema.optional(Schema.String),
-	checks: Schema.optional(Schema.String),
-	reviews: Schema.optional(Schema.String),
-	reason: Schema.optional(Schema.String),
-	updatedAt: Schema.Finite,
-});
-function parseSubmission(document: string): WinGetSubmission {
-	return decodeSync(submissionSchema, JSON.parse(document));
-}
-const submissionRow = mutableStruct({ id: Schema.String, document: Schema.String });
 export interface WinGetBindings {
 	WINGET_GITHUB_TOKEN?: string;
 	WINGET_FORK?: string;
@@ -135,7 +78,13 @@ function planDigest(value: unknown): Effect.Effect<string, DomainError> {
 	return fromPromise(() => sha256Hex(JSON.stringify(value)));
 }
 export class WinGetService {
-	constructor(readonly store: Store, readonly gateway: RepositoryGateway, readonly env: WinGetBindings) {}
+	private readonly submissions: WinGetSubmissions;
+	private readonly audit: AuditStore;
+	constructor(db: SqlDatabase | Sql, readonly gateway: RepositoryGateway, readonly env: WinGetBindings) {
+		const statements = sql(db);
+		this.submissions = new WinGetSubmissions(statements);
+		this.audit = new AuditStore(statements);
+	}
 	setup(): boolean {
 		return !!this.env.WINGET_GITHUB_TOKEN && repositoryNamePattern.test(this.env.WINGET_FORK ?? '');
 	}
@@ -155,12 +104,6 @@ export class WinGetService {
 			return Effect.fail(precondition('Repository is not enabled for WinGet'));
 		}
 		return Effect.succeed(state.repository.configuration.winget);
-	}
-	private get sql(): Sql {
-		return sql(this.store.db);
-	}
-	private documents(rows: unknown[]): Effect.Effect<WinGetSubmission[], DomainError> {
-		return fromSync(() => rows.map(row => parseSubmission(decodeSync(documentRow, row).document)));
 	}
 	releases(repo: RepositoryRecord): Effect.Effect<WinGetRelease[], DomainError> {
 		const self = this;
@@ -262,36 +205,15 @@ export class WinGetService {
 		});
 	}
 	list(): Effect.Effect<WinGetSubmission[], DomainError> {
-		return this.sql.all('SELECT document FROM winget_submissions ORDER BY updated_at DESC LIMIT 100').pipe(
-			Effect.flatMap(rows => this.documents(rows)),
-		);
+		return this.submissions.recent();
 	}
 	latestByRepository(): Effect.Effect<Map<number, WinGetSubmission>, DomainError> {
-		return this.sql.all(
-			"SELECT document FROM (SELECT document,ROW_NUMBER() OVER (PARTITION BY json_extract(document,'$.plan.repositoryId') ORDER BY json_extract(document,'$.plan.releaseId') DESC) AS position FROM winget_submissions) WHERE position=1",
-		).pipe(
-			Effect.flatMap(rows => this.documents(rows)),
+		return this.submissions.latestPerRepository().pipe(
 			Effect.map(submissions => new Map(submissions.map(submission => [submission.plan.repositoryId, submission]))),
 		);
 	}
 	get(id: string): Effect.Effect<WinGetSubmission | undefined, DomainError> {
-		return this.sql.first('SELECT document FROM winget_submissions WHERE id=?', id).pipe(
-			Effect.flatMap(row =>
-				fromSync(() => {
-					const parsed = decodeSync(Schema.NullOr(documentRow), row);
-					return parsed ? parseSubmission(parsed.document) : undefined;
-				})
-			),
-		);
-	}
-	private save(value: WinGetSubmission, lease: string): Effect.Effect<void, DomainError> {
-		return this.sql.run(
-			'UPDATE winget_submissions SET document=?,updated_at=? WHERE id=? AND lease=?',
-			JSON.stringify(value),
-			value.updatedAt,
-			value.plan.id,
-			lease,
-		).pipe(Effect.asVoid);
+		return this.submissions.get(id);
 	}
 	private replaceFailedPlan(
 		saved: WinGetSubmission,
@@ -306,8 +228,7 @@ export class WinGetService {
 				return yield* precondition('The previous plan is already submitted or in progress; it cannot be replaced');
 			}
 			const { token, fork } = yield* self.verifiedFork('Cannot verify the previous submission fork');
-			const old = saved.plan;
-			const branch = `winget/${old.packageIdentifier}/${old.version}/${old.digest.slice(0, 16)}`;
+			const branch = submissionBranch(saved.plan);
 			const pulls = yield* self.gateway.read(
 				mutableArray(Schema.Unknown),
 				`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(`${fork.split('/')[0]}:${branch}`)}&per_page=100`,
@@ -319,17 +240,8 @@ export class WinGetService {
 					'The previous plan has a branch or pull request; inspect it before changing the submission',
 				);
 			}
-			const updated = yield* self.sql.run(
-				'UPDATE winget_submissions SET package=?,version=?,document=?,updated_at=? WHERE id=? AND lease=? AND lease_until>?',
-				pending.plan.packageIdentifier,
-				pending.plan.version,
-				JSON.stringify(pending),
-				pending.updatedAt,
-				pending.plan.id,
-				lease,
-				clock.currentTimeMillisUnsafe(),
-			);
-			if (!updated.meta.changes) return yield* precondition('Submission lease expired; preview again');
+			const updated = yield* self.submissions.replace(pending, lease, clock.currentTimeMillisUnsafe());
+			if (!updated) return yield* precondition('Submission lease expired; preview again');
 		});
 	}
 	submit(
@@ -345,26 +257,18 @@ export class WinGetService {
 			const plan = yield* self.plan(repo, releaseId);
 			if (plan.digest !== expectedDigest) return yield* precondition('Release or configuration changed; preview again');
 			const pending: WinGetSubmission = { plan, state: 'pending', updatedAt: clock.currentTimeMillisUnsafe() };
-			yield* self.sql.run(
-				'INSERT OR IGNORE INTO winget_submissions(id,package,version,document,updated_at) VALUES(?,?,?,?,?)',
-				plan.id,
-				plan.packageIdentifier,
-				plan.version,
-				JSON.stringify(pending),
-				pending.updatedAt,
-			);
+			yield* self.submissions.insert(pending);
 			if (!(yield* self.get(plan.id))) {
 				return yield* precondition('This package version already has a different submission; inspect its existing PR');
 			}
 			const lease = crypto.randomUUID();
-			const locked = yield* self.sql.run(
-				'UPDATE winget_submissions SET lease=?,lease_until=? WHERE id=? AND lease_until<?',
+			const locked = yield* self.submissions.lock(
+				plan.id,
 				lease,
 				clock.currentTimeMillisUnsafe() + 600_000,
-				plan.id,
 				clock.currentTimeMillisUnsafe(),
 			);
-			if (!locked.meta.changes) return yield* precondition('Submission is already in progress; refresh shortly');
+			if (!locked) return yield* precondition('Submission is already in progress; refresh shortly');
 			let attempted: WinGetSubmission | undefined;
 			return yield* Effect.gen(function*() {
 				// Re-read under the lease so a concurrent completed attempt cannot be overwritten.
@@ -380,7 +284,7 @@ export class WinGetService {
 					'Configured repository must be a fork of microsoft/winget-pkgs',
 				);
 				const baseBranch = (yield* self.gateway.read(upstreamRepository, `/repos/${upstream}`, token)).default_branch;
-				const branch = `winget/${plan.packageIdentifier}/${plan.version}/${plan.digest.slice(0, 16)}`;
+				const branch = submissionBranch(plan);
 				const head = `${fork.split('/')[0]}:${branch}`;
 				const pulls = yield* self.gateway.read(
 					mutableArray(winGetPull),
@@ -464,17 +368,17 @@ export class WinGetService {
 				}
 				const result = self.pullState(plan, pull, clock.currentTimeMillisUnsafe());
 				attempted = result;
-				yield* self.save(result, lease).pipe(
+				yield* self.submissions.save(result, lease).pipe(
 					logRecovered('winget.save-failed', { submissionId: plan.id, url: result.url }),
 				);
-				yield* self.store.audit('winget', 'winget.submit', result.url ?? plan.id).pipe(
+				yield* self.audit.record('winget', 'winget.submit', result.url ?? plan.id).pipe(
 					logRecovered('winget.audit-failed', { submissionId: plan.id }),
 				);
 				return result;
 			}).pipe(
 				Effect.tapError(error =>
 					attempted
-						? self.save({
+						? self.submissions.save({
 							...attempted,
 							state: 'failed',
 							reason: decodeError(error),
@@ -482,11 +386,7 @@ export class WinGetService {
 						}, lease)
 						: Effect.void
 				),
-				Effect.ensuring(
-					self.sql.run('UPDATE winget_submissions SET lease_until=0 WHERE id=? AND lease=?', plan.id, lease).pipe(
-						Effect.ignore,
-					),
-				),
+				Effect.ensuring(self.submissions.unlock(plan.id, lease).pipe(Effect.ignore)),
 			);
 		});
 	}
@@ -501,14 +401,7 @@ export class WinGetService {
 		};
 	}
 	private openSubmissions(after: string | null): Effect.Effect<{ id: string; document: string }[], DomainError> {
-		return Effect.clockWith(clock => {
-			return this.sql.all(
-				"SELECT id,document FROM winget_submissions WHERE json_extract(document,'$.state') IN ('open','pending') AND lease_until<? AND (? IS NULL OR id>?) ORDER BY id LIMIT 100",
-				clock.currentTimeMillisUnsafe(),
-				after,
-				after,
-			).pipe(Effect.flatMap(rows => parse(mutableArray(submissionRow), rows)));
-		});
+		return Effect.clockWith(clock => this.submissions.open(after, clock.currentTimeMillisUnsafe()));
 	}
 	private reconcileOne(saved: WinGetSubmission): Effect.Effect<void, DomainError> {
 		const self = this;
@@ -520,7 +413,7 @@ export class WinGetService {
 			if (!saved.number) {
 				const fork = yield* Effect.fromResult(text(self.env.WINGET_FORK));
 				const plan = saved.plan;
-				const branch = `winget/${plan.packageIdentifier}/${plan.version}/${plan.digest.slice(0, 16)}`;
+				const branch = submissionBranch(plan);
 				const head = `${fork.split('/')[0]}:${branch}`;
 				const pulls = yield* self.gateway.read(
 					mutableArray(winGetPull),
@@ -530,11 +423,9 @@ export class WinGetService {
 				if (pulls.length > 1) return yield* precondition('Multiple matching WinGet pull requests');
 				const recovered = pulls[0];
 				if (!recovered) return;
-				yield* self.sql.run(
-					'UPDATE winget_submissions SET document=?,updated_at=? WHERE id=? AND lease_until<?',
-					JSON.stringify(self.pullState(plan, recovered, clock.currentTimeMillisUnsafe())),
+				yield* self.submissions.settle(
+					self.pullState(plan, recovered, clock.currentTimeMillisUnsafe()),
 					clock.currentTimeMillisUnsafe(),
-					plan.id,
 					clock.currentTimeMillisUnsafe(),
 				);
 				return;
@@ -579,13 +470,7 @@ export class WinGetService {
 					: runs.length || statuses.state === 'success' && Number(statuses.total_count) > 0
 					? 'passed'
 					: 'pending';
-			yield* self.sql.run(
-				'UPDATE winget_submissions SET document=?,updated_at=? WHERE id=? AND lease_until<?',
-				JSON.stringify(next),
-				next.updatedAt,
-				saved.plan.id,
-				clock.currentTimeMillisUnsafe(),
-			);
+			yield* self.submissions.settle(next, next.updatedAt, clock.currentTimeMillisUnsafe());
 		});
 	}
 	reconcile(): Effect.Effect<void, DomainError> {
@@ -606,15 +491,11 @@ export class WinGetService {
 		});
 	}
 	watch(repo: RepositoryRecord): Effect.Effect<void, DomainError> {
-		return Effect.clockWith(clock => {
-			return (repo.configuration?.winget?.automatic
-				? this.sql.run(
-					'INSERT OR IGNORE INTO winget_watches(repository_id,since) VALUES(?,?)',
-					repo.id,
-					clock.currentTimeMillisUnsafe(),
-				)
-				: this.sql.run('DELETE FROM winget_watches WHERE repository_id=?', repo.id)).pipe(Effect.asVoid);
-		});
+		return Effect.clockWith(clock =>
+			repo.configuration?.winget?.automatic
+				? this.submissions.watch(repo.id, clock.currentTimeMillisUnsafe())
+				: this.submissions.unwatch(repo.id)
+		);
 	}
 	automatic(repo: RepositoryRecord): Effect.Effect<void, DomainError> {
 		const self = this;
@@ -623,18 +504,15 @@ export class WinGetService {
 				readiness(repo).kind !== 'ready' || !repo.configuration?.winget?.automatic || !self.setup()
 			) return;
 			yield* self.watch(repo);
-			const watch = yield* parse(
-				Schema.NullOr(mutableStruct({ since: Schema.Finite })),
-				yield* self.sql.first('SELECT since FROM winget_watches WHERE repository_id=?', repo.id),
-			);
+			const since = yield* self.submissions.watchedSince(repo.id);
 			for (const release of yield* self.releases(repo)) {
-				if (!watch || release.publishedAt <= watch.since) continue;
+				if (since === undefined || release.publishedAt <= since) continue;
 				// Enabling automation must not submit historical releases without review.
 				const existing = yield* self.get(`${repo.id}:${release.id}`);
 				if (!existing || existing.state === 'failed' || existing.state === 'pending') {
 					yield* self.plan(repo, release.id).pipe(
 						Effect.flatMap(plan => self.submit(repo, release.id, plan.digest)),
-						self.store.auditFailure('winget', 'winget.failed', repo.name),
+						recover(error => self.audit.record('winget', 'winget.failed', `${repo.name}: ${decodeError(error)}`)),
 					);
 				}
 			}

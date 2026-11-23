@@ -182,8 +182,10 @@
       "dependencies": {
         "@beepboopbot/discovery": "workspace:*",
         "@beepboopbot/domain": "workspace:*",
+        "@beepboopbot/github": "workspace:*",
         "@beepboopbot/host": "workspace:*",
         "@beepboopbot/kernel": "workspace:*",
+        "@beepboopbot/persistence": "workspace:*",
         "@kjanat/dreamcli": "^5.4.0",
         "effect": "^4.1.2",
         "remark": "15.0.1",
