@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
+import { deploymentJobs, deploys } from '@/automation/deployment-jobs';
 import type { DistributionFile } from '@/automation/distribution';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
 import type { DistributionArtifact } from '@/automation/distribution-artifact';
@@ -212,6 +213,7 @@ const dependencyPoll = 30_000;
 const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
 const metadataReason = 'Fix the package metadata before this release: ';
+const passingConclusions = ['success', 'neutral', 'skipped'];
 function missingReceipt(execution: Execution, record: LedgerRecord): boolean {
 	return released(record)
 		&& !execution.publications.some(publication =>
@@ -2691,6 +2693,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					`${id}:${commit}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}`,
 				);
 				const next: Execution = { ...execution, state: 'ready', approvedAt: clock.currentTimeMillisUnsafe() };
+				delete next.reason;
 				yield* this.supersedeVersion(next);
 				yield* this.put(next);
 				return next;
@@ -3017,14 +3020,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				),
 			);
 			const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
+			const pathOf = (run: (typeof runs)[number]) =>
+				paths.get(/\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1] ?? '');
+			const settled = (run: (typeof runs)[number]) =>
+				run.status === 'completed' && passingConclusions.includes(String(run.conclusion));
+			const deploying = new Map<string, string[]>();
+			for (const path of new Set(runs.filter(run => !settled(run)).flatMap(run => pathOf(run) ?? []))) {
+				const source = yield* gateway.file(execution.repository, path, execution.sourceSha, token);
+				deploying.set(path, source === null ? [] : deploymentJobs(source));
+			}
 			const gating = runs.filter(run => {
-				const runId = /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
-				return !(runId && releaseFiles.has(paths.get(runId) ?? ''));
+				const path = pathOf(run);
+				return !(path && (releaseFiles.has(path) || deploys(String(run.name), deploying.get(path) ?? [])));
 			});
 			if (!gating.length) pending.push('No checks have run on this commit');
 			for (const run of gating) {
 				if (run.status !== 'completed') pending.push(`${String(run.name)} is still running`);
-				else if (!['success', 'neutral', 'skipped'].includes(String(run.conclusion))) {
+				else if (!settled(run)) {
 					problems.push(`${String(run.name)} ${String(run.conclusion)}`);
 				}
 			}
