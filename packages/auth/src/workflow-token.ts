@@ -23,6 +23,24 @@ export interface TokenIssuer {
 
 const publishWorkflow = '.github/workflows/publish-actions.yml';
 
+export const publishCode = [
+	'bun.lock',
+	'bunfig.toml',
+	'mise.toml',
+	'package.json',
+	'tsconfig.json',
+	'packages/actions',
+	'packages/discovery',
+	'packages/domain',
+	'packages/github',
+	'packages/host',
+	'packages/kernel',
+	'packages/publication',
+	'src/contract/http.ts',
+	'src/tooling/actions',
+	'src/tooling/runtime.ts',
+] as const;
+
 function objects(value: unknown): Record<string, unknown>[] {
 	const items = Result.getOrElse(array(value), () => [value]);
 	return items.flatMap(item => Result.match(record(item), { onFailure: () => [], onSuccess: found => [found] }));
@@ -51,17 +69,17 @@ function localUses(source: string): Option.Option<string[]> {
 const definitionPaths = Effect.fnUntraced(function*(
 	files: RevisionFiles,
 ): Effect.fn.Return<Option.Option<ReadonlySet<string>>, DomainError> {
-	const covered = new Set<string>();
+	const covered = new Set<string>(publishCode);
+	if (publishCode.some(path => !files.entries.has(path))) return Option.none();
 	const pending = [publishWorkflow];
+	const isFile = (path: string) => /^1[02]0\d{3} /.test(files.entries.get(path) ?? '');
 	for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
 		if (covered.has(path)) continue;
 		covered.add(path);
 		if (![...files.entries.keys()].some(file => within(path, file))) return Option.none();
-		const manifests = files.entries.has(path)
+		const manifests = isFile(path)
 			? [path]
-			: [`${path ? `${path}/` : ''}action.yml`, `${path ? `${path}/` : ''}action.yaml`].filter(manifest =>
-				files.entries.has(manifest)
-			);
+			: [`${path ? `${path}/` : ''}action.yml`, `${path ? `${path}/` : ''}action.yaml`].filter(isFile);
 		for (const manifest of manifests) {
 			const source = yield* files.read(manifest);
 			const uses = source === null ? Option.none<string[]>() : localUses(source);
@@ -73,8 +91,12 @@ const definitionPaths = Effect.fnUntraced(function*(
 });
 
 function definition(files: RevisionFiles, paths: ReadonlySet<string>): string {
-	const inside = (file: string) => [...paths].some(path => within(path, file));
-	return JSON.stringify([...files.entries].filter(([file]) => inside(file)).sort(([a], [b]) => a.localeCompare(b)));
+	return JSON.stringify(
+		[...paths].sort().map(path =>
+			files.entries.get(path)
+				?? [...files.entries].filter(([file]) => within(path, file)).sort(([a], [b]) => a.localeCompare(b))
+		),
+	);
 }
 
 const sameDefinition = Effect.fnUntraced(function*(

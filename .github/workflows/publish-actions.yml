@@ -35,14 +35,22 @@ jobs:
         if: steps.bot.outcome != 'success'
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISH_CODE: >-
+            .github bun.lock bunfig.toml mise.toml package.json tsconfig.json packages/actions packages/discovery
+            packages/domain packages/github packages/host packages/kernel packages/publication src/contract/http.ts
+            src/tooling/actions src/tooling/runtime.ts
         run: |
           head=$(gh api "repos/${GITHUB_REPOSITORY}/branches/${GITHUB_REF_NAME}" --jq .commit.sha)
           changed=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${head}" --paginate --jq '.files[].filename')
-          if grep --quiet '^\.github/' <<< "${changed}"; then
-            echo "Superseded: \`.github/\` changed at \`${head}\`." >> "${GITHUB_STEP_SUMMARY}"
-            exit 0
-          fi
-          echo "::error::Authentication failed although .github/ at ${GITHUB_SHA} matches ${GITHUB_REF_NAME}"
+          while IFS= read -r file; do
+            for path in ${PUBLISH_CODE}; do
+              if [[ "${file}" == "${path}" || "${file}" == "${path}/"* ]]; then
+                echo "Superseded: \`${file}\` changed at \`${head}\`." >> "${GITHUB_STEP_SUMMARY}"
+                exit 0
+              fi
+            done
+          done <<< "${changed}"
+          echo "::error::Authentication failed although the publish code at ${GITHUB_SHA} matches ${GITHUB_REF_NAME}"
           exit 1
       - name: Checkout source
         if: steps.bot.outcome == 'success'

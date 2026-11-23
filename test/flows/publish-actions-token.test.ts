@@ -1,21 +1,25 @@
 import { expect, test } from 'bun:test';
+import { join, relative } from 'node:path';
 import type { Repository } from '@root/test/support/github.ts';
 import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
+import { parse } from 'yaml';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import type { TokenIssuer } from '@/auth/workflow-token.ts';
-import { issueWorkflowToken } from '@/auth/workflow-token.ts';
+import { issueWorkflowToken, publishCode } from '@/auth/workflow-token.ts';
 import { revisionFiles } from '@/github/contents.ts';
 import type { GitHubRequests } from '@/github/transport.ts';
 import { decode } from '@/kernel/schema/result.ts';
+import { entrypoints } from '@/tooling/actions/runtime-bundle';
 
 let world: World;
 eachWorld(created => {
 	world = created;
 });
 
+const root = join(import.meta.dir, '../..');
 const workflow = [
 	'name: Verify and publish Actions',
 	'on: { push: { branches: [main] } }',
@@ -32,9 +36,13 @@ const workflow = [
 ].join('\n');
 const token = 'runs:\n  using: composite\n  steps:\n    - uses: $/actions/deps/bun\n';
 const bun = 'runs:\n  using: composite\n  steps: []\n';
+const code = Object.fromEntries(
+	publishCode.map(path => /\.\w+$/.test(path) ? [path, `${path}\n`] : [`${path}/index.ts`, `export {};\n`]),
+);
 
 function publishable(repository: Repository): string {
 	return world.github.push(repository, {
+		...code,
 		'.github/workflows/publish-actions.yml': workflow,
 		'actions/token/action.yml': token,
 		'actions/deps/bun/action.yml': bun,
@@ -54,11 +62,30 @@ async function publicationToken(repository: Repository, sha: string): Promise<nu
 }
 
 const run = 'a'.repeat(40), head = 'b'.repeat(40);
+type Files = Record<string, readonly [string, string]>;
 
-function issuedFor(
-	trees: Record<string, Record<string, readonly [string, string]>>,
-	truncated = false,
-): Promise<boolean> {
+function listing(files: Files) {
+	const blobs = Object.entries(files).map(([path, [mode, text]]) => ({
+		path,
+		type: 'blob',
+		mode,
+		sha: String(Bun.hash(`${mode} ${text}`)),
+	}));
+	const directories = new Set(
+		blobs.flatMap(({ path }) =>
+			path.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'))
+		),
+	);
+	const trees = [...directories].map(directory => ({
+		path: directory,
+		type: 'tree',
+		mode: '040000',
+		sha: String(Bun.hash(JSON.stringify(blobs.filter(({ path }) => path.startsWith(`${directory}/`))))),
+	}));
+	return [...blobs, ...trees];
+}
+
+function issuedFor(trees: Record<string, Files>, truncated = false): Promise<boolean> {
 	const identity: RunIdentity = {
 		repositoryId: 41,
 		repository: 'octo/widget',
@@ -78,21 +105,9 @@ function issuedFor(
 		revisionFiles: (name, _id, sha) => {
 			const files = trees[sha] ?? {};
 			const response = (path: string): unknown => {
+				if (!path.includes('/contents/')) return { truncated, tree: listing(files) };
 				const content = files[decodeURIComponent(path.split('/contents/')[1]?.split('?')[0] ?? '')]?.[1];
-				if (path.includes('/contents/')) {
-					return content === undefined
-						? null
-						: { encoding: 'base64', content: btoa(content), size: content.length };
-				}
-				return {
-					truncated,
-					tree: Object.entries(files).map(([file, [mode, text]]) => ({
-						path: file,
-						type: 'blob',
-						mode,
-						sha: String(Bun.hash(text)),
-					})),
-				};
+				return content === undefined ? null : { encoding: 'base64', content: btoa(content), size: content.length };
 			};
 			const github: GitHubRequests = {
 				call: path => Effect.succeed(response(path)),
@@ -104,27 +119,20 @@ function issuedFor(
 		workflowRun: () => Effect.succeed({ title: '', path: '' }),
 	};
 	const log = { audit: () => Effect.void, execution: () => Effect.undefined };
-	return Effect.runPromise(
-		issueWorkflowToken(
-			identity,
-			{
-				purpose: 'publish-actions',
-				permissions: { contents: 'write', workflows: 'write' },
-			},
-			7,
-			issuer,
-			log,
-		).pipe(Effect.isSuccess),
-	);
+	const body = { purpose: 'publish-actions', permissions: { contents: 'write', workflows: 'write' } };
+	return Effect.runPromise(issueWorkflowToken(identity, body, 7, issuer, log).pipe(Effect.isSuccess));
 }
 
 function file(content: string, mode = '100644'): readonly [string, string] {
 	return [mode, content];
 }
 
+const codeFiles: Files = Object.fromEntries(Object.entries(code).map(([path, text]) => [path, file(text)]));
+
 test('the publication token compares modes and refuses local uses it cannot resolve', async () => {
 	const script = { 'actions/deps/bun/action.yml': file(bun), 'actions/deps/bun/setup.sh': file('echo\n') };
-	const at = (uses: string, extra: Record<string, readonly [string, string]> = script) => ({
+	const at = (uses: string, extra: Files = script): Files => ({
+		...codeFiles,
 		'.github/workflows/publish-actions.yml': file(`jobs:\n  publish:\n    steps:\n      - uses: ${uses}\n`),
 		...extra,
 	});
@@ -147,12 +155,18 @@ test('the publication token compares modes and refuses local uses it cannot reso
 			[head]: at('./', { 'action.yml': file(bun), 'README.md': file('two\n') }),
 		}),
 	).toBe(false);
+	const { 'src/tooling/runtime.ts': _, ...withoutRuntime } = at('$/actions/deps/bun');
+	expect(await issuedFor({ [run]: withoutRuntime, [head]: withoutRuntime })).toBe(false);
 });
 
-test('an older run gets the publication token while the workflow and its local actions are unchanged', async () => {
+test('an older run gets the publication token while only code outside the publish job changed', async () => {
 	const repository = widget(world.github);
 	const run = publishable(repository);
-	world.github.push(repository, { 'README.md': '# widget\n\nMoved on.\n' }, 'Edit the readme');
+	world.github.push(repository, {
+		'README.md': '# widget\n\nMoved on.\n',
+		'src/automation/service.ts': 'export {};\n',
+		'packages/persistence/src/index.ts': 'export {};\n',
+	}, 'Change server code');
 	expect(await publicationToken(repository, run)).toBe(200);
 });
 
@@ -177,4 +191,50 @@ test('an older run is refused once the reusable workflow that the publish workfl
 	const run = publishable(repository);
 	world.github.push(repository, { '.github/workflows/ci.yml': 'name: CI\n' }, 'Change the reusable workflow');
 	expect(await publicationToken(repository, run)).toBe(403);
+});
+
+test('an older run is refused once a script that the publish job runs changes', async () => {
+	const repository = widget(world.github);
+	const run = publishable(repository);
+	world.github.push(repository, { 'src/tooling/actions/distribute.ts': 'export {};\n' }, 'Change the distribution');
+	expect(await publicationToken(repository, run)).toBe(403);
+});
+
+test('the publish code covers every module the publish job runs or bundles', async () => {
+	const loaded = new Set<string>();
+	const result = await Bun.build({
+		entrypoints: [
+			'src/tooling/actions/distribute.ts',
+			'src/tooling/actions/release.ts',
+			...entrypoints.map(entry => `packages/actions/src/${entry}.ts`),
+		].map(path => join(root, path)),
+		target: 'bun',
+		tsconfig: join(root, 'tsconfig.json'),
+		plugins: [{
+			name: 'loaded',
+			setup(build) {
+				build.onLoad({ filter: /.*/ }, args => {
+					loaded.add(args.path);
+					return undefined;
+				});
+			},
+		}],
+	});
+	expect(result.success).toBe(true);
+	const local = [...loaded].map(path => relative(root, path)).filter(path => !path.includes('node_modules/'));
+	expect(local.filter(path => !publishCode.some(code => path === code || path.startsWith(`${code}/`)))).toEqual([]);
+	const publishSteps = Schema.Struct({
+		jobs: Schema.Struct({
+			publish: Schema.Struct({
+				steps: Schema.Array(Schema.Struct({
+					env: Schema.optional(Schema.Struct({ PUBLISH_CODE: Schema.optional(Schema.String) })),
+				})),
+			}),
+		}),
+	});
+	const { jobs } = Schema.decodeUnknownSync(publishSteps)(
+		parse(await Bun.file(join(root, '.github/workflows/publish-actions.yml')).text()),
+	);
+	const declared = jobs.publish.steps.flatMap(step => step.env?.PUBLISH_CODE?.split(/\s+/) ?? []);
+	expect(declared).toEqual(['.github', ...publishCode]);
 });

@@ -75,7 +75,7 @@ export function revisionFiles(
 		if (tree.truncated) return yield* precondition('Repository tree truncated');
 		return {
 			entries: new Map(
-				tree.tree.flatMap(entry => entry.type === 'tree' ? [] : [[entry.path, `${entry.mode} ${entry.sha}`] as const]),
+				tree.tree.map(entry => [entry.path, `${entry.mode} ${entry.sha}`] as const),
 			),
 			read: path => readFile(github, name, path, commitSha, token),
 		};
