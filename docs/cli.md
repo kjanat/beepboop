@@ -144,6 +144,7 @@ beepboop runs cancel EXECUTION_ID
 beepboop runs recover EXECUTION_ID
 beepboop runs recover EXECUTION_ID --action retry
 beepboop runs recover EXECUTION_ID --action redispatch
+beepboop runs checks EXECUTION_ID --choice rerun
 beepboop tags backfill --dry-run
 beepboop tags backfill
 ```
@@ -171,6 +172,9 @@ branch for a failed promotion whose version tag already targets its release
 commit, and follows that release to its end. Use it when the fix for the
 failure is in the workflow; a retry would run the old workflow again. See
 [Publish through Beepboop](automation.md#publish-through-beepboop).
+`runs checks` resolves a release that its checks stop: `--choice rerun` reruns
+the failed checks and waits, `skip` releases it without them, and `always`
+switches them off for the stream.
 
 `tags backfill` creates the package tags of released versions for a stream
 with `packageTags`, such as `svg-data-v1.2.3` beside `v1.2.3`. It reads the

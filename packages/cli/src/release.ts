@@ -424,15 +424,20 @@ export function releaseRepository(
 					? `Beepboop commits the version bump to ${repository.defaultBranch}, then publishes once that commit is verified and its checks pass.`
 					: 'Beepboop opens the version PR. Merging it publishes the release, and nothing asks again.',
 			);
-			return yield* followRelease(client, out, {
-				repository: repository.name,
-				repositoryId: repository.id,
-				defaultBranch: repository.defaultBranch,
-				stream: selected,
-				version: summary.version,
-				execution: preparation,
-				bumped: pending,
-			});
+			return yield* followRelease(
+				client,
+				out,
+				{
+					repository: repository.name,
+					repositoryId: repository.id,
+					defaultBranch: repository.defaultBranch,
+					stream: selected,
+					version: summary.version,
+					execution: preparation,
+					bumped: pending,
+				},
+				{ ask, yes: options.yes },
+			);
 		}
 		out.log(
 			stream.prepare.workflow

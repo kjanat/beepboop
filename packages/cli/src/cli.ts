@@ -26,6 +26,7 @@ import {
 import { routes } from '@/contract/routes';
 import { executionStates, executionView as executionViewSchema } from '@/contract/views';
 import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/domain/catalog.ts';
+import { checkChoices } from '@/domain/release-gates.ts';
 import { autoMergeMethods } from '@/domain/setup-terms.ts';
 import {
 	approvalShaPattern,
@@ -36,6 +37,11 @@ import {
 import { looseStruct, safeDecode } from '@/kernel/schema/structs.ts';
 
 const recoveryVerb = { reconcile: 'Reconciling', retry: 'Retrying', redispatch: 'Dispatching' } as const;
+const checkVerb = {
+	rerun: 'Rerunning the checks of',
+	skip: 'Skipping the checks of',
+	always: 'Switching off the checks of',
+} as const;
 const base = (name: string, description: string, promptServer = false) =>
 	command(name).description(description)
 		.flag('verbose', flag.boolean().default(false).describe('Show structured API error details on stderr'))
@@ -300,6 +306,35 @@ const runs = group('runs').description('Follow, publish, cancel and recover rele
 								force: flags.force,
 							}),
 							published => `Publishing ${look.id(published.id)} started`,
+						),
+					);
+				}))
+			),
+	)
+	.command(
+		base('checks', 'Rerun the checks that stop a release, or release without them')
+			.details(
+				'`rerun` reruns the failed jobs of each failing check and waits for them. `skip` releases this release without the checks that stop it. `always` switches those checks off for every later release of the stream.',
+			)
+			.example('beepboop runs checks EXECUTION_ID --choice rerun', 'Rerun the failed checks and wait')
+			.arg('id', arg.string().prompt({ kind: 'input', message: 'Execution ID' }).required())
+			.flag(
+				'choice',
+				flag.enum(checkChoices).prompt({ kind: 'select', message: 'What next?' }).required().describe(
+					'rerun, skip or always',
+				),
+			)
+			.action(({ flags, args, out }) =>
+				Effect.runPromise(Effect.gen(function*() {
+					const client = yield* Client.at(flags.server);
+					const look = lookOf(out);
+					yield* executionView(
+						out,
+						yield* step(
+							out,
+							`${checkVerb[flags.choice]} ${look.id(args.id)}`,
+							client.call(routes.executionsChecks, { id: args.id, choice: flags.choice }),
+							execution => `${look.id(execution.id)} is ${execution.state}`,
 						),
 					);
 				}))

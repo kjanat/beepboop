@@ -24,7 +24,7 @@ import {
 	securityProof,
 	streamGates,
 } from '@/contract/views';
-import { releaseGate } from '@/domain/release-gates.ts';
+import { checkChoices, releaseGate } from '@/domain/release-gates.ts';
 import { versionPrMerge } from '@/domain/setup-terms.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { shaSchema as sha, textSchema as text } from '@/kernel/schema/result.ts';
@@ -343,6 +343,14 @@ export const routes = {
 			...executionRef.fields,
 			...{ action: Schema.Literals(['retry', 'reconcile', 'redispatch']) },
 		}),
+		response: executionView,
+	}),
+	executionsChecks: route({
+		method: 'POST',
+		path: '/api/executions/checks',
+		auth: 'admin',
+		idempotent: false,
+		request: mutableStruct({ ...executionRef.fields, choice: Schema.Literals(checkChoices) }),
 		response: executionView,
 	}),
 	cliSessionsRevoke: route({

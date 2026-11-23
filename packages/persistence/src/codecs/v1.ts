@@ -21,6 +21,7 @@ import type { DiscoveredWorkflow, Edit, Package, RepositoryRecord } from '@/doma
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { publicationSchema } from '@/domain/package-publication.ts';
 import type { RefPlan } from '@/domain/refs.ts';
+import { gateSkip } from '@/domain/release-gates.ts';
 import { startChannel } from '@/domain/release-start.ts';
 import { autoMergeMethods, versionPrMerge } from '@/domain/setup-terms.ts';
 import { diagnostic, isDiagnosticCode } from '@/kernel/errors/diagnostics.ts';
@@ -348,6 +349,8 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	started: Schema.optional(
 		mutableStruct({ via: startChannel, actor: Schema.String, force: Schema.optional(Schema.Literal(true)) }),
 	),
+	skippedGates: Schema.optional(mutableArray(gateSkip)),
+	reruns: Schema.optional(mutableArray(mutableStruct({ id: Schema.Finite, attempt: Schema.Finite }))),
 	versionPrMerge: Schema.optional(versionPrMerge),
 	approvedAt: Schema.optional(Schema.Finite),
 	publications: mutableArray(packagePublication),

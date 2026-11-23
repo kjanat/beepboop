@@ -6,6 +6,7 @@ import type { Configuration, WorkflowBinding } from '@/domain/configuration/sche
 import type { GitHubRunState } from '@/domain/github-run-state.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
 import type { ModuleTag, RefPlan, RefState } from '@/domain/refs.ts';
+import type { GateSkip } from '@/domain/release-gates.ts';
 import type { StartChannel } from '@/domain/release-start.ts';
 import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
 import type { PackageIdentity } from '@/package-url';
@@ -152,6 +153,8 @@ export interface Execution {
 	dispatchedAt?: number;
 	approvedBy?: 'merge' | 'start';
 	started?: ReleaseStarted;
+	skippedGates?: GateSkip[];
+	reruns?: { id: number; attempt: number }[];
 	versionPrMerge?: VersionPrMerge;
 	approvedAt?: number;
 	publications: Publication[];

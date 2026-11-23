@@ -69,6 +69,15 @@ export const executionEndpoints = {
 				),
 			),
 	),
+	executionsChecks: admin(
+		routes.executionsChecks,
+		(input, { service, actor }) =>
+			execution(service, input.id, input.repositoryId).pipe(
+				Effect.flatMap(found =>
+					fromPromise(() => service.coordinator(found.repositoryId).resolveChecks(found.id, input.choice, actor))
+				),
+			),
+	),
 	executionsRecover: admin(
 		routes.executionsRecover,
 		(input, { service, actor }) =>
