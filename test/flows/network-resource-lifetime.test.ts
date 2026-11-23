@@ -31,7 +31,7 @@ test('missing GitHub files and registry lookups release unused bodies', async ()
 	let cancellations = 0;
 	const request: Fetcher = async () => openResponse(404, () => cancellations++);
 	expect(await Effect.runPromise(gitHubRequest(request, '/repos/o/r/contents/missing', ''))).toBeNull();
-	expect((await Effect.runPromise(npmLatest('widget', request))).kind).toBe('missing');
+	expect((await Effect.runPromise(npmLatest('widget', request)))._tag).toBe('Missing');
 	expect(cancellations).toBe(2);
 });
 

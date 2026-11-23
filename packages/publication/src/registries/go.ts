@@ -55,7 +55,7 @@ export const goManager: Adapter<'go'> = {
 		return Effect.all([lookup(pkg.name), split?.suffix ? lookup(split.prefix) : Effect.undefined], {
 			concurrency: ioConcurrency,
 		}).pipe(Effect.map(([current, previous]) =>
-			previous?.kind === 'published' && split
+			previous?._tag === 'Published' && split
 				? { ...current, previousModule: { name: split.prefix, version: previous.version } }
 				: current
 		));

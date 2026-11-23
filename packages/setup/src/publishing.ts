@@ -84,9 +84,9 @@ export function checkPublishing(
 			for (const id of ids) {
 				const pkg = packages.get(id), version = versions.get(id);
 				if (!pkg || !version) continue;
-				if (version.kind === 'published') {
+				if (version._tag === 'Published') {
 					add(pkg.name, 'passed', `crates.io contains ${pkg.name} (latest ${version.version}).`);
-				} else if (version.kind === 'missing') {
+				} else if (version._tag === 'Missing') {
 					add(
 						pkg.name,
 						'action-required',
@@ -177,7 +177,7 @@ export function checkPublishing(
 						Object.entries(object(env)).filter(([key]) => /^CARGO_REGISTR(?:Y_TOKEN|IES_CRATES_IO_TOKEN)$/.test(key))
 							.map(([, value]) => value)
 					);
-					const published = selected.filter(id => versions.get(id)?.kind === 'published');
+					const published = selected.filter(id => versions.get(id)?._tag === 'Published');
 					if (!published.length) return;
 					const token = yield* access.cargoToken(
 						file,

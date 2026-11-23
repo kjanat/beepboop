@@ -16,6 +16,7 @@ import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { checkChannel } from '@/publication/registries/channels.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
+import { publicationStatus, VerificationOutcome } from '@/publication/registries/outcome.ts';
 
 export interface Manager extends Discoverer {
 	verifyPublication?(
@@ -23,7 +24,7 @@ export interface Manager extends Discoverer {
 		request: Fetcher,
 		context?: VerificationContext,
 	): Effect.Effect<Publication>;
-	latest?(pkg: Package, request: Fetcher, context?: VerificationContext): Effect.Effect<RegistryVersion>;
+	latest?(pkg: Package, request: Fetcher, context?: VerificationContext): Effect.Effect<VerificationOutcome>;
 	secondaryLatest?: Partial<Record<ManagerDestinationId, RegistryLookup>>;
 	secondaryPublication?: Partial<Record<ManagerDestinationId, PublicationCheck>>;
 }
@@ -33,14 +34,7 @@ export type RegistryLookup = (
 	pkg: Package,
 	request: Fetcher,
 	context?: VerificationContext,
-) => Effect.Effect<RegistryVersion>;
-export type RegistryVersion =
-	& (
-		| { kind: 'published'; version: string }
-		| { kind: 'missing'; url: string }
-		| { kind: 'failed'; url: string; reason: string }
-	)
-	& { previousModule?: { name: string; version: string } };
+) => Effect.Effect<VerificationOutcome>;
 export type Adapters = { readonly [M in ManagerName]: Adapter<M> };
 export class ManagerRegistry extends DiscoveryRegistry {
 	private readonly managers: ReadonlyMap<ManagerName, Manager>;
@@ -120,7 +114,7 @@ export class ManagerRegistry extends DiscoveryRegistry {
 						pkg.destinations = pkg.destinations?.map(outcome =>
 							outcome.destination === destination ? registryOutcome(destination, result) : outcome
 						);
-						if (result.kind === 'failed') {
+						if (result._tag === 'LookupFailed') {
 							diagnostics.push({
 								code: 'lookup-failed',
 								severity: 'warning',
@@ -129,9 +123,9 @@ export class ManagerRegistry extends DiscoveryRegistry {
 							});
 						}
 						if (destination !== primary) continue;
-						pkg.publicationStatus = result.kind;
+						pkg.publicationStatus = publicationStatus(result);
 						if (result.previousModule) pkg.previousModule = result.previousModule;
-						if (result.kind === 'published') pkg.published = result.version;
+						if (result._tag === 'Published') pkg.published = result.version;
 					}
 				})
 			));
@@ -160,10 +154,12 @@ export class ManagerRegistry extends DiscoveryRegistry {
 function unchecked<T extends object>(target: T): T & { state: 'unchecked' } {
 	return { ...target, state: 'unchecked' };
 }
-function registryOutcome(destination: ManagerDestinationId, result: RegistryVersion): RegistryOutcome {
-	if (result.kind === 'published') return { destination, state: 'published', version: result.version };
-	if (result.kind === 'failed') return { destination, state: 'failed', reason: result.reason };
-	return { destination, state: 'missing' };
+function registryOutcome(destination: ManagerDestinationId, result: VerificationOutcome): RegistryOutcome {
+	return VerificationOutcome.$match(result, {
+		Published: ({ version }): RegistryOutcome => ({ destination, state: 'published', version }),
+		Missing: (): RegistryOutcome => ({ destination, state: 'missing' }),
+		LookupFailed: ({ reason }): RegistryOutcome => ({ destination, state: 'failed', reason }),
+	});
 }
 
 export class Registry extends Context.Service<Registry, {

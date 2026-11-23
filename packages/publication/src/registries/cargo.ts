@@ -77,7 +77,7 @@ export const cargoManager = {
 			},
 		).pipe(
 			Effect.filterOrElse(
-				found => found.kind !== 'failed',
+				found => found._tag !== 'LookupFailed',
 				() => latestText(request, crateIndexUrl(pkg.name), indexLatest),
 			),
 		);

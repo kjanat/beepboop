@@ -6,12 +6,15 @@ import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
 import { responseBytes, responseJson, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
-import type { Adapter, RegistryVersion } from '@/publication/registries/registry.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
+import type { Adapter } from '@/publication/registries/registry.ts';
 import { latestVersion, publicationResult, unconfirmed, unpublished } from '@/publication/registries/verification.ts';
 
-export function jsrLatest(name: string, request: Fetcher): Effect.Effect<RegistryVersion> {
+export function jsrLatest(name: string, request: Fetcher): Effect.Effect<VerificationOutcome> {
 	if (!jsrPackageNamePattern.test(name)) {
-		return Effect.succeed({ kind: 'failed', url: 'https://jsr.io', reason: 'Invalid JSR package name' });
+		return Effect.succeed(
+			VerificationOutcome.LookupFailed({ url: 'https://jsr.io', reason: 'Invalid JSR package name' }),
+		);
 	}
 	return latestVersion(request, `https://jsr.io/${name}/meta.json`, body => {
 		const metadata = object(body);

@@ -28,6 +28,7 @@ import { generateManifest, scoopConfiguration } from '@/publication/distribution
 import { generateManifests, wingetConfiguration } from '@/publication/distribution/winget/generate.ts';
 import { managerRegistry } from '@/publication/registries/builtins.ts';
 import { cargoManager, crateIndexUrl } from '@/publication/registries/cargo.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import { verifyPublication } from '@/publication/registries/verify.ts';
 import { ToolFailure } from '@/tooling/runtime';
 
@@ -497,15 +498,14 @@ test('a crate whose latest version the crates.io API cannot answer is read from 
 	const line = (vers: string, yanked = false) =>
 		JSON.stringify({ name: 'svg-data', vers, cksum: 'a'.repeat(64), yanked });
 	expect(await latest([line('0.3.0'), line('0.4.0'), line('0.5.0-rc.1'), line('0.4.1', true)].join('\n')))
-		.toEqual({ kind: 'published', version: '0.4.0' });
+		.toEqual(VerificationOutcome.Published({ version: '0.4.0' }));
 	expect(await latest([line('1.1.0'), line('1.2.0+vendor-build')].join('\n')))
-		.toEqual({ kind: 'published', version: '1.2.0+vendor-build' });
-	expect(await latest(null)).toEqual({ kind: 'missing', url: 'https://index.crates.io/sv/g-/svg-data' });
-	expect(await latest('{"name"')).toEqual({
-		kind: 'failed',
+		.toEqual(VerificationOutcome.Published({ version: '1.2.0+vendor-build' }));
+	expect(await latest(null)).toEqual(VerificationOutcome.Missing({ url: 'https://index.crates.io/sv/g-/svg-data' }));
+	expect(await latest('{"name"')).toEqual(VerificationOutcome.LookupFailed({
 		url: 'https://index.crates.io/sv/g-/svg-data',
 		reason: 'invalid registry response',
-	});
+	}));
 });
 
 test('the catalog marks a manager verifiable exactly when its adapter verifies publications', () => {

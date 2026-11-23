@@ -30,6 +30,7 @@ import { AuditStore } from '@/persistence/d1/audit';
 import type { Sql } from '@/persistence/d1/database';
 import { Database } from '@/persistence/d1/database';
 import { https } from '@/publication/distribution/assets.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import { latestVersion, registryRequest } from '@/publication/registries/verification.ts';
 import { capture } from '@/tooling/runtime';
 import { readBody } from '@/webhook';
@@ -103,7 +104,7 @@ test('registry decoder defects remain observable instead of becoming outages', a
 		'https://registry.test/package',
 		() => '1.0.0',
 	));
-	expect(outage.kind).toBe('failed');
+	expect(outage._tag).toBe('LookupFailed');
 });
 
 test('registry lookup diagnostics distinguish transport, timeout and invalid responses without exposing error details', async () => {
@@ -131,14 +132,16 @@ test('registry lookup diagnostics distinguish transport, timeout and invalid res
 		},
 	];
 	for (const { request, reason } of attempts) {
-		expect(await Effect.runPromise(latestVersion(request, url, decode))).toEqual({ kind: 'failed', url, reason });
+		expect(await Effect.runPromise(latestVersion(request, url, decode))).toEqual(
+			VerificationOutcome.LookupFailed({ url, reason }),
+		);
 	}
 	for (const status of [403, 429, 503]) {
 		expect(await Effect.runPromise(latestVersion(() => Promise.resolve(new Response('', { status })), url, decode)))
-			.toEqual({ kind: 'failed', url, reason: `HTTP ${status}` });
+			.toEqual(VerificationOutcome.LookupFailed({ url, reason: `HTTP ${status}` }));
 	}
 	expect(await Effect.runPromise(latestVersion(() => Promise.resolve(new Response('', { status: 404 })), url, decode)))
-		.toEqual({ kind: 'missing', url });
+		.toEqual(VerificationOutcome.Missing({ url }));
 });
 
 test('malformed successful API responses are typed failures', async () => {
