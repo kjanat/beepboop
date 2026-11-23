@@ -46,7 +46,6 @@ import {
 	pythonMissing,
 	requireAll,
 } from '@/actions/publish.ts';
-import { publishMinutes } from '@/automation/setup-workflows';
 import type { Execution } from '@/automation/types';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -63,6 +62,7 @@ import {
 } from '@/kernel/schema/structs.ts';
 import { publishWaitMinutes } from '@/publication/contract.ts';
 import { ledgerSchema } from '@/publication/ledger.ts';
+import { publishMinutes } from '@/setup/workflows/integrate.ts';
 
 let world: World;
 let target = '';

@@ -2,7 +2,7 @@ import { beforeEach, expect, test } from 'bun:test';
 import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { eachDirectory } from '@root/test/support/directories.ts';
-import { cratePublishCommands } from '@/automation/setup-defaults';
+import { cratePublishCommands } from '@/setup/defaults.ts';
 
 let stub = '';
 eachDirectory('crate-publish-', created => {

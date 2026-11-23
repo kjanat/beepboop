@@ -4,11 +4,11 @@ import { botId, ownerId } from '@root/test/support/github.ts';
 import type { Api, Reply } from '@root/test/support/http.ts';
 import type { World } from '@root/test/support/world.ts';
 import { Effect, Predicate, Result } from 'effect';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { builtinPresets } from '@/domain/configuration/builtin-presets.ts';
 import { mergeConfiguration } from '@/domain/configuration/presets.ts';
 import { defaultPreset } from '@/domain/preset.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import type { SetupChoices, SetupPlan } from '@/setup/types.ts';
 
 export function withDefaultPreset(file: string): unknown {
 	const value: unknown = JSON.parse(file);

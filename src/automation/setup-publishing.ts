@@ -1,5 +1,4 @@
 import { Effect, Result } from 'effect';
-import type { PublishingCheck, SetupChoices } from '@/automation/setup-types';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { cargoJobPackages } from '@/discovery/release-graph/graph.ts';
 import { publishingJobs } from '@/discovery/workflow-analysis/publishing-jobs.ts';
@@ -14,6 +13,7 @@ import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { cargoManager } from '@/publication/registries/cargo.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
 import { registryRequest } from '@/publication/registries/verification.ts';
+import type { PublishingCheck, SetupChoices } from '@/setup/types.ts';
 
 export interface PublishingAccess {
 	request: Fetcher;

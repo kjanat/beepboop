@@ -1,10 +1,5 @@
 import { Effect, Result } from 'effect';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices, SetupPlan, Versioning } from '@/automation/setup-types';
 import { routes } from '@/contract/routes';
-import { setupStream } from '@/contract/setup';
-import type { ChoicesField, Editors, StreamField } from '@/contract/setup-fields';
-import { jsonFields, streamFields } from '@/contract/setup-fields';
 import { publishable } from '@/domain/package-publication.ts';
 import { approvalPolicies, configurableStarts, versionBumps } from '@/domain/release-start.ts';
 import {
@@ -26,6 +21,11 @@ import {
 	versionScopeSentences,
 } from '@/domain/setup-terms.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
+import { setupStream } from '@/setup/contract.ts';
+import type { ChoicesField, Editors, StreamField } from '@/setup/editing/fields.ts';
+import { jsonFields, streamFields } from '@/setup/editing/fields.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import type { SetupChoices, SetupPlan, Versioning } from '@/setup/types.ts';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';
 import { element, hint, issueText, jsonEditor, label, select, text, workflow } from '@/ui/browser/setup-fields';

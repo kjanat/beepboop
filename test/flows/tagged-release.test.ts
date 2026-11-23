@@ -23,8 +23,6 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { parse } from 'yaml';
 import { setupOptions } from '@/automation/setup';
-import { ledgerCommand } from '@/automation/setup-defaults';
-import { streamSummary } from '@/automation/setup-summary';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -40,6 +38,8 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { ledgerCommand } from '@/setup/defaults.ts';
+import { streamSummary } from '@/setup/summary.ts';
 
 let world: World;
 eachWorld(created => {

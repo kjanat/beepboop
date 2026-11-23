@@ -1,19 +1,14 @@
 import type { Schema } from 'effect';
 import { Result } from 'effect';
-import type { Selection } from '@/automation/setup-defaults';
-import {
-	ledgerCommand,
-	preparationReasons,
-	suggestedCommands,
-	suggestedWorkflowFile,
-} from '@/automation/setup-defaults';
-import type { SetupPlan, SetupWorkflow } from '@/automation/setup-types';
-import type { Editors, WorkflowField } from '@/contract/setup-fields';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
 import { binaryTargets, defaultBinaryTargets, leftOut } from '@/domain/binary-platforms.ts';
 import { existingTriggersNames, existingTriggersQuestion, existingTriggersSentences } from '@/domain/setup-terms.ts';
 import { setupWorkflow } from '@/domain/workflow-setup.ts';
 import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
+import type { Selection } from '@/setup/defaults.ts';
+import { ledgerCommand, preparationReasons, suggestedCommands, suggestedWorkflowFile } from '@/setup/defaults.ts';
+import type { Editors, WorkflowField } from '@/setup/editing/fields.ts';
+import type { SetupPlan, SetupWorkflow } from '@/setup/types.ts';
 import { node, Refused } from '@/ui/browser/dom';
 
 export const workflowEditors = {

@@ -1,7 +1,7 @@
-import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { registryLabel } from '@/domain/catalog.ts';
 import { publicationStages } from '@/domain/publication-stages';
 import { listed } from '@/kernel/text/listing.ts';
+import type { SetupChoices, SetupPlan } from '@/setup/types.ts';
 
 type Stream = SetupChoices['streams'][number];
 

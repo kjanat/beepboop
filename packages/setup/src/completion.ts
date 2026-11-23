@@ -1,5 +1,3 @@
-import { ledgerCommand } from '@/automation/setup-defaults';
-import type { SetupChoices } from '@/automation/setup-types';
 import type { ReleaseGraph } from '@/discovery/release-graph/graph.ts';
 import { gateJobs, workflowJobs } from '@/discovery/workflow-analysis/job-gate.ts';
 import { isLockfile } from '@/domain/catalog.ts';
@@ -9,6 +7,8 @@ import { publishable } from '@/domain/package-publication.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { shellQuote } from '@/kernel/text/shell-quote.ts';
+import { ledgerCommand } from '@/setup/defaults.ts';
+import type { SetupChoices } from '@/setup/types.ts';
 
 type Stream = SetupChoices['streams'][number];
 

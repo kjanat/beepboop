@@ -1,8 +1,8 @@
-import { pinned } from '@/automation/setup-actions';
 import { beginJobId, begunSource } from '@/discovery/workflow-analysis/owned-binary-job.ts';
 import type { BinaryBuild, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
 import { platforms } from '@/domain/binary-platforms.ts';
 import { hostedRunners } from '@/domain/runners.ts';
+import { pinned } from '@/setup/workflows/actions.ts';
 
 // GitHub expressions, evaluated by Actions rather than JavaScript.
 export const expression = (value: string) => `\${{ ${value} }}`;

@@ -33,6 +33,7 @@
 		"@beepboopbot/host": "workspace:*",
 		"@beepboopbot/kernel": "workspace:*",
 		"@beepboopbot/notifications": "workspace:*",
+		"@beepboopbot/setup": "workspace:*",
 		"effect": "4.1.5"
 	},
 	"engines": {

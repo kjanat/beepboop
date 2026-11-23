@@ -1,12 +1,12 @@
 import type { CLIError, CLISchema, CommandSchema, CompletionContext, CompletionHandler } from '@kjanat/dreamcli';
 import { flag, parse } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupPlan } from '@/automation/setup-types';
 import { Client } from '@/cli/client/api';
 import { defaultServer } from '@/cli/config';
 import { checkoutRepository } from '@/cli/git-checkout';
 import { routes } from '@/contract/routes';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import type { SetupPlan } from '@/setup/types.ts';
 
 function flagValue(argv: readonly string[], name: string): string | undefined {
 	let value: string | undefined;

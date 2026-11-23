@@ -7,11 +7,11 @@ import { Effect, Result } from 'effect';
 import { parse, stringify } from 'yaml';
 import { requestBody } from '@/actions/protocol.ts';
 import { previewSetup } from '@/automation/setup';
-import { actionReleaseOffer } from '@/automation/setup-action';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices } from '@/automation/setup-types';
 import { discover } from '@/discovery/discover.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import type { SetupChoices } from '@/setup/types.ts';
+import { actionReleaseOffer } from '@/setup/workflows/action-release.ts';
 
 function snapshot(files: Record<string, string>): Snapshot {
 	return {

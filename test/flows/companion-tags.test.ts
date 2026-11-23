@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test';
 import { widgetConfiguration } from '@root/test/support/repositories.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { createExecution } from '@/automation/execution';
-import type { SetupChoices } from '@/automation/setup-types';
 import { companionProposals } from '@/discovery/analysis/companions.ts';
 import { validateAgainst } from '@/discovery/validation/validate.ts';
 import { binaries } from '@/domain/binary-platforms.ts';
@@ -28,6 +27,7 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
+import type { SetupChoices } from '@/setup/types.ts';
 
 const commit = 'a'.repeat(40);
 const policy: RefPolicy = { phase: 'version', prefix: 'rshellcheck-v', aliases: [], signed: false };

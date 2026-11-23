@@ -1,7 +1,6 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { enableAutoMerge } from '@/automation/preparation-pull-requests';
-import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import type { Edit } from '@/domain/inventory.ts';
 import { setupBranches } from '@/domain/setup-branches.ts';
 import { autoMergeMethods } from '@/domain/setup-terms.ts';
@@ -13,6 +12,7 @@ import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { decode, textSchema } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import { marked, placeBlock, setupBlock, withStatus } from '@/setup/body.ts';
 
 const contentEditsSchema = mutableStruct({
 	data: mutableStruct({

@@ -11,10 +11,10 @@ import { executions, only, prepareRelease } from '@root/test/support/releases.ts
 import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { behaviourChanges } from '@/automation/setup-changes';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
 import { versionPrMergeSentences, versionScopeNames } from '@/domain/setup-terms.ts';
 import { runCard } from '@/server/views/runs';
+import { behaviourChanges } from '@/setup/changes.ts';
 
 let world: World;
 eachWorld(created => {
