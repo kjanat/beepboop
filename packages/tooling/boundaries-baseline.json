@@ -160,10 +160,6 @@
 		"specifier": "@/contract/views"
 	},
 	{
-		"file": "packages/persistence/src/d1/backfill.ts",
-		"specifier": "@/automation/store"
-	},
-	{
 		"file": "packages/persistence/src/d1/changes.ts",
 		"specifier": "@/contract/changes"
 	},
@@ -172,20 +168,8 @@
 		"specifier": "@/automation/types"
 	},
 	{
-		"file": "packages/persistence/src/d1/credentials.ts",
-		"specifier": "@/automation/schemas"
-	},
-	{
-		"file": "packages/persistence/src/d1/onboarding.ts",
-		"specifier": "@/automation/schemas"
-	},
-	{
 		"file": "packages/persistence/src/d1/projection.ts",
 		"specifier": "@/contract/changes"
-	},
-	{
-		"file": "packages/persistence/src/d1/sessions.ts",
-		"specifier": "@/automation/schemas"
 	},
 	{
 		"file": "packages/persistence/src/identity-keys.ts",

@@ -7,7 +7,6 @@ import {
 	gitCommitSchema,
 	gitRefSchema,
 } from '@/automation/github-resources';
-import { documentRow } from '@/automation/schemas';
 import type { Store } from '@/automation/store';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
@@ -24,6 +23,7 @@ import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
+import { documentRow } from '@/persistence/d1/document-row';
 
 const releaseListing = mutableArray(mutableStruct({
 	id: looseSchema,

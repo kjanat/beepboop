@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { PlatformProxy } from 'wrangler';
 import { getPlatformProxy } from 'wrangler';
-import { ProjectionBackfill } from '@/persistence/d1/backfill';
+import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import type { SqlDatabase } from '@/persistence/d1/database';
 
 // Wrangler's remote bindings require Node's undici dispatcher rather than Bun's fetch.

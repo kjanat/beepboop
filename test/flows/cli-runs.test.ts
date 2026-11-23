@@ -8,6 +8,7 @@ import { eachDirectory } from '@root/test/support/directories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
+import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { slimRun } from '@/cli/runs';
@@ -28,7 +29,6 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { ProjectionBackfill } from '@/persistence/d1/backfill';
 
 let world: World, directory: string, client: Client, token: string;
 eachWorld(created => {

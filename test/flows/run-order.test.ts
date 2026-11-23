@@ -5,6 +5,7 @@ import { eachDirectory } from '@root/test/support/directories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
+import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Store } from '@/automation/store';
 import type { Client } from '@/cli/client';
 import type { executionFilter } from '@/contract/routes';
@@ -23,7 +24,6 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import { loaders } from '@/server/loaders';
 
 let world: World, directory: string, client: Client, token: string;

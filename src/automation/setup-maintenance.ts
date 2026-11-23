@@ -2,7 +2,6 @@ import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
 import { discover } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
-import { documentRow } from '@/automation/schemas';
 import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { marked } from '@/automation/setup-body';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
@@ -23,6 +22,7 @@ import { sha256Hex } from '@/kernel/schema/ids.ts';
 import { record } from '@/kernel/schema/result.ts';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import { parse, replaceDocument, sql } from '@/persistence/d1/database';
+import { documentRow } from '@/persistence/d1/document-row';
 
 const editsSchema = mutableArray(mutableStruct({ path: Schema.String, before: Schema.String, after: Schema.String }));
 export function sameEdits(left: Edit[], right: Edit[]): boolean {

@@ -1,8 +1,8 @@
 import { Effect } from 'effect';
-import { documentRow } from '@/automation/schemas';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { optionalColumn, sql } from '@/persistence/d1/database';
+import { documentRow } from '@/persistence/d1/document-row';
 
 export const sessionKinds = ['login-flow', 'security-challenge', 'elevation', 'cli-approval'] as const;
 export type SessionKind = (typeof sessionKinds)[number];

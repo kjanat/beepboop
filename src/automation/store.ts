@@ -1,6 +1,5 @@
 import { Clock, Effect, Schema } from 'effect';
 import { executionOrderSql, newestActiveFirst, validJson } from '@/automation/execution-order';
-import { documentRow, rowDocument } from '@/automation/schemas';
 import type { ActivityEntry, AutomationEvent, Execution, SubscriptionDelivery } from '@/automation/types';
 import type { ExecutionFilter } from '@/contract/routes';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
@@ -31,6 +30,7 @@ import type { CompletionCandidate } from '@/persistence/d1/completions';
 import { CompletionStore } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
+import { documentRow, rowDocument } from '@/persistence/d1/document-row';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import { readyRead } from '@/persistence/d1/ready-read';
 
