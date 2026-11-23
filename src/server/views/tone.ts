@@ -6,8 +6,8 @@ import type { DeliveryState, NotificationDelivery } from '@/notifications/notifi
 import type { Publication } from '@/publication/publication.ts';
 import type { WinGetSubmission } from '@/publication/winget/submission.ts';
 import type { ExecutionState } from '@/release/domain/execution/types.ts';
-import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';
-import { activeStates, checksPolicy, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
+import type { ReleaseSetState, releaseSummaries } from '@/release/domain/summaries.ts';
+import { activeStates, checksPolicy, publishesAutomatically, runStateLabel } from '@/release/domain/summaries.ts';
 
 export const executionTone = {
 	pending: 'waiting',

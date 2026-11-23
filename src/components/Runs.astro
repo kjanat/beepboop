@@ -6,13 +6,13 @@ import Field from '@/components/Field.astro';
 import RecoverForm from '@/components/RecoverForm.astro';
 import RunCard from '@/components/RunCard.astro';
 import { packageLabel } from '@/domain/package-label';
-import type { ViewOf } from '@/server/loaders.ts';
 import {
 	needingUser,
 	releaseSetSummaries,
 	releaseSummaries,
 	runStateLabel,
-} from '@/server/releases';
+} from '@/release/domain/summaries.ts';
+import type { ViewOf } from '@/server/loaders.ts';
 import { pipeline, progress } from '@/server/views/runs.ts';
 import {
 	executionTone,

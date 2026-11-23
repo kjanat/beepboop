@@ -1,7 +1,7 @@
 import { readiness } from '@/domain/repository';
 import { newestActiveFirst } from '@/release/domain/execution-order.ts';
+import { activeStates, needingUser, releaseSummaries } from '@/release/domain/summaries.ts';
 import type { ViewOf } from '@/server/loaders.ts';
-import { activeStates, needingUser, releaseSummaries } from '@/server/releases.ts';
 
 export function overview({ repositories, executions, completed }: ViewOf<'overview'>) {
 	const needing = needingUser(executions.readable, completed);
