@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import { binaryCandidates, unixDependencies } from '@/automation/binary-candidates';
 import { discover } from '@/automation/managers';
+import { binaryCandidates, unixDependencies } from '@/discovery/analysis/binary-candidates.ts';
 import { leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 

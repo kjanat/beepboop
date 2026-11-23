@@ -1,6 +1,6 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { inWorkspace, object } from '@/automation/managers/helpers';
+import { inWorkspace, object } from '@/discovery/managers/manifest-editing.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 import { parentDirectory, walkRelative } from '@/kernel/path/relative-path.ts';
 

@@ -1,9 +1,9 @@
-import { staticGuard } from '@/automation/release-graph/bindings';
-import type { ReleaseGraph, StreamProposal, StreamWorkflow, Target } from '@/automation/release-graph/graph';
-import { code } from '@/automation/release-graph/graph';
-import type { Destination } from '@/automation/release-graph/workflows';
-import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { SetupChoices } from '@/automation/setup-types';
+import { staticGuard } from '@/discovery/release-graph/bindings.ts';
+import type { ReleaseGraph, StreamProposal, StreamWorkflow, Target } from '@/discovery/release-graph/graph.ts';
+import { code } from '@/discovery/release-graph/graph.ts';
+import type { Destination } from '@/discovery/release-graph/workflows.ts';
+import { literalPrefix } from '@/discovery/release-graph/workflows.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';

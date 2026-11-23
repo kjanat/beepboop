@@ -1,4 +1,4 @@
-import { object } from '@/automation/managers/helpers';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 
 export const ownerId = 6353477;
 export const ownerLogin = 'octo';

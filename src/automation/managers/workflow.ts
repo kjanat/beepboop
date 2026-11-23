@@ -1,9 +1,9 @@
 import { Result } from 'effect';
-import { object } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
-import { workflowEvents } from '@/automation/release-graph/calls';
-import { actionRole, workflowEvidence } from '@/automation/setup-workflows';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import { workflowEvents } from '@/discovery/release-graph/calls.ts';
+import { actionRole, workflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 export const workflowManager: Adapter<'workflow'> = {

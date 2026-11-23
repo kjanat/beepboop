@@ -1,10 +1,10 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import { editTomlVersion, object } from '@/automation/managers/helpers';
-import { isPyproject, privateProject } from '@/automation/managers/pyproject';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
+import { editTomlVersion, object } from '@/discovery/managers/manifest-editing.ts';
+import { isPyproject, privateProject } from '@/discovery/managers/pyproject.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

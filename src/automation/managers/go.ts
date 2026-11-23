@@ -1,9 +1,9 @@
 import { Effect } from 'effect';
-import { object } from '@/automation/managers/helpers';
 import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
 import type { Publication } from '@/automation/types';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { Package } from '@/domain/inventory.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
 import { latestTag, majorSuffix, tagSource } from '@/domain/version-tags.ts';

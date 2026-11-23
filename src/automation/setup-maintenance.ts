@@ -1,7 +1,6 @@
 import { Effect, Result, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { discover } from '@/automation/managers';
-import { object } from '@/automation/managers/helpers';
 import { pullRequest } from '@/automation/preparation-pull-requests';
 import {
 	previewSetup,
@@ -27,6 +26,7 @@ import type { SetupChoices } from '@/automation/setup-types';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
 import { setupChoicesSchema } from '@/contract/setup';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 import { canonicalConfiguration, outdatedConfiguration } from '@/domain/configuration/canonical.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import type { Edit, Inventory, Snapshot } from '@/domain/inventory.ts';

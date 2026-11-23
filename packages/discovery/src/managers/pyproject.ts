@@ -1,4 +1,4 @@
-import { object } from '@/automation/managers/helpers';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 
 export function isPyproject(path: string): boolean {
 	return /(?:^|\/)pyproject\.toml$/.test(path) && !path.startsWith('.github/');

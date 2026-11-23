@@ -1,6 +1,7 @@
 import { Effect, Schema } from 'effect';
-import type { SetupOperation, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
+import type { SetupOperation, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { actionRelease } from '@/contract/setup';
+import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import { binaries, binaryBuild, binaryTargets } from '@/domain/binary-platforms.ts';
 import { publicationSchema } from '@/domain/package-publication.ts';
 import { startChannel, versionBump } from '@/domain/release-start.ts';

@@ -11,12 +11,12 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { parse } from 'yaml';
 import { parseSetupPlan } from '@/automation/setup-plan';
-import { jobObstacles } from '@/automation/setup-workflows';
 import { app } from '@/cli/cli';
 import type { Client } from '@/cli/client';
 import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
 import { routes } from '@/contract/routes';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
+import { jobObstacles } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import { binaryTargets, defaultBinaryTargets, supportedTargets } from '@/domain/binary-platforms.ts';
 import {
 	publishWhenQuestion,

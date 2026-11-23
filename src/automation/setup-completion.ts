@@ -1,7 +1,7 @@
-import { gateJobs, workflowJobs } from '@/automation/job-gate';
-import type { ReleaseGraph } from '@/automation/release-graph/graph';
 import { ledgerCommand } from '@/automation/setup-defaults';
 import type { SetupChoices } from '@/automation/setup-types';
+import type { ReleaseGraph } from '@/discovery/release-graph/graph.ts';
+import { gateJobs, workflowJobs } from '@/discovery/workflow-analysis/job-gate.ts';
 import { isLockfile } from '@/domain/catalog.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';

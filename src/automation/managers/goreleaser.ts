@@ -1,11 +1,11 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import type { VerificationContext } from '@/automation/gateway.ts';
-import { object } from '@/automation/managers/helpers';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { publicationResult } from '@/automation/managers/verification';
 import type { Publication } from '@/automation/types';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 import { goreleaserConfig } from '@/domain/catalog.ts';
 import type { Channel } from '@/domain/destinations.ts';
 import type { Snapshot } from '@/domain/inventory.ts';

@@ -10,12 +10,13 @@ import {
 	ungenerated,
 } from '@/automation/setup-defaults';
 import { streamSummary } from '@/automation/setup-summary';
-import type { SetupChoices, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
+import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { lookOf } from '@/cli/look';
 import { failure, prompted } from '@/cli/output';
 import { bumpable, setupStream, startable } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
+import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { BinaryBuild, BinaryRelease } from '@/domain/binary-platforms.ts';
 import { binaryTargets, defaultBinaryTargets, leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
 import { workflowFilePattern } from '@/domain/catalog.ts';

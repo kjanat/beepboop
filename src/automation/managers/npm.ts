@@ -1,11 +1,11 @@
 import { Effect } from 'effect';
 import { applyEdits, modify, parseTree } from 'jsonc-parser';
-import { jsonIndent, object } from '@/automation/managers/helpers';
 import { discoverNpmTargets } from '@/automation/managers/npm-targets';
 import { packageManifests } from '@/automation/managers/package-json';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, unpublished, verifyRegistry } from '@/automation/managers/verification';
+import { jsonIndent, object } from '@/discovery/managers/manifest-editing.ts';
 import type { Package } from '@/domain/inventory.ts';
 import { excluded, publishable, registry } from '@/domain/package-publication.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';

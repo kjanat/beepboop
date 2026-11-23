@@ -1,5 +1,5 @@
-import { object } from '@/automation/managers/helpers';
 import { pinned } from '@/automation/setup-actions';
+import { beginJobId, begunSource } from '@/discovery/workflow-analysis/owned-binary-job.ts';
 import type { BinaryBuild, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
 import { platforms } from '@/domain/binary-platforms.ts';
 import { hostedRunners } from '@/domain/runners.ts';
@@ -8,9 +8,7 @@ import { hostedRunners } from '@/domain/runners.ts';
 export const expression = (value: string) => `\${{ ${value} }}`;
 const matrix = (key: string) => expression(`matrix.${key}`);
 
-export const beginJobId = 'begin';
 const begun = (output: 'sourceSha' | 'version') => expression(`needs.${beginJobId}.outputs.${output}`);
-export const begunSource = begun('sourceSha');
 
 export function assetName(build: BinaryBuild, target: BinaryTarget): string {
 	const names: Record<string, string> = { ...platforms[target].names, name: build.name, version: '{version}' };
@@ -260,14 +258,6 @@ export function assetSteps(id: string): Record<string, unknown>[] {
 			run: `gh release upload "\${TAG}" --clobber -- *\n`,
 		},
 	];
-}
-export function ownedBinaryJob(name: string, job: Record<string, unknown>): boolean {
-	const steps = Array.isArray(job.steps) ? job.steps.map(object) : [];
-	return (name === beginJobId || name.startsWith('build-'))
-		&& steps.some(step =>
-			(typeof step.uses === 'string' && /\/actions\/begin\b/.test(step.uses))
-			|| (name !== beginJobId && object(step.with).ref === begunSource)
-		);
 }
 
 /** Tags pushed with `github.token` start no workflows, so the push uses the App installation token. */

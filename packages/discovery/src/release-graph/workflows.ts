@@ -2,8 +2,8 @@ import { Result } from 'effect';
 import type { ParseError } from 'jsonc-parser';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
-import { glob, object } from '@/automation/managers/helpers';
-import { bindInputs, bindStep, disabled, expandStep, staticGuard } from '@/automation/release-graph/bindings';
+import { glob, object } from '@/discovery/managers/manifest-editing.ts';
+import { bindInputs, bindStep, disabled, expandStep, staticGuard } from '@/discovery/release-graph/bindings.ts';
 import {
 	actionBindings,
 	liveJobs,
@@ -12,7 +12,7 @@ import {
 	workflowCalls,
 	workflowDocuments,
 	workflowEvents,
-} from '@/automation/release-graph/calls';
+} from '@/discovery/release-graph/calls.ts';
 import {
 	directoryOverride,
 	forwardedArguments,
@@ -22,8 +22,8 @@ import {
 	withoutValueFlags,
 	workspaceScope,
 	workspaceSelectors,
-} from '@/automation/release-graph/package-managers';
-import { executed, isolatedLines, posixShell, walkDirectories } from '@/automation/release-graph/shell';
+} from '@/discovery/release-graph/package-managers.ts';
+import { executed, isolatedLines, posixShell, walkDirectories } from '@/discovery/release-graph/shell.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 import { escapeRegExp, globMatches, within } from '@/kernel/text/patterns.ts';

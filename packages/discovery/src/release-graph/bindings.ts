@@ -1,4 +1,4 @@
-import { object } from '@/automation/managers/helpers';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 
 const stringMark = '\u0000';
 const numeric = /^-?\d+(?:\.\d+)?$/;

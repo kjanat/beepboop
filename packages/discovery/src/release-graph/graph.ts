@@ -1,7 +1,7 @@
 import { parse as parseToml } from 'smol-toml';
-import { cargoBinaryNames } from '@/automation/binary-candidates';
-import { object } from '@/automation/managers/helpers';
-import { isPyproject, privateProject } from '@/automation/managers/pyproject';
+import { cargoBinaryNames } from '@/discovery/analysis/binary-candidates.ts';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import { isPyproject, privateProject } from '@/discovery/managers/pyproject.ts';
 import {
 	crossesDirectories,
 	directoryFlagPattern,
@@ -9,10 +9,15 @@ import {
 	publishFolder,
 	workspaceScope,
 	workspaceSelectors,
-} from '@/automation/release-graph/package-managers';
-import { packDirectories } from '@/automation/release-graph/shell';
-import type { Destination, Job, StepEffect, Workflow } from '@/automation/release-graph/workflows';
-import { declaredWorkspaces, inWorkspaces, literalPrefix, workflowModels } from '@/automation/release-graph/workflows';
+} from '@/discovery/release-graph/package-managers.ts';
+import { packDirectories } from '@/discovery/release-graph/shell.ts';
+import type { Destination, Job, StepEffect, Workflow } from '@/discovery/release-graph/workflows.ts';
+import {
+	declaredWorkspaces,
+	inWorkspaces,
+	literalPrefix,
+	workflowModels,
+} from '@/discovery/release-graph/workflows.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { exclusionLabel, publishable } from '@/domain/package-publication.ts';

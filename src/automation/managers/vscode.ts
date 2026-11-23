@@ -1,5 +1,4 @@
 import { Effect, Result, Schema } from 'effect';
-import { object } from '@/automation/managers/helpers';
 import { packageManifests } from '@/automation/managers/package-json';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
@@ -11,6 +10,7 @@ import {
 	unpublished,
 } from '@/automation/managers/verification';
 import type { Publication } from '@/automation/types';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 import { identityOf, parseExtension } from '@/domain/package-identity.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
