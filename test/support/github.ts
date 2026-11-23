@@ -90,6 +90,7 @@ export interface Repository {
 	signatures: boolean;
 	protectedBranches: Set<string>;
 	allowAutoMerge: boolean;
+	mergeMethods: Record<'squash' | 'merge' | 'rebase', boolean>;
 	tagObjects: Map<string, { name: string; commit: string; verified: boolean; targetType?: string; raw?: string }>;
 }
 
@@ -192,6 +193,10 @@ export class FakeGitHub {
 				owner: { id: ownerId, login: ownerLogin },
 				default_branch: repository.defaultBranch,
 				private: repository.private,
+				allow_auto_merge: repository.allowAutoMerge,
+				allow_squash_merge: repository.mergeMethods.squash,
+				allow_merge_commit: repository.mergeMethods.merge,
+				allow_rebase_merge: repository.mergeMethods.rebase,
 			});
 		});
 		this.route('GET', new RegExp(`^${repo}/commits/([^/]+)$`), match => {
@@ -465,7 +470,17 @@ export class FakeGitHub {
 						errors: [{ type: 'UNPROCESSABLE', message: 'Pull request Auto merge is not allowed for this repository' }],
 					});
 				}
-				pull.autoMerge = stringField(variables, 'method');
+				const method = stringField(variables, 'method');
+				const allowed = Object.entries(repository.mergeMethods).some(([name, on]) =>
+					on && name.toUpperCase() === method
+				);
+				if (!allowed) {
+					return json({
+						data: { enablePullRequestAutoMerge: null },
+						errors: [{ type: 'UNPROCESSABLE', message: `Merge method ${method} is not allowed for this repository` }],
+					});
+				}
+				pull.autoMerge = method;
 				return json({
 					data: {
 						enablePullRequestAutoMerge: { pullRequest: { autoMergeRequest: { mergeMethod: pull.autoMerge } } },
@@ -795,6 +810,7 @@ export class FakeGitHub {
 			signatures: false,
 			protectedBranches: new Set(),
 			allowAutoMerge: false,
+			mergeMethods: { squash: true, merge: true, rebase: true },
 			tagObjects: new Map(),
 		};
 		this.repositories.set(name, repository);

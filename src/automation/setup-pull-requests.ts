@@ -1,9 +1,11 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
 import { comparisonSchema, gitRefSchema, pullSchema, repositorySchema } from '@/automation/github-resources';
+import { enableAutoMerge } from '@/automation/preparation-pull-requests';
 import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import { setupBranches } from '@/automation/setup-changes';
 import type { Edit } from '@/domain/inventory.ts';
+import { autoMergeMethods } from '@/domain/setup-terms.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
@@ -161,6 +163,40 @@ export function setupMerge(
 		}
 		const sha = yield* gateway.mergeCommit(name, number, token);
 		return sha === undefined ? undefined : { sha, body: typeof pull.body === 'string' ? pull.body : '' };
+	});
+}
+const configurationPath = '.github/beepboop.json';
+export const setupAutoMerge = {
+	workflows: 'This setup PR edits workflows, so it waits for your review. Beepboop left auto-merge off.',
+	disallowed: "Auto-merge is off in this repository's settings. Merge this setup PR yourself.",
+	enabled: (method: string) =>
+		`Beepboop turned on ${method} auto-merge. GitHub merges this setup PR once its required checks pass.`,
+};
+export function autoMergeSetup(
+	gateway: RepositoryGateway,
+	name: string,
+	id: number,
+	url: string,
+	edits: Edit[],
+): Effect.Effect<void, DomainError> {
+	return Effect.gen(function*() {
+		const prefix = `https://github.com/${name}/pull/`;
+		const number = url.startsWith(prefix) ? url.slice(prefix.length) : '';
+		if (!/^[1-9][0-9]*$/.test(number)) return yield* precondition('Invalid setup PR identity');
+		const token = yield* gateway.token(name, id, { contents: 'write', pull_requests: 'write' });
+		const comment = (body: string) =>
+			gateway.call(`/repos/${name}/issues/${number}/comments`, token, 'POST', { body }).pipe(Effect.asVoid);
+		if (edits.some(edit => edit.path !== configurationPath)) return yield* comment(setupAutoMerge.workflows);
+		const settings = yield* gateway.read(repositorySchema, `/repos/${name}`, token);
+		const allowed = {
+			squash: settings.allow_squash_merge,
+			merge: settings.allow_merge_commit,
+			rebase: settings.allow_rebase_merge,
+		};
+		const method = autoMergeMethods.find(entry => allowed[entry] === true);
+		if (settings.allow_auto_merge !== true || !method) return yield* comment(setupAutoMerge.disallowed);
+		const result = yield* enableAutoMerge(gateway, name, id, url, method, 'setup PR');
+		if (result.state === 'enabled') yield* comment(setupAutoMerge.enabled(method));
 	});
 }
 /** Update only the bot's status section, including when a human changed the proposal branch. */

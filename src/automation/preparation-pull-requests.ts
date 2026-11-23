@@ -387,6 +387,7 @@ export function enableAutoMerge(
 	repositoryId: number,
 	url: string,
 	method: AutoMergeMethod,
+	subject: 'version PR' | 'setup PR',
 ): Effect.Effect<AutoMerge, DomainError> {
 	return Effect.gen(function*() {
 		const token = yield* gateway.token(repository, repositoryId, { contents: 'write', pull_requests: 'write' });
@@ -410,7 +411,7 @@ export function enableAutoMerge(
 			return yield* upstream('github', `GitHub rate-limited auto-merge for ${repository}#${number}: ${reason}`);
 		}
 		const note =
-			`Beepboop could not turn on ${method} auto-merge for this version PR. GitHub said: ${reason}. The PR stays open until you merge it.`;
+			`Beepboop could not turn on ${method} auto-merge for this ${subject}. GitHub said: ${reason}. The PR stays open until you merge it.`;
 		yield* gateway.call(`/repos/${repository}/issues/${number}/comments`, token, 'POST', { body: note }).pipe(
 			Effect.ignore,
 		);

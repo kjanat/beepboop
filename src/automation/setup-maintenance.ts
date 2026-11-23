@@ -7,11 +7,18 @@ import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryS
 import { marked } from '@/automation/setup-body';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { PublishingAccess } from '@/automation/setup-publishing';
-import { generatedFiles, openSetupPull, setupHead, setupStatus } from '@/automation/setup-pull-requests';
+import {
+	autoMergeSetup,
+	generatedFiles,
+	openSetupPull,
+	setupHead,
+	setupStatus,
+} from '@/automation/setup-pull-requests';
 import type { SetupChoices } from '@/automation/setup-types';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
 import { setupChoicesSchema } from '@/contract/setup';
+import { canonicalConfiguration, outdatedConfiguration } from '@/domain/configuration/canonical.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import type { Edit, Inventory, Snapshot } from '@/domain/inventory.ts';
 import { packageId, selectorKey } from '@/domain/package-identity.ts';
@@ -280,17 +287,22 @@ function migrateSetup(
 		const { name, id } = snapshot.repository;
 		const source = snapshot.files['.github/beepboop.json'];
 		const choices = savedSetup(saved).saved;
-		if (source === undefined || !choices || saved.migration === 'proposed') return;
+		if (source === undefined || !choices) return;
 		const raw = yield* fromSync((): unknown => JSON.parse(source));
-		if (!setupMissing(raw, choices)) return;
+		const stored = yield* store.repository(id);
+		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
+		const missing = saved.migration !== 'proposed' && setupMissing(raw, choices);
+		const format = outdatedConfiguration(raw, inventory.packages)
+			? yield* fromPromise(() => sha256Hex(JSON.stringify(canonicalConfiguration(raw, inventory.packages))))
+			: undefined;
+		if (!missing && (format === undefined || saved.formatMigration === format)) return;
 		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
 			Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
 		);
-		const stored = yield* store.repository(id);
 		const branch = setupBranch(snapshot);
 		const head = yield* setupHead(gateway, name, id, branch);
 		const workflowPermission = yield* gateway.canEditWorkflows(name, id);
-		const plan = yield* previewSetup(snapshot, withRegistryStatus(discover(snapshot), stored?.inventory), undefined, {
+		const plan = yield* previewSetup(snapshot, inventory, undefined, {
 			publishing,
 			saved: choices,
 			head,
@@ -318,11 +330,13 @@ function migrateSetup(
 			options: setupOptions(plan),
 			inferred: plan.adoption !== undefined,
 			edits: plan.edits,
-			migration: 'proposed',
+			...(missing ? { migration: 'proposed' } : {}),
+			...(format === undefined ? {} : { formatMigration: format }),
 			maintenanceFingerprint: undefined,
 			...observationsKept,
 		});
 		yield* store.audit('beepboop', 'repository.setup.migrated', `${name} ${snapshot.sha} ${result.url}`);
+		yield* autoMergeSetup(gateway, name, id, result.url, plan.edits);
 	});
 }
 export function currentOptions(
