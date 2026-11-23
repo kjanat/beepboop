@@ -15,6 +15,7 @@ import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
 import { createExecution, runFailedNote } from '@/automation/execution';
+import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Automation } from '@/automation/service';
 import { Store } from '@/automation/store';
 import type { Execution } from '@/automation/types';
@@ -34,7 +35,6 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import { loaders } from '@/server/loaders';
 import { needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';

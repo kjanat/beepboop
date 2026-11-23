@@ -1,11 +1,6 @@
 import { Schema } from 'effect';
 import type { SetupOption } from '@/automation/setup-types';
-import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
-
-export const documentRow = mutableStruct({ document: Schema.String });
-export function rowDocument(row: unknown): unknown {
-	return JSON.parse(decodeSync(documentRow, row).document);
-}
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const setupOptionsSchema: Schema.Codec<SetupOption[], unknown> = mutableArray(Schema.Union([
 	mutableStruct({ kind: Schema.Literals(['package', 'required']), stream: Schema.String, package: Schema.String }),

@@ -12,7 +12,6 @@ import { verifyJwt } from 'micro509/jose';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { remoteKeys } from '@/automation/jwks';
 import type { Fetcher } from '@/automation/managers/registry';
-import { documentRow } from '@/automation/schemas';
 import { base64, bytes } from '@/kernel/crypto/base64.ts';
 import { errorPage, fromJson, fromPromise, fromSync, recover, toDomainError } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
@@ -26,6 +25,7 @@ import { decodeSync, mapped, mutableArray, mutableStruct, safeDecode } from '@/k
 import { CLISessionStore } from '@/persistence/d1/cli-sessions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { replaceDocument } from '@/persistence/d1/database';
+import { documentRow } from '@/persistence/d1/document-row';
 import { SessionStore } from '@/persistence/d1/sessions';
 
 const clientExtensionResults = Schema.Unknown.pipe(

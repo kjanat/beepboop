@@ -1,9 +1,9 @@
 import { expect, spyOn, test } from 'bun:test';
 import { TestD1 } from '@root/test/support/d1';
 import { Effect } from 'effect';
+import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Store } from '@/automation/store';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import { ProjectionStore } from '@/persistence/d1/projection';
 
 function execution(id: string, verifying = false) {
