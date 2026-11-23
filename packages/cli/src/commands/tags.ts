@@ -4,9 +4,10 @@ import { Effect, Schema } from 'effect';
 import type { Client } from '@/cli/client/api';
 import { base, connected } from '@/cli/command';
 import { checkoutRepository } from '@/cli/git-checkout';
-import type { Look, State } from '@/cli/render/look';
+import type { Look } from '@/cli/render/look';
 import { lookOf, step, table } from '@/cli/render/look';
 import { emit, failure, prompted, unprompted } from '@/cli/render/output';
+import { packageTagState } from '@/cli/render/states';
 import { routes } from '@/contract/routes';
 import type { PackageTagView } from '@/contract/views';
 import { looseStruct, mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
@@ -20,14 +21,6 @@ export interface PackageTagOptions {
 
 const tagged = looseStruct({ packageTags: Schema.optional(mutableArray(Schema.String)) });
 
-const states: Record<PackageTagView['outcome'], State> = {
-	exists: 'skipped',
-	conflict: 'failed',
-	unpublished: 'skipped',
-	publishable: 'waiting',
-	created: 'published',
-	failed: 'failed',
-};
 const labels: Record<PackageTagView['outcome'], string> = {
 	exists: 'exists',
 	conflict: 'targets another commit',
@@ -57,13 +50,16 @@ function packageTags(
 }
 
 function rows(look: Look, results: readonly PackageTagView[]) {
-	return results.map(result => ({
-		tag: look.pkg(result.tag),
-		version: look.version(result.version),
-		commit: look.sha(result.commit),
-		state: `${look.mark(states[result.outcome])} ${look.state(states[result.outcome], labels[result.outcome])}`,
-		...(result.reason ? { reason: result.reason } : {}),
-	}));
+	return results.map(result => {
+		const state = packageTagState(result.outcome);
+		return {
+			tag: look.pkg(result.tag),
+			version: look.version(result.version),
+			commit: look.sha(result.commit),
+			state: `${look.mark(state)} ${look.state(state, labels[result.outcome])}`,
+			...(result.reason ? { reason: result.reason } : {}),
+		};
+	});
 }
 
 function backfillPackageTags(

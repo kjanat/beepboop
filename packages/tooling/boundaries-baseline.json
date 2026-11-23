@@ -168,6 +168,10 @@
 		"specifier": "@/contract/views"
 	},
 	{
+		"file": "packages/cli/src/render/states.ts",
+		"specifier": "@/contract/views"
+	},
+	{
 		"file": "packages/cli/src/render/views.ts",
 		"specifier": "@/contract/views"
 	},

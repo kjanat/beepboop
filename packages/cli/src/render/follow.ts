@@ -4,6 +4,7 @@ import type { Client } from '@/cli/client/api';
 import type { Look, State } from '@/cli/render/look';
 import { lookOf, registryOf, table } from '@/cli/render/look';
 import { failure, prompted, unprompted } from '@/cli/render/output';
+import { buildState, stateOf } from '@/cli/render/states';
 import { routes } from '@/contract/routes';
 import type { BinaryProgress } from '@/contract/views';
 import type { CheckChoice } from '@/domain/release-gates.ts';
@@ -61,16 +62,6 @@ export interface Followed {
 	promotion?: string;
 }
 
-const outcomeState: Record<string, State> = {
-	succeeded: 'published',
-	failed: 'failed',
-	cancelled: 'skipped',
-	skipped: 'skipped',
-	pending: 'waiting',
-	uncertain: 'waiting',
-	'rate-limited': 'waiting',
-};
-
 function runUrl(execution: Tracked): string | undefined {
 	return execution.runId ? `https://github.com/${execution.repository}/actions/runs/${execution.runId}` : undefined;
 }
@@ -86,7 +77,7 @@ function links(out: Out, look: Look, execution: Tracked): void {
 
 function publicationRows(look: Look, execution: Tracked) {
 	return execution.publications.map(publication => {
-		const state = outcomeState[publication.outcome] ?? 'waiting';
+		const state = stateOf('publication', publication.outcome);
 		return {
 			package: look.pkg(publication.name),
 			registry: registryOf(publication.manager),
@@ -107,14 +98,8 @@ interface Stage {
 
 function stages(promotion: Tracked, binaries: BinaryProgress, finished: boolean): Stage[] {
 	const legs = binaries.legs;
-	const ended =
-		legs.filter(leg => leg.status === 'completed' || !['waiting', 'running', 'unknown'].includes(leg.kind ?? leg.state))
-			.length;
-	const broken =
-		legs.filter(leg =>
-			!['waiting', 'running', 'succeeded', 'skipped', 'neutral'].includes(leg.kind ?? leg.state)
-			&& (leg.kind !== 'unknown' || leg.status === 'completed')
-		).length;
+	const ended = legs.filter(leg => leg.status === 'completed' || buildState(leg) !== 'waiting').length;
+	const broken = legs.filter(leg => buildState(leg) === 'failed').length;
 	const total = promotion.configuration?.streams[promotion.stream]?.required?.length
 		|| promotion.publications.length;
 	const published = promotion.publications.filter(publication => publication.outcome === 'succeeded').length;
@@ -154,15 +139,7 @@ function stages(promotion: Tracked, binaries: BinaryProgress, finished: boolean)
 function binaryRows(look: Look, binaries: BinaryProgress) {
 	return binaries.legs.map(leg => {
 		const kind = leg.kind ?? leg.state;
-		const built: State = kind === 'succeeded'
-			? 'published'
-			: kind === 'unknown' && leg.status !== 'completed'
-			? 'waiting'
-			: !['waiting', 'running', 'skipped', 'neutral'].includes(kind)
-			? 'failed'
-			: kind === 'skipped' || kind === 'neutral'
-			? 'skipped'
-			: 'waiting';
+		const built = buildState(leg);
 		const asset = binaries.assets.find(entry => entry.build === leg.build && entry.target === leg.target);
 		const upload: State = asset?.uploaded ? 'published' : 'waiting';
 		return {
