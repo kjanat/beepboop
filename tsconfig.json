@@ -17,7 +17,8 @@
 			"@/auth/*": ["./packages/auth/src/*"],
 			"@/discovery/*": ["./packages/discovery/src/*"],
 			"@/notifications/*": ["./packages/notifications/src/*"],
-			"@/publication/*": ["./packages/publication/src/*"]
+			"@/publication/*": ["./packages/publication/src/*"],
+			"@/actions/*": ["./packages/actions/src/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",
@@ -45,7 +46,6 @@
 		"src/**/*.astro",
 		"src/**/*.ts",
 		"scripts/**/*.ts",
-		"actions/**/*.ts",
 		"packages/*/src/**/*.ts",
 		"test/**/*.ts"
 	]

@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Command, Runner } from '@root/actions/runtime/publish.ts';
-import { publishPackages } from '@root/actions/runtime/publish.ts';
-import { call } from '@root/actions/runtime/session.ts';
 import { tokenHost, tokenRequest } from '@root/test/support/actions.ts';
 import { withConsoleLog, withEnvironment } from '@root/test/support/process.ts';
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
+import type { Command, Runner } from '@/actions/publish.ts';
+import { publishPackages } from '@/actions/publish.ts';
+import { call } from '@/actions/session.ts';
 
 export interface Publishing {
 	run: Runner['run'];

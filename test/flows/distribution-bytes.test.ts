@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { requestBody } from '@root/actions/runtime/protocol.ts';
 import { materialize } from '@root/test/support/actions.ts';
 import { Result } from 'effect';
+import { requestBody } from '@/actions/protocol.ts';
 import { array, record } from '@/kernel/schema/result.ts';
 
 test('distribution protocol preserves binary build artifacts without UTF-8 conversion', () => {

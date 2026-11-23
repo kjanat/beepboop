@@ -1,6 +1,6 @@
-import type { Environment, Invalid } from '@root/actions/runtime/protocol.ts';
-import { ActionFailure, attempt, fail, required, retried } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
+import type { Environment, Invalid } from '@/actions/protocol.ts';
+import { ActionFailure, attempt, fail, required, retried } from '@/actions/protocol.ts';
 import { bearerHeaders } from '@/contract/http.ts';
 import { errorMessage } from '@/kernel/errors/refusal.ts';
 import { responseJson } from '@/kernel/http/body.ts';

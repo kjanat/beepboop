@@ -1,5 +1,25 @@
 [
 	{
+		"file": "packages/actions/src/generate-homebrew.ts",
+		"specifier": "@/distribution/homebrew/cli.ts"
+	},
+	{
+		"file": "packages/actions/src/generate-scoop.ts",
+		"specifier": "@/distribution/scoop/cli.ts"
+	},
+	{
+		"file": "packages/actions/src/generate-winget.ts",
+		"specifier": "@/distribution/winget/cli.ts"
+	},
+	{
+		"file": "packages/actions/src/protocol.ts",
+		"specifier": "@/contract/http.ts"
+	},
+	{
+		"file": "packages/actions/src/session.ts",
+		"specifier": "@/contract/http.ts"
+	},
+	{
 		"file": "packages/auth/src/http/security.ts",
 		"specifier": "@/contract/routes"
 	},

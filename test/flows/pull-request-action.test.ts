@@ -2,7 +2,6 @@ import { afterEach, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pullRequest } from '@root/actions/runtime/pull-request.ts';
 import { gitOutput, materialize, runRuntime } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { botId, filesAt } from '@root/test/support/github.ts';
@@ -11,6 +10,7 @@ import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
+import { pullRequest } from '@/actions/pull-request.ts';
 import { githubApiVersion } from '@/github/transport.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {

@@ -47,6 +47,19 @@
         "wrangler": "4.166.0",
       },
     },
+    "packages/actions": {
+      "name": "@beepboopbot/actions",
+      "version": "0.0.0",
+      "dependencies": {
+        "@beepboopbot/discovery": "workspace:*",
+        "@beepboopbot/domain": "workspace:*",
+        "@beepboopbot/github": "workspace:*",
+        "@beepboopbot/host": "workspace:*",
+        "@beepboopbot/kernel": "workspace:*",
+        "@beepboopbot/publication": "workspace:*",
+        "effect": "^4.1.2",
+      },
+    },
     "packages/auth": {
       "name": "@beepboopbot/auth",
       "version": "0.0.0",
@@ -234,6 +247,8 @@
     "@babel/parser": ["@babel/parser@7.29.15", "", { "dependencies": { "@babel/types": "^7.29.15" }, "bin": "./bin/babel-parser.js" }, "sha512-RpKWyisHoP81twtSCgmE02iU0RnPcq1DN5bBEbpUePrjA9Q3wXhufnCJrrayPpoZieqFh3zyZQqwtSK0gGccRA=="],
 
     "@babel/types": ["@babel/types@7.29.15", "", { "dependencies": { "@babel/helper-string-parser": "^7.29.15", "@babel/helper-validator-identifier": "^7.29.7" } }, "sha512-/XKpKDakL//LZ66bq1XsZOswuqeI5MZqPLDu18o3XdkU1fNJ7bdPtzgnc4ZNS+bBGHV0FJG8jjb8SwcC3nNVQQ=="],
+
+    "@beepboopbot/actions": ["@beepboopbot/actions@workspace:packages/actions"],
 
     "@beepboopbot/auth": ["@beepboopbot/auth@workspace:packages/auth"],
 

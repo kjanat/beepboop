@@ -3,11 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { publishRefs } from '@root/actions/runtime/refs.ts';
 import { gitOutput, materialize } from '@root/test/support/actions.ts';
 import type { SigningKey } from '@root/test/support/signing.ts';
 import { signingKey } from '@root/test/support/signing.ts';
 import { Effect, Result } from 'effect';
+import { publishRefs } from '@/actions/refs.ts';
 import type { DistributionEvidence, RefChange, RefPlan } from '@/domain/refs.ts';
 import { tagObject, tagPayload } from '@/domain/refs.ts';
 
