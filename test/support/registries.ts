@@ -2,6 +2,7 @@ export interface NpmPackage {
 	latest?: string;
 	versions: Map<string, string>;
 	tags: Record<string, string>;
+	stubs?: Set<string>;
 }
 
 export function npmIntegrity(name: string, version: string): string {
@@ -18,6 +19,12 @@ export class FakeNpm {
 		this.packages.set(name, entry);
 		return integrity;
 	}
+	stage(name: string, version: string): void {
+		const staged = `${version}-stage`;
+		this.publish(name, staged);
+		const entry = this.packages.get(name);
+		if (entry) entry.stubs = new Set([...(entry.stubs ?? []), staged]);
+	}
 	handle(request: Request): Response {
 		const path = decodeURIComponent(new URL(request.url).pathname);
 		const tags = /^\/-\/package\/(.+)\/dist-tags$/.exec(path);
@@ -33,7 +40,11 @@ export class FakeNpm {
 			return Response.json({
 				name: match[1],
 				'dist-tags': entry.tags,
-				versions: Object.fromEntries([...entry.versions.keys()].map(key => [key, { version: key }])),
+				versions: Object.fromEntries(
+					[...entry.versions.keys()].map(
+						key => [key, { version: key, ...(entry.stubs?.has(key) ? { stub: true } : {}) }],
+					),
+				),
 			});
 		}
 		const integrity = entry.versions.get(version);

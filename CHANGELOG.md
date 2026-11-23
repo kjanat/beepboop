@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A package watch skips the placeholder version that npm creates for a staged publish, such as `0.0.0-stage`. The watch announced that placeholder as a published version.
 - A release whose workflow run succeeds but reports no outcome for a required package checks the registry for it. A package that a run skips because an earlier run already published that version counts as published. A package the registry lacks keeps the release blocked with the reason "The workflow run reported no outcome for" and the package. The release sat blocked without a reason.
 - A release skips an unfinished job that has an `environment`, such as an Actions publishing job behind a wait timer in the workflow that verifies the commit. The release waited until that job finished. Such a job that failed still stops the release.
 - `beepboop runs publish` clears the reason the release waited for. After a forced publish the CLI printed "Releases when the commit is verified and its checks pass" for a release already on its way.
