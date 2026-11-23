@@ -321,9 +321,9 @@ function referenceProbe(reference: string, version: string): Publication | undef
 	};
 }
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, Automation>;
-type GateSubject = Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'> & {
-	reruns?: number[];
-};
+type GateSubject =
+	& Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>
+	& Partial<Pick<Execution, 'reruns'>>;
 interface GateOutcome {
 	gate: ReleaseGate;
 	state: 'passed' | 'waiting' | 'failed';
@@ -331,6 +331,7 @@ interface GateOutcome {
 	detail?: string;
 	runId?: number;
 	runDone?: boolean;
+	runAttempt?: number;
 }
 interface CommitGates {
 	manifest: string[];
@@ -2906,27 +2907,26 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const store = yield* this.store;
 				const at = clock.currentTimeMillisUnsafe();
 				if (choice === 'rerun') {
-					const runs = [
-						...new Set(
-							outcomes.flatMap(outcome =>
-								outcome.state === 'failed' && outcome.runId !== undefined && outcome.runDone === true
-									&& stopping.some(entry => sameGate(entry.gate, outcome.gate))
-									? [outcome.runId]
-									: []
-							),
+					const runs = new Map(
+						outcomes.flatMap(outcome =>
+							outcome.state === 'failed' && outcome.runId !== undefined && outcome.runDone === true
+								&& stopping.some(entry => sameGate(entry.gate, outcome.gate))
+								? [[outcome.runId, (outcome.runAttempt ?? 1) + 1] as const]
+								: []
 						),
-					];
-					if (!runs.length) return yield* precondition('No finished check run failed, so none can rerun');
+					);
+					if (!runs.size) return yield* precondition('No finished check run failed, so none can rerun');
 					const gateway = yield* this.gateway;
 					const token = yield* gateway.token(execution.repository, execution.repositoryId, {
 						contents: 'read',
 						actions: 'write',
 					});
-					for (const run of runs) {
+					for (const [run, attempt] of runs) {
 						yield* gateway.call(`/repos/${execution.repository}/actions/runs/${run}/rerun-failed-jobs`, token, 'POST');
+						next.reruns = [...(next.reruns ?? []).filter(rerun => rerun.id !== run), { id: run, attempt }];
+						yield* this.put(next);
+						yield* store.audit(actor, 'promotion.checks.rerun', `${id}: ${run}`);
 					}
-					next.reruns = [...new Set([...(execution.reruns ?? []), ...runs])];
-					yield* store.audit(actor, 'promotion.checks.rerun', `${id}: ${runs.join(', ')}`);
 				} else if (choice === 'skip') {
 					next.skippedGates = [
 						...(execution.skippedGates ?? []),
@@ -3212,7 +3212,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				),
 			);
 			const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
-			const statuses = new Map(workflowRuns.map(run => [String(run.id), run.status]));
+			const statuses = new Map(workflowRuns.map(run => [String(run.id), run]));
 			const runOf = (run: (typeof runs)[number]) => /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
 			const pathOf = (run: (typeof runs)[number]) => paths.get(runOf(run) ?? '');
 			const unfinished = runs.filter(run => run.status !== 'completed');
@@ -3231,11 +3231,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			for (const run of gating) {
 				const conclusion = String(run.conclusion);
 				const runId = runOf(run);
-				const runDone = !runId || !statuses.has(runId) || statuses.get(runId) === 'completed';
+				const workflowRun = statuses.get(runId ?? '');
+				const runDone = workflowRun === undefined || workflowRun.status === 'completed';
 				const failed = run.status === 'completed' && !passingConclusions.includes(conclusion);
-				const rerunning = failed && !runDone && subject.reruns?.includes(Number(runId)) === true;
+				const requested = subject.reruns?.find(rerun => rerun.id === Number(runId));
+				const rerunning = failed && requested !== undefined
+					&& (!runDone || (workflowRun?.run_attempt ?? requested.attempt) < requested.attempt);
 				outcomes.push({
 					...(runId ? { runId: Number(runId), runDone } : {}),
+					...(workflowRun ? { runAttempt: workflowRun.run_attempt } : {}),
 					gate: { kind: 'check', name: String(run.name) },
 					state: run.status !== 'completed' || rerunning ? 'waiting' : failed ? 'failed' : 'passed',
 					fact: rerunning ? 'rerunning' : run.status === 'completed' ? conclusion : 'running',

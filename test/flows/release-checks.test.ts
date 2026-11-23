@@ -265,7 +265,7 @@ test('rerun reruns every workflow run whose check failed, and refuses a run that
 	});
 	expect((await api('/api/executions/checks', { id, choice: 'rerun' })).status).toBe(200);
 	expect(repository.runs.map(run => [run.id, run.attempt])).toEqual([[7, 2], [8, 2], [9, 1]]);
-	expect((await audit('promotion.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7, 8`]);
+	expect((await audit('promotion.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7`, `${id}: 8`]);
 	const again = await api('/api/executions/checks', { id, choice: 'rerun' });
 	expect([again.status, text(again.body, 'error')]).toEqual([422, 'No finished check run failed, so none can rerun']);
 }, 60_000);
@@ -332,4 +332,58 @@ test('a choice on a started release whose checks pass by now restarts it', async
 	expect(await audit('promotion.checks.skip')).toEqual([]);
 	await world.wait(16_000);
 	expect(dispatched()).toEqual([id]);
+}, 60_000);
+
+test('a started release keeps waiting while GitHub still shows the attempt before the rerun', async () => {
+	const { repository, api, id } = await stopped();
+	const [waiting] = await promotions(api);
+	if (!waiting) throw new Error('Expected a promotion');
+	await world.coordinator(repository).enqueue({
+		...waiting,
+		approvedBy: 'start',
+		started: { via: 'cli', actor: 'owner' },
+	});
+	await world.wait(16_000);
+	expect((await promotions(api))[0]?.state).toBe('failed');
+	expect((await api('/api/executions/checks', { id, choice: 'rerun' })).status).toBe(200);
+	const run = repository.runs.find(entry => entry.id === 7);
+	if (!run) throw new Error('Expected the CI run');
+	run.attempt = 1;
+	run.status = 'completed';
+	await world.wait(60_000);
+	expect((await promotions(api)).map(entry => [entry.state, entry.reason])).toEqual([
+		['awaiting-approval', 'test running'],
+	]);
+	run.attempt = 2;
+	await world.wait(60_000);
+	expect((await promotions(api)).map(entry => [entry.state, entry.reason])).toEqual([
+		['failed', 'checks failed: test'],
+	]);
+}, 60_000);
+
+test('a rerun keeps the reruns GitHub accepted when a later rerun request fails', async () => {
+	const { repository, api, id } = await stopped({
+		checks: [
+			{ name: 'test', status: 'completed', conclusion: 'failure', runId: 7 },
+			{ name: 'lint', status: 'completed', conclusion: 'failure', runId: 8 },
+		],
+		runs: [{ id: 7, status: 'completed' }, { id: 8, status: 'completed' }],
+		reason: 'checks failed: test, lint',
+	});
+	world.network.serve(
+		'api.github.com',
+		request =>
+			new URL(request.url).pathname.endsWith('/actions/runs/8/rerun-failed-jobs')
+				? new Response(null, { status: 500 })
+				: world.github.handle(request),
+	);
+	expect((await api('/api/executions/checks', { id, choice: 'rerun' })).status).not.toBe(200);
+	expect((await audit('promotion.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7`]);
+	const stored = decodeSync(
+		mutableStruct({
+			reruns: Schema.optional(mutableArray(mutableStruct({ id: Schema.Finite, attempt: Schema.Finite }))),
+		}),
+		await world.coordinators.instance(String(repository.id)).storage.get(`execution:${id}`),
+	);
+	expect(stored.reruns).toEqual([{ id: 7, attempt: 2 }]);
 }, 60_000);

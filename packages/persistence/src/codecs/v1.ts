@@ -350,7 +350,7 @@ const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 		mutableStruct({ via: startChannel, actor: Schema.String, force: Schema.optional(Schema.Literal(true)) }),
 	),
 	skippedGates: Schema.optional(mutableArray(gateSkip)),
-	reruns: Schema.optional(mutableArray(Schema.Finite)),
+	reruns: Schema.optional(mutableArray(mutableStruct({ id: Schema.Finite, attempt: Schema.Finite }))),
 	versionPrMerge: Schema.optional(versionPrMerge),
 	approvedAt: Schema.optional(Schema.Finite),
 	publications: mutableArray(packagePublication),

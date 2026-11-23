@@ -154,7 +154,7 @@ export interface Execution {
 	approvedBy?: 'merge' | 'start';
 	started?: ReleaseStarted;
 	skippedGates?: GateSkip[];
-	reruns?: number[];
+	reruns?: { id: number; attempt: number }[];
 	versionPrMerge?: VersionPrMerge;
 	approvedAt?: number;
 	publications: Publication[];
