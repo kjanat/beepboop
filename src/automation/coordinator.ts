@@ -86,6 +86,14 @@ import {
 	packageTagRows,
 	taggedReleases,
 } from '@/automation/package-tags';
+import {
+	commitVersion,
+	enableAutoMerge,
+	preparedSnapshot,
+	pullRequest,
+	restatePreparation,
+	resumePreparation,
+} from '@/automation/preparation-pull-requests';
 import type { PublishBudget } from '@/automation/publish-budget';
 import { ReleaseHistory } from '@/automation/release-history';
 import { releaseNotes } from '@/automation/release-notes';
@@ -1122,7 +1130,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const plan = preparation.managed?.plan ?? preparation.plan;
 				if (!result || !plan) return yield* precondition('Preparation result unavailable');
 				const revision = yield* Effect.fromResult(sha(target));
-				const snapshot = yield* (yield* this.gateway).preparedSnapshot(
+				const snapshot = yield* preparedSnapshot(
+					yield* this.gateway,
 					preparation.repository,
 					preparation.repositoryId,
 					result,
@@ -1248,19 +1257,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					preparationBody(execution)
 				}`;
 				const result = committed(execution)
-					? yield* gateway.commitVersion(
-						source,
-						versionMessage(execution),
-						ordered,
-						prepared.head,
-						head => {
-							prepared.head = head;
-							return this.put(execution);
-						},
-					)
+					? yield* commitVersion(gateway, source, versionMessage(execution), ordered, prepared.head, head => {
+						prepared.head = head;
+						return this.put(execution);
+					})
 					: prepared.head
-					? yield* gateway.resumePreparation(source, branch, title, body, prepared.head)
-					: yield* gateway.pullRequest(
+					? yield* resumePreparation(gateway, source, branch, title, body, prepared.head)
+					: yield* pullRequest(
+						gateway,
 						source,
 						branch,
 						title,
@@ -1312,7 +1316,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const next = preparationBody(upgraded);
 			const result = upgraded.prepared?.result ?? upgraded.managed?.result;
 			if (result && result.kind !== 'commit' && previous !== next) {
-				const work = (yield* this.gateway).restatePreparation(
+				const work = restatePreparation(
+					yield* this.gateway,
 					upgraded.repository,
 					upgraded.repositoryId,
 					result.url,
@@ -1328,7 +1333,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			?? execution.configuration.streams[execution.stream]?.prepare.versionPrMerge;
 		if (result.kind === 'commit' || result.autoMerge || !method || method === 'manual') return Effect.succeed(result);
 		return Effect.gen({ self: this }, function*() {
-			const work = (yield* this.gateway).enableAutoMerge(
+			const work = enableAutoMerge(
+				yield* this.gateway,
 				execution.repository,
 				execution.repositoryId,
 				result.url,
@@ -3942,7 +3948,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return this.put(execution);
 				};
 				const result = committed(execution)
-					? yield* gateway.commitVersion(
+					? yield* commitVersion(
+						gateway,
 						snapshot,
 						versionMessage(execution),
 						operation.plan.edits,
@@ -3950,14 +3957,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						checkpoint,
 					)
 					: operation.head
-					? yield* gateway.resumePreparation(
+					? yield* resumePreparation(
+						gateway,
 						snapshot,
 						operation.branch,
 						operation.title,
 						operation.body,
 						operation.head,
 					)
-					: yield* gateway.pullRequest(
+					: yield* pullRequest(
+						gateway,
 						snapshot,
 						operation.branch,
 						operation.title,

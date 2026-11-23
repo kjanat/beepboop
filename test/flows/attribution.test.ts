@@ -3,6 +3,7 @@ import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
+import { pullRequest } from '@/automation/preparation-pull-requests';
 import { withAutomation } from '@/automation/service';
 
 const trailer = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
@@ -19,7 +20,8 @@ test('a pull request commit carries the administrator trailer only for work that
 	const edit = { path: 'NOTES.md', before: '', after: 'notes\n' };
 	const commit = async (branch: string, coAuthored: boolean) => {
 		const { head } = await Effect.runPromise(
-			gateway.pullRequest(
+			pullRequest(
+				gateway,
 				snapshot,
 				branch,
 				'chore: notes',

@@ -5,6 +5,7 @@ import { createReleasePreparation } from '@/automation/managed';
 import { planRelease, selectedReleasePackages } from '@/automation/managers';
 import { planReleaseSet } from '@/automation/planning';
 import { planHookUpdates } from '@/automation/precommit';
+import { pullRequest } from '@/automation/preparation-pull-requests';
 import { capabilitySentence, releasable, releaseCapability, startRefusal } from '@/automation/release-capability';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
@@ -348,7 +349,8 @@ export const releaseEndpoints = {
 			if (input.preview !== false || !edits.length) {
 				return { sourceSha: snapshot.sha, upstreamRelease: release, edits };
 			}
-			const result = yield* service.gateway.pullRequest(
+			const result = yield* pullRequest(
+				service.gateway,
 				snapshot,
 				`release/hooks/${release.repository.id}/${release.commit}`,
 				`chore: update hooks to ${release.version}`,
