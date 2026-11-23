@@ -3,7 +3,8 @@ import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import { gitHubRequest, RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/github';
+import { gitHubRequest } from '@/github/transport.ts';
 
 let world: World;
 eachWorld(created => {

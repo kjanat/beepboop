@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect';
 import { TestClock } from 'effect/testing';
 import { applyVersionFiles } from '@/automation/editors';
-import { GitHub, gitHubRequest } from '@/automation/github';
 import { latestVersion, registryRequest } from '@/automation/managers/verification';
 import {
 	ApplicationConfiguration,
@@ -20,6 +19,7 @@ import { Vault } from '@/automation/vault';
 import { call, send } from '@/contract/client';
 import { routes } from '@/contract/routes';
 import { https } from '@/distribution/assets';
+import { GitHubTransport, gitHubRequest } from '@/github/transport.ts';
 import { classify, fromSync, recover } from '@/kernel/errors/classify.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { retryTransient } from '@/kernel/http/retry.ts';
@@ -247,7 +247,7 @@ test('the application layer uses explicitly supplied database, GitHub, HTTP and 
 	const calls: string[] = [];
 	const supplied = Layer.mergeAll(
 		Layer.succeed(Database, sql),
-		Layer.succeed(GitHub, {
+		Layer.succeed(GitHubTransport, {
 			call: path =>
 				Effect.sync(() => {
 					calls.push(path);

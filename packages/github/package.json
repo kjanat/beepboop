@@ -1,0 +1,13 @@
+{
+	"name": "@beepboopbot/github",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./*": "./src/*"
+	},
+	"dependencies": {
+		"@beepboopbot/kernel": "workspace:*",
+		"effect": "^4.1.2"
+	}
+}
