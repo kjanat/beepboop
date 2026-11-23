@@ -8,9 +8,7 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import type { Element, HTMLElement, HTMLFormElement, HTMLInputElement, HTMLSelectElement } from 'happy-dom';
 import { Window } from 'happy-dom';
-import { parseSetupPlan } from '@/automation/setup-plan';
 import { routes } from '@/contract/routes';
-import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import {
 	alwaysStarted,
 	existingTriggersQuestion,
@@ -32,6 +30,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { choicesFields, streamFields, workflowFields } from '@/setup/editing/fields.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
 
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;

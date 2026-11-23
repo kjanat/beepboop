@@ -1,4 +1,3 @@
-import type { SetupChoices } from '@/automation/setup-types';
 import { staticGuard } from '@/discovery/release-graph/bindings.ts';
 import type { ReleaseGraph, StreamProposal, StreamWorkflow, Target } from '@/discovery/release-graph/graph.ts';
 import { code } from '@/discovery/release-graph/graph.ts';
@@ -11,6 +10,7 @@ import { latestTag } from '@/domain/version-tags.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';
+import type { SetupChoices } from '@/setup/types.ts';
 
 const labels: Record<Destination, string> = {
 	npm: 'npm',

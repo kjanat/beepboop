@@ -64,76 +64,12 @@
 		"specifier": "@/contract/routes"
 	},
 	{
-		"file": "packages/cli/src/commands/adopt/choices.ts",
-		"specifier": "@/automation/setup-defaults"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/choices.ts",
-		"specifier": "@/automation/setup-summary"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/choices.ts",
-		"specifier": "@/automation/setup-types"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/choices.ts",
-		"specifier": "@/contract/setup"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/choices.ts",
-		"specifier": "@/contract/setup-fields"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/complete.ts",
-		"specifier": "@/automation/setup-plan"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/complete.ts",
-		"specifier": "@/automation/setup-types"
-	},
-	{
 		"file": "packages/cli/src/commands/adopt/complete.ts",
 		"specifier": "@/contract/routes"
 	},
 	{
-		"file": "packages/cli/src/commands/adopt/flag-builders.ts",
-		"specifier": "@/contract/setup"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/flags.ts",
-		"specifier": "@/automation/setup-defaults"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/flags.ts",
-		"specifier": "@/automation/setup-types"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/flags.ts",
-		"specifier": "@/contract/setup"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/flags.ts",
-		"specifier": "@/contract/setup-fields"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/index.ts",
-		"specifier": "@/automation/setup-plan"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/index.ts",
-		"specifier": "@/automation/setup-summary"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/index.ts",
-		"specifier": "@/automation/setup-types"
-	},
-	{
 		"file": "packages/cli/src/commands/adopt/index.ts",
 		"specifier": "@/contract/routes"
-	},
-	{
-		"file": "packages/cli/src/commands/adopt/index.ts",
-		"specifier": "@/contract/setup"
 	},
 	{
 		"file": "packages/cli/src/commands/notifications.ts",
@@ -241,15 +177,7 @@
 	},
 	{
 		"file": "packages/persistence/src/codecs/v1.ts",
-		"specifier": "@/automation/setup-types"
-	},
-	{
-		"file": "packages/persistence/src/codecs/v1.ts",
 		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/persistence/src/codecs/v1.ts",
-		"specifier": "@/contract/setup"
 	},
 	{
 		"file": "packages/persistence/src/codecs/v1.ts",

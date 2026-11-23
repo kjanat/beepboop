@@ -1,24 +1,8 @@
 import { Effect, Result, Schema } from 'effect';
 import { newVersionStartRefusal } from '@/automation/release-capability';
-import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
-import { actionReleaseOffer } from '@/automation/setup-action';
-import { behaviourChanges, changeDetails } from '@/automation/setup-changes';
-import { completeTaggedStreams } from '@/automation/setup-completion';
-import { crateScript, defaultTagPrefix, refreshedCommands, suggestedCommands } from '@/automation/setup-defaults';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import { checkPublishing } from '@/automation/setup-publishing';
-import { startWorkflow } from '@/automation/setup-start';
-import { streamSummary } from '@/automation/setup-summary';
-import type { SetupChoices, SetupOption, SetupPlan, SetupWorkflow, TriggerHandover } from '@/automation/setup-types';
-import { approvals, triggerHandovers, versionings } from '@/automation/setup-types';
-import {
-	integrateReleaseWorkflow,
-	integrateWorkflow,
-	workflowActions,
-	workflowCredentials,
-} from '@/automation/setup-workflows';
 import type { Configuration } from '@/automation/types';
-import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
 import { binaryCandidates } from '@/discovery/analysis/binary-candidates.ts';
 import { companionProposals } from '@/discovery/analysis/companions.ts';
 import { discover } from '@/discovery/discover.ts';
@@ -84,6 +68,22 @@ import { mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
 import { formatJson, json } from '@/kernel/text/json.ts';
 import { listed } from '@/kernel/text/listing.ts';
 import { canVerifyPublication } from '@/publication/registries/verify.ts';
+import { adoptionChoices, startCommand } from '@/setup/adoption.ts';
+import { behaviourChanges, changeDetails } from '@/setup/changes.ts';
+import { completeTaggedStreams } from '@/setup/completion.ts';
+import { bumpable, setupChoicesSchema, startable } from '@/setup/contract.ts';
+import { crateScript, defaultTagPrefix, refreshedCommands, suggestedCommands } from '@/setup/defaults.ts';
+import { streamSummary } from '@/setup/summary.ts';
+import type { SetupChoices, SetupOption, SetupPlan, SetupWorkflow, TriggerHandover } from '@/setup/types.ts';
+import { approvals, triggerHandovers, versionings } from '@/setup/types.ts';
+import { actionReleaseOffer } from '@/setup/workflows/action-release.ts';
+import {
+	integrateReleaseWorkflow,
+	integrateWorkflow,
+	workflowActions,
+	workflowCredentials,
+} from '@/setup/workflows/integrate.ts';
+import { startWorkflow } from '@/setup/workflows/start.ts';
 
 function requirablePackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);

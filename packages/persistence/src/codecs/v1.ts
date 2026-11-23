@@ -2,7 +2,6 @@ import { Schema, Struct } from 'effect';
 import { completion } from '@/automation/execution';
 import type { ResolvedInput } from '@/automation/execution-outputs';
 import type { ReleaseSetPlan } from '@/automation/planning';
-import type { SetupEdit } from '@/automation/setup-types';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -11,7 +10,6 @@ import type {
 	ReleasePlan,
 	ReleaseReference,
 } from '@/automation/types';
-import { setupChoicesSchema } from '@/contract/setup';
 import { executionStates } from '@/contract/views';
 import { managerDestinationIds, managerNames } from '@/domain/catalog.ts';
 import type { ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
@@ -327,14 +325,6 @@ const automationEventSchema: Schema.Codec<AutomationEvent, unknown> = mutableStr
 	workflow: Schema.optional(Schema.String),
 	release: Schema.optional(releaseReference),
 });
-const setupEditSchema: Schema.Codec<SetupEdit, unknown> = mutableStruct({
-	repositoryId: Schema.Finite,
-	number: Schema.Finite,
-	head: Schema.String,
-	body: Schema.String,
-	choices: setupChoicesSchema,
-	due: Schema.Finite,
-});
 
 export function currentState(execution: Execution): Execution {
 	const actor = execution.reason?.match(/^Cancelled by (.+)$/)?.[1];
@@ -355,7 +345,4 @@ export function decodeExecutionV1(value: unknown): Execution {
 }
 export function decodeEventV1(value: unknown): AutomationEvent {
 	return decodeSync(automationEventSchema, value);
-}
-export function decodeSetupEditV1(value: unknown): SetupEdit {
-	return decodeSync(setupEditSchema, value);
 }

@@ -56,9 +56,7 @@ import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { githubFailureReason } from '@/automation/run-labels';
 import type { AutomationBindings } from '@/automation/service';
 import { Automation, applicationLayer, withAutomation } from '@/automation/service';
-import { binaryLegs } from '@/automation/setup-binaries';
 import { maintainSetup } from '@/automation/setup-maintenance';
-import type { SetupEdit } from '@/automation/setup-types';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type {
 	Artifact,
@@ -145,7 +143,7 @@ import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import { purl } from '@/package-url';
 import { identifyExecution } from '@/persistence/codecs/stored';
-import { decodeEventV1, decodeExecutionV1, decodeSetupEditV1 } from '@/persistence/codecs/v1';
+import { decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
@@ -184,6 +182,9 @@ import {
 	verifyPublication,
 	verifySecondaryPublications,
 } from '@/publication/registries/verify.ts';
+import { decodeSetupEditV1 } from '@/setup/edit.ts';
+import type { SetupEdit } from '@/setup/types.ts';
+import { binaryLegs } from '@/setup/workflows/binaries.ts';
 
 export interface CoordinatorBindings extends AutomationBindings {
 	DB: SqlDatabase;

@@ -1,8 +1,8 @@
 import { Result } from 'effect';
-import type { SetupPlan } from '@/automation/setup-types';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
+import type { SetupPlan } from '@/setup/types.ts';
 
 /** Entry points are a starting list; owners add chunks, licenses and runtime assets. */
 export function actionReleaseOffer(snapshot: Snapshot): SetupPlan['actionRelease'] {

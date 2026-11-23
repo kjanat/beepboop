@@ -1,21 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { Ask, CLIError, Out, SelectChoice } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import type { Selection } from '@/automation/setup-defaults';
-import {
-	ledgerCommand,
-	preparationReasons,
-	suggestedCommands,
-	suggestedWorkflowFile,
-	ungenerated,
-} from '@/automation/setup-defaults';
-import { streamSummary } from '@/automation/setup-summary';
-import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
 import { lookOf } from '@/cli/render/look';
 import { failure, prompted } from '@/cli/render/output';
-import { bumpable, setupStream, startable } from '@/contract/setup';
-import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/contract/setup-fields';
-import { jsonFields, streamFields } from '@/contract/setup-fields';
 import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { BinaryBuild, BinaryRelease } from '@/domain/binary-platforms.ts';
 import { binaryTargets, defaultBinaryTargets, leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
@@ -45,6 +32,19 @@ import {
 import { actionsRevisionPattern } from '@/domain/workflow-setup.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
 import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
+import { bumpable, setupStream, startable } from '@/setup/contract.ts';
+import type { Selection } from '@/setup/defaults.ts';
+import {
+	ledgerCommand,
+	preparationReasons,
+	suggestedCommands,
+	suggestedWorkflowFile,
+	ungenerated,
+} from '@/setup/defaults.ts';
+import type { ChoicesField, Editors, StreamField, WorkflowField } from '@/setup/editing/fields.ts';
+import { jsonFields, streamFields } from '@/setup/editing/fields.ts';
+import { streamSummary } from '@/setup/summary.ts';
+import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/setup/types.ts';
 
 export const choicesEditors = { streams: 'control', actionsRevision: 'control' } as const satisfies Editors<
 	ChoicesField

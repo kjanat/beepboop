@@ -9,8 +9,6 @@ import {
 	setupOptions,
 	withRegistryStatus,
 } from '@/automation/setup';
-import { marked } from '@/automation/setup-body';
-import { changeDetails, setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import {
 	autoMergeSetup,
@@ -21,10 +19,8 @@ import {
 	setupHead,
 	setupStatus,
 } from '@/automation/setup-pull-requests';
-import type { SetupChoices } from '@/automation/setup-types';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
-import { setupChoicesSchema } from '@/contract/setup';
 import { discover } from '@/discovery/discover.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { canonicalConfiguration, outdatedConfiguration } from '@/domain/configuration/canonical.ts';
@@ -45,6 +41,10 @@ import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/sc
 import { formatJson, json } from '@/kernel/text/json.ts';
 import { parse, replaceDocument, sql } from '@/persistence/d1/database';
 import { documentRow } from '@/persistence/d1/document-row';
+import { marked } from '@/setup/body.ts';
+import { changeDetails, setupBranch, setupTitle } from '@/setup/changes.ts';
+import { setupChoicesSchema } from '@/setup/contract.ts';
+import type { SetupChoices } from '@/setup/types.ts';
 
 const editsSchema = mutableArray(mutableStruct({ path: Schema.String, before: Schema.String, after: Schema.String }));
 export function sameEdits(left: Edit[], right: Edit[]): boolean {

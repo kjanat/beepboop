@@ -1,6 +1,4 @@
 import { Effect, Schema } from 'effect';
-import type { SetupOperation, SetupPlan, SetupWorkflow } from '@/automation/setup-types';
-import { actionRelease } from '@/contract/setup';
 import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import { binaries, binaryBuild, binaryTargets } from '@/domain/binary-platforms.ts';
 import { publicationSchema } from '@/domain/package-publication.ts';
@@ -18,6 +16,8 @@ import {
 	schemaIssues,
 	strictStruct,
 } from '@/kernel/schema/structs.ts';
+import { actionRelease } from '@/setup/contract.ts';
+import type { SetupOperation, SetupPlan, SetupWorkflow } from '@/setup/types.ts';
 
 const workflowShape = mutableStruct({
 	file: Schema.String,

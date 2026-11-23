@@ -1,9 +1,6 @@
 import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
 import { flag } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import { streamSummary } from '@/automation/setup-summary';
-import type { SetupPlan } from '@/automation/setup-types';
 import type { Client } from '@/cli/client/api';
 import type { repositoryArg } from '@/cli/command';
 import { base, checkoutArg, connected } from '@/cli/command';
@@ -17,10 +14,13 @@ import type { Look } from '@/cli/render/look';
 import { lookOf, registryOf, step, table } from '@/cli/render/look';
 import { emit, failure, prompted, unprompted } from '@/cli/render/output';
 import { routes } from '@/contract/routes';
-import { setupChoicesSchema } from '@/contract/setup';
 import { repositoryReference } from '@/domain/repository-name.ts';
 import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 import { listed } from '@/kernel/text/listing.ts';
+import { setupChoicesSchema } from '@/setup/contract.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import { streamSummary } from '@/setup/summary.ts';
+import type { SetupPlan } from '@/setup/types.ts';
 
 function parsePlan(value: unknown): Effect.Effect<SetupPlan, CLIError> {
 	return parseSetupPlan(value).pipe(Effect.mapError(error => failure(error.message, 'INVALID_PLAN')));

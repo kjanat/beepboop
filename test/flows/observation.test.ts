@@ -8,8 +8,6 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { runFailedNote } from '@/automation/execution';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices } from '@/automation/setup-types';
 import type { Execution } from '@/automation/types';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -27,6 +25,8 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import type { SetupChoices } from '@/setup/types.ts';
 
 let world: World;
 eachWorld(created => {

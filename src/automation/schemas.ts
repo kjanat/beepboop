@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
-import type { SetupOption } from '@/automation/setup-types';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import type { SetupOption } from '@/setup/types.ts';
 
 export const setupOptionsSchema: Schema.Codec<SetupOption[], unknown> = mutableArray(Schema.Union([
 	mutableStruct({ kind: Schema.Literals(['package', 'required']), stream: Schema.String, package: Schema.String }),

@@ -5,8 +5,6 @@ import { applySetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
-import { parseSetupPlan } from '@/automation/setup-plan';
 import { discover } from '@/discovery/discover.ts';
 import type { ReleaseGraph, StreamProposal, Target } from '@/discovery/release-graph/graph.ts';
 import { inferReleaseGraph } from '@/discovery/release-graph/graph.ts';
@@ -30,6 +28,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { adoptionChoices, adoptionMarkdown } from '@/setup/adoption.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
 
 const snapshotSchema = mutableStruct({
 	repository: mutableStruct({ id: Schema.Finite, name: Schema.String, defaultBranch: Schema.String }),

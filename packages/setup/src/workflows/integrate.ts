@@ -2,19 +2,6 @@ import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
 import type { Alias, Document, Node } from 'yaml';
 import { isAlias, isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
-import { annotatePins, matchEnding, pinned, renderWorkflow } from '@/automation/setup-actions';
-import {
-	assetConflicts,
-	assetSteps,
-	binaryJobs,
-	buildJobId,
-	expression,
-	gitIdentity,
-	refSteps,
-	releaseSteps,
-} from '@/automation/setup-binaries';
-import { crateOutcome, ledgerCommand, plainCrateNames } from '@/automation/setup-defaults';
-import type { SetupWorkflow } from '@/automation/setup-types';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { workflowEvents } from '@/discovery/release-graph/calls.ts';
 import { jobNeeds } from '@/discovery/workflow-analysis/job-gate.ts';
@@ -29,6 +16,19 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import { yaml, yamlData } from '@/kernel/parse/yaml.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';
 import { ledgerManagers, publishWaitMinutes } from '@/publication/contract.ts';
+import { crateOutcome, ledgerCommand, plainCrateNames } from '@/setup/defaults.ts';
+import type { SetupWorkflow } from '@/setup/types.ts';
+import { annotatePins, matchEnding, pinned, renderWorkflow } from '@/setup/workflows/actions.ts';
+import {
+	assetConflicts,
+	assetSteps,
+	binaryJobs,
+	buildJobId,
+	expression,
+	gitIdentity,
+	refSteps,
+	releaseSteps,
+} from '@/setup/workflows/binaries.ts';
 
 const prepareMinutes = 120;
 export function publishMinutes(packages: number): number {

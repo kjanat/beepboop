@@ -1,12 +1,6 @@
 import type { CLIError } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
-import type { Selection } from '@/automation/setup-defaults';
-import { suggestedCommands, ungenerated } from '@/automation/setup-defaults';
-import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { failure } from '@/cli/render/output';
-import { setupChoicesSchema, setupStream } from '@/contract/setup';
-import type { ChoicesField, StreamField, WorkflowField } from '@/contract/setup-fields';
-import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import type { BinaryBuild } from '@/domain/binary-platforms.ts';
 import { defaultBinaryTargets } from '@/domain/binary-platforms.ts';
 import { packageLabel } from '@/domain/package-label';
@@ -17,6 +11,12 @@ import {
 	versioningOfVersionScope,
 } from '@/domain/setup-terms.ts';
 import { mutableArray, safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
+import { setupChoicesSchema, setupStream } from '@/setup/contract.ts';
+import type { Selection } from '@/setup/defaults.ts';
+import { suggestedCommands, ungenerated } from '@/setup/defaults.ts';
+import type { ChoicesField, StreamField, WorkflowField } from '@/setup/editing/fields.ts';
+import { choicesFields, streamFields, workflowFields } from '@/setup/editing/fields.ts';
+import type { SetupChoices, SetupPlan } from '@/setup/types.ts';
 
 type Stream = SetupChoices['streams'][number];
 type FlagKind = 'stream' | 'text' | 'list' | 'packages' | 'json' | 'workflow' | 'binaries';

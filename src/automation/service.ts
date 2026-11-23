@@ -24,14 +24,12 @@ import { bodyChoices, inferredConfiguration, releaseAfterMerge } from '@/automat
 import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import { openSetupPull, setupMerge, setupStatus } from '@/automation/setup-pull-requests';
-import { workflowCredentials } from '@/automation/setup-workflows';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { Store } from '@/automation/store';
 import type { AutomationEvent, Execution, ReleaseStarted, Stream } from '@/automation/types';
 import { unchangedSince } from '@/automation/unchanged-paths';
 import type { WinGetBindings } from '@/automation/winget';
 import { WinGetService } from '@/automation/winget';
-import { setupChoicesSchema } from '@/contract/setup';
 import { configuredGrant } from '@/credentials/access.ts';
 import { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
 import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
@@ -89,6 +87,8 @@ import { executionId } from '@/persistence/identity-keys';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/publication/registries/jsr.ts';
 import { registryLayer } from '@/publication/registries/registry.ts';
 import { resolvePublished } from '@/publication/registries/verify.ts';
+import { setupChoicesSchema } from '@/setup/contract.ts';
+import { workflowCredentials } from '@/setup/workflows/integrate.ts';
 import { readBody } from '@/webhook';
 
 const webhookInstallation = mutableStruct({ account: mutableStruct({ id: looseSchema }) });

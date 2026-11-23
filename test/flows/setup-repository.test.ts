@@ -7,7 +7,6 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { parse } from 'yaml';
 import { optionId } from '@/automation/setup';
-import type { SetupChoices } from '@/automation/setup-types';
 import { binaries, defaultBinaryTargets } from '@/domain/binary-platforms.ts';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
 import { alwaysStarted, startFromEffect, startFromQuestion, versionPrMergeSentences } from '@/domain/setup-terms.ts';
@@ -26,6 +25,7 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import type { SetupChoices } from '@/setup/types.ts';
 
 let world: World;
 eachWorld(created => {

@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Validator } from '@cfworker/json-schema';
 import { Effect, Schema, Struct } from 'effect';
-import { assetName, binaryJobs } from '@/automation/setup-binaries';
 import { discoverNpmTargets } from '@/discovery/managers/npm-targets.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import { targetsSchema } from '@/discovery/managers/targets.ts';
@@ -21,6 +20,7 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { npmManager } from '@/publication/registries/npm.ts';
+import { assetName, binaryJobs } from '@/setup/workflows/binaries.ts';
 import { assertTargetsCurrent } from '@/tooling/schema/render';
 
 const fixture = (name: string) => Bun.file(new URL(`../fixtures/targets/${name}.json`, import.meta.url));

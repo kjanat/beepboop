@@ -1,11 +1,11 @@
-import type { SetupChoices } from '@/contract/setup';
 import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { BinaryBuild, BinaryCandidate, BinaryTarget } from '@/domain/binary-platforms.ts';
 import type { PackagePublication } from '@/domain/package-publication.ts';
 import type { ConfigurableStart, VersionBump } from '@/domain/release-start.ts';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
+import type { SetupChoices } from '@/setup/contract.ts';
 
-export type { SetupChoices } from '@/contract/setup';
+export type { SetupChoices } from '@/setup/contract.ts';
 
 export type SetupWorkflow = NonNullable<SetupChoices['streams'][number]['prepare']>;
 export type SetupOperation = NonNullable<SetupChoices['streams'][number]['operations']>[number];

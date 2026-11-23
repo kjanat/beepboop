@@ -12,8 +12,6 @@ import { Client } from '@/cli/client/api';
 import { describedSetupFlags, setupFlagRecord } from '@/cli/commands/adopt/flag-builders';
 import { choicesFlagKinds, setupFlagPaths, streamFlagKinds, workflowFlagKinds } from '@/cli/commands/adopt/flags';
 import { app } from '@/cli/main';
-import { setupChoicesSchema } from '@/contract/setup';
-import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import { binaryTargets } from '@/domain/binary-platforms.ts';
 import { configurableStarts } from '@/domain/release-start.ts';
 import {
@@ -36,6 +34,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { setupChoicesSchema } from '@/setup/contract.ts';
+import { choicesFields, streamFields, workflowFields } from '@/setup/editing/fields.ts';
 
 let world: World;
 let directory: string;

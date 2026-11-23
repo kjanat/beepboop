@@ -2,7 +2,6 @@
 
 import { resolve } from 'node:path';
 import { Effect, Schema } from 'effect';
-import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
 import { discover } from '@/discovery/discover.ts';
 import { inferReleaseGraph } from '@/discovery/release-graph/graph.ts';
 import { buildSnapshot } from '@/discovery/snapshot/builder.ts';
@@ -11,6 +10,7 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Contract } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import { resolvePublished } from '@/publication/registries/verify.ts';
+import { adoptionChoices, adoptionMarkdown } from '@/setup/adoption.ts';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attempt, main, parse, refuse } from '@/tooling/runtime';
 

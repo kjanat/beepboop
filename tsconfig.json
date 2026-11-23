@@ -18,7 +18,8 @@
 			"@/discovery/*": ["./packages/discovery/src/*"],
 			"@/notifications/*": ["./packages/notifications/src/*"],
 			"@/publication/*": ["./packages/publication/src/*"],
-			"@/actions/*": ["./packages/actions/src/*"]
+			"@/actions/*": ["./packages/actions/src/*"],
+			"@/setup/*": ["./packages/setup/src/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",

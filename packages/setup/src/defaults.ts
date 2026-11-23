@@ -1,7 +1,7 @@
-import type { SetupPlan } from '@/automation/setup-types';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { shellQuote } from '@/kernel/text/shell-quote.ts';
+import type { SetupPlan } from '@/setup/types.ts';
 
 export interface Selection {
 	name: string;

@@ -14,15 +14,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { parse, parseDocument } from 'yaml';
 import { bodyChoices, releaseAfterMerge, setupBody, setupOptions } from '@/automation/setup';
-import { pinned } from '@/automation/setup-actions';
-import { behaviourChanges, changeDetails, describeEdits, setupTitle } from '@/automation/setup-changes';
-import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/automation/setup-defaults';
 import { rebuildingStatus } from '@/automation/setup-maintenance';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import { streamSummary } from '@/automation/setup-summary';
-import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
-import { integrateWorkflow, publishMinutes } from '@/automation/setup-workflows';
-import { setupChoicesSchema } from '@/contract/setup';
 import { discover } from '@/discovery/discover.ts';
 import { mergeConfiguration } from '@/domain/configuration/presets.ts';
 import { onboardingBranch, updateBranch } from '@/domain/setup-branches.ts';
@@ -40,6 +32,14 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { behaviourChanges, changeDetails, describeEdits, setupTitle } from '@/setup/changes.ts';
+import { setupChoicesSchema } from '@/setup/contract.ts';
+import { cratePublishCommands, ledgerCommand, suggestedCommands } from '@/setup/defaults.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import { streamSummary } from '@/setup/summary.ts';
+import type { SetupChoices, SetupPlan } from '@/setup/types.ts';
+import { pinned } from '@/setup/workflows/actions.ts';
+import { integrateWorkflow, publishMinutes } from '@/setup/workflows/integrate.ts';
 
 const checkout = pinned('checkout');
 let world: World;
