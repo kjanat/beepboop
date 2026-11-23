@@ -754,6 +754,17 @@ test('distribution refs require signed immutable version publication in every co
 		expect(safeDecode(refPolicyValue, { ...policy, prefix: 'v', aliases: [] }).success).toBe(valid);
 		expect(published.validate(document).valid).toBe(valid);
 	}
+	const repeated = {
+		phase: 'version',
+		signed: true,
+		immutable: true,
+		distribution: { files: ['dist/main.mjs', 'dist/main.mjs'], ancestry: 'ours' },
+	};
+	const document = { streams: { main: { promote: { workflow: { file: 'publish.yml', refs: repeated } } } } };
+	const decoded = safeDecode(configurationSchema, document);
+	expect(decoded.success ? [] : schemaIssues(decoded.error).map(issueMessage)).toContain(
+		'streams.main.promote.workflow.refs.distribution.files: Distribution files must be a nonempty unique list',
+	);
 });
 
 test('the parser and schema agree on job gates', () => {

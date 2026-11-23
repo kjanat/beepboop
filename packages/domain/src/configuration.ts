@@ -130,7 +130,11 @@ const refPolicyInput = Schema.Union([
 		signed: Schema.Literal(true),
 		immutable: Schema.Literal(true),
 		distribution: strictStruct({
-			files: mutableArray(nonempty).check(Schema.isMinLength(1)),
+			files: refined(
+				mutableArray(nonempty).check(Schema.isMinLength(1)),
+				files => new Set(files).size === files.length,
+				'Distribution files must be a nonempty unique list',
+			),
 			ancestry: Schema.Literal('ours'),
 		}),
 	}),
