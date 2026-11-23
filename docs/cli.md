@@ -83,7 +83,8 @@ assets, and tables list each package's and each binary's outcome with links to
 the run and the GitHub release. Human output shortens commit SHAs and execution
 IDs to 12 characters; `--json` and link targets keep the full values. With a version PR, the command links the PR and
 stops, and merging it publishes the release. A failing check or a refused bump
-ends the command with exit code 1 and the reason. `--json` prints the started
+ends the command with exit code 1 and the reason. The command polls every 5 seconds for at most 60 minutes. After that it stops
+following with exit code 1, and the release goes on in Beepboop. `--json` prints the started
 release and returns at once. Spinners and progress bars stay off when the
 output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release). A stream
 that versions each package on its own, a tag-based stream without a
@@ -169,7 +170,7 @@ workflow. `runs recover` reconciles by default. Pass
 `--action retry` to retry. The server applies its usual publishing and
 dispatch rules. `--action redispatch` runs the current workflow of the default
 branch for a failed promotion whose version tag already targets its release
-commit, and follows that release to its end. Use it when the fix for the
+commit, and follows that release to its end or for at most 60 minutes. Use it when the fix for the
 failure is in the workflow; a retry would run the old workflow again. See
 [Publish through Beepboop](automation.md#publish-through-beepboop).
 `runs checks` resolves a release that its checks stop: `--choice rerun` reruns
