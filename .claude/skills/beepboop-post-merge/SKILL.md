@@ -86,8 +86,9 @@ line names the test that fails without each fix.
 ## 6. Reply on the reviewed PR
 
 After the fixing PR merges, post one issue comment on the reviewed PR. Write
-the body to a scratch file whose name starts with your branch name, and set
-`reply` to its path:
+the body to `reply.md` in your scratch directory (`<scratchpad>/<branch>/`, each
+`/` in the branch name replaced by `-`, as in the ship skill), and set `reply`
+to its path:
 
 ```markdown
 > [!NOTE]
@@ -107,7 +108,10 @@ gh api "repos/kjanat/beepboop/issues/$pr/comments" --field "body=@$reply"
 
 Post no reply for a PR without a review.
 
-## 7. Report
+## 7. Clean up and report
+
+Delete your scratch directory by its literal path. Never delete scratch files by
+prefix or glob.
 
 Per PR, return each finding in one line and its outcome: the fixing PR and its
 merge commit, the evidence that rejects it, or "none" when no review came.
