@@ -29,24 +29,6 @@ import { mergeArtifacts, resolveInputs } from '@/automation/execution-outputs';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
-import type { Ledger, LedgerRecord } from '@/automation/ledger';
-import {
-	availability,
-	claim,
-	entry,
-	fail,
-	label,
-	ledgerSchema,
-	pacedPublication,
-	publicationOf,
-	publish,
-	rateLimit,
-	registries,
-	released,
-	reservation,
-	reuse,
-	view,
-} from '@/automation/ledger';
 import { preparationBody } from '@/automation/managed';
 import {
 	canVerifyPublication,
@@ -91,13 +73,10 @@ import type {
 	PreparationResult,
 	PreparedRelease,
 	Publication,
-	PublishKind,
 	ReleaseReference,
 	ReleaseStarted,
 } from '@/automation/types';
 import { unchangedSince } from '@/automation/unchanged-paths';
-import type { ClaimStep, LedgerManager, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
-import { ledgerManagers } from '@/contract/ledger';
 import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
 import { coversBinding } from '@/credentials/grant.ts';
 import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
@@ -178,6 +157,34 @@ import { ProjectionStore } from '@/persistence/d1/projection';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
 import type { Committed } from '@/persistence/journal';
 import { earliest, Journal } from '@/persistence/journal';
+import type {
+	ClaimStep,
+	LedgerManager,
+	LedgerPackage,
+	NextStep,
+	PublishReport,
+	ReportStep,
+} from '@/publication/contract.ts';
+import { ledgerManagers } from '@/publication/contract.ts';
+import type { Ledger, LedgerRecord } from '@/publication/ledger.ts';
+import {
+	availability,
+	claim,
+	entry,
+	fail,
+	label,
+	ledgerSchema,
+	pacedPublication,
+	publicationOf,
+	publish,
+	rateLimit,
+	registries,
+	released,
+	reservation,
+	reuse,
+	view,
+} from '@/publication/ledger.ts';
+import type { PublishKind } from '@/publication/publish-pace.ts';
 
 export interface CoordinatorBindings extends AutomationBindings {
 	DB: SqlDatabase;

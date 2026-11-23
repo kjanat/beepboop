@@ -10,6 +10,7 @@ import type { GateSkip } from '@/domain/release-gates.ts';
 import type { StartChannel } from '@/domain/release-start.ts';
 import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
 import type { PackageIdentity } from '@/package-url';
+import type { PublishKind } from '@/publication/publish-pace.ts';
 
 export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration/schema.ts';
 export interface ReleasePlan {
@@ -36,7 +37,6 @@ interface PublicationFields {
 export type Publication =
 	| (PublicationFields & { outcome: Outcome })
 	| (PublicationFields & { outcome: 'rate-limited'; retryAfter: string });
-export type PublishKind = 'new' | 'update';
 export interface PackageTarget {
 	id: string;
 	manager: ManagerName;
