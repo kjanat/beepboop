@@ -1,11 +1,11 @@
 import { expect, test } from 'bun:test';
 import { Effect, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import type { DistributionFile } from '@/automation/distribution';
-import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import type { DistributionFile } from '@/release/distribution/validation.ts';
+import { createDistribution, readDistributionFile, readDistributionMode } from '@/release/distribution/validation.ts';
 
 const repository = 'octo/widget';
 const sourceSha = 'a'.repeat(40), sourceTree = 'b'.repeat(40), distributionTree = 'c'.repeat(40);

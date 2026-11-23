@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Effect } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
-import { readDistributionArtifact } from '@/automation/distribution-artifact';
 import { RepositoryGateway } from '@/automation/gateway.ts';
+import { readDistributionArtifact } from '@/release/distribution/artifact.ts';
 
 const repository = 'octo/widget';
 const sourceSha = 'a'.repeat(40);

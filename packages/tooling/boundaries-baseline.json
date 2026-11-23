@@ -132,6 +132,18 @@
 		"specifier": "@/automation/snapshot"
 	},
 	{
+		"file": "packages/release/src/distribution/artifact.ts",
+		"specifier": "@/automation/gateway.ts"
+	},
+	{
+		"file": "packages/release/src/distribution/observation.ts",
+		"specifier": "@/automation/gateway.ts"
+	},
+	{
+		"file": "packages/release/src/distribution/validation.ts",
+		"specifier": "@/automation/gateway.ts"
+	},
+	{
 		"file": "packages/release/src/domain/execution/codec-v1.ts",
 		"specifier": "@/contract/views"
 	},
