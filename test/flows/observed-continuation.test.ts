@@ -32,7 +32,7 @@ async function observed(count = 1) {
 	});
 	world.npm.publish('widget', '1.0.0');
 	const app = await world.run(Automation);
-	const stored = await world.run(app.discover(repository.name, repository.id));
+	const stored = await world.run(app.catalog.discover(repository.name, repository.id));
 	const ready = await world.run(requireReady(stored));
 	const execution = await world.run(
 		createExecution(ready, {
@@ -146,11 +146,11 @@ test('reconciliation restores a missing sibling while preserving a completed chi
 test('stale coordinator access cannot resume work while the repository is suspended', async () => {
 	const { repository, app, execution, storage } = await observed();
 	await storage.put('access', { suspended: false });
-	await world.run(app.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+	await world.run(app.catalog.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
 	await world.wait(120_000);
 	expect((await executions(repository)).find(item => item.id === execution.id)?.state).toBe('running');
 	expect(world.github.dispatches).toHaveLength(0);
-	await world.run(app.setAccess(repository.id, { kind: 'active' }));
+	await world.run(app.catalog.setAccess(repository.id, { kind: 'active' }));
 	await world.wait(2_000);
 	expect((await executions(repository)).find(item => item.id === execution.id)?.state).toBe('succeeded');
 });
@@ -209,7 +209,7 @@ test('suspension during reconciliation prevents subsequent executions from advan
 	await pass;
 	expect(world.github.dispatches).toHaveLength(0);
 	expect((await executions(repository)).find(item => item.id === next.id)?.state).toBe('ready');
-	await world.run(app.setAccess(repository.id, { kind: 'active' }));
+	await world.run(app.catalog.setAccess(repository.id, { kind: 'active' }));
 	await world.wait(2_000);
 	expect(world.github.dispatches.length).toBeGreaterThan(0);
 });

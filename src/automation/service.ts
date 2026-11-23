@@ -43,16 +43,14 @@ import { isRuntimeGrant, secretAliases } from '@/credentials/grant.ts';
 import { Secrets, secretsLayer, Vault } from '@/credentials/vault.ts';
 import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
 import { discover } from '@/discovery/discover.ts';
-import { validateAgainst } from '@/discovery/validation/validate.ts';
-import { resolveConfiguration } from '@/domain/configuration/presets.ts';
-import { configurationDiagnostics, configurationProblem } from '@/domain/configuration/schema.ts';
+import { RepositoryCatalog } from '@/discovery/repositories/catalog.ts';
 import type { Package, RepositoryRecord, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, packageId, publishablePackages } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
 import type { RefState } from '@/domain/refs.ts';
 import { conflictMessage, streamModuleTagPrefixes, tagConflicts } from '@/domain/refs.ts';
-import type { Access, ReadyRepository, RepositoryDiscovery } from '@/domain/repository';
+import type { Access, ReadyRepository } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { compareVersions } from '@/domain/semver.ts';
 import { semVer } from '@/domain/version.ts';
@@ -63,10 +61,9 @@ import { GitHubTransport, gitHubTransportLayer } from '@/github/transport.ts';
 import type { SetupPullEdit, SetupPullMerge } from '@/github/webhooks.ts';
 import { verifySignature } from '@/github/webhooks.ts';
 import { fromJson, fromPromise, fromSync, recover } from '@/kernel/errors/classify.ts';
-import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
 import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
@@ -248,107 +245,29 @@ export class AutomationService {
 		};
 	}
 
-	setAccess(id: number, access: Access): Effect.Effect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (yield* this.store.repositories.setAccess(id, access)) yield* fromPromise(() => this.coordinator(id).wake());
+	get catalog(): RepositoryCatalog {
+		return new RepositoryCatalog({
+			store: this.store.repositories,
+			installation: name => this.gateway.installation(name),
+			identify: name => this.gateway.identify(name),
+			snapshot: (name, id) => repositorySnapshot(this.gateway, name, id),
+			preset: reference => this.gateway.preset(reference),
+			inferConfiguration: inferredConfiguration,
+			setupPullOpen: (name, id) => openSetupPull(this.gateway, name, id).pipe(Effect.map(Boolean)),
+			resolvePublished: (inventory, name, id) =>
+				resolvePublished(inventory, this.dependencies.transport, this.gateway.verification(name, id)),
+			wake: id => fromPromise(() => this.coordinator(id).wake()),
+			refreshed: (name, repository, saved, snapshot) =>
+				Effect.gen({ self: this }, function*() {
+					yield* this.releaseFromManifest(repository, saved).pipe(
+						this.store.auditFailure('beepboop', 'release.push.failed', name),
+					);
+					yield* maintainSetup(this.store, this.gateway, snapshot, this.publishingAccess(snapshot.repository)).pipe(
+						this.store.auditFailure('beepboop', 'repository.setup.failed', name),
+					);
+					yield* this.winget().watch(repository);
+				}),
 		});
-	}
-	private access(name: string): Effect.Effect<Access, DomainError> {
-		return Effect.clockWith(clock => {
-			return this.gateway.installation(name).pipe(
-				Effect.map((installation): Access =>
-					installation === 'active' ? { kind: 'active' } : { kind: 'suspended', since: clock.currentTimeMillisUnsafe() }
-				),
-			);
-		});
-	}
-	discover(name: string, id: number | undefined): Effect.Effect<RepositoryRecord, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const installation = yield* this.gateway.installation(name);
-			if (installation === 'active') {
-				const repositoryId = id ?? (yield* this.gateway.identify(name));
-				yield* this.setAccess(repositoryId, { kind: 'active' });
-				return yield* this.refresh(name, repositoryId);
-			}
-			const enrolled = (yield* this.store.repositories.enrollments())
-				.find(entry => entry.id === id || entry.name === name);
-			const stored = enrolled && (yield* this.store.repositories.get(enrolled.id));
-			if (!stored) {
-				return yield* installation === 'suspended'
-					? precondition(`GitHub App access to ${name} is suspended`)
-					: notFound('repository', `The GitHub App is not installed on ${name}`, name);
-			}
-			const access: Access = stored.access.kind === 'suspended'
-				? stored.access
-				: { kind: 'suspended', since: clock.currentTimeMillisUnsafe() };
-			yield* this.setAccess(stored.id, access);
-			return { ...stored, access };
-		});
-	}
-	refresh(name: string, id: number): Effect.Effect<RepositoryRecord, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const snapshot = yield* repositorySnapshot(this.gateway, name, id);
-			const discovered: RepositoryDiscovery = {
-				...snapshot.repository,
-				sha: snapshot.sha,
-				inventory: { packages: [], workflows: [], managers: [], diagnostics: [], publicationOrder: [] },
-				presetShas: {},
-				diagnostics: [],
-				updatedAt: clock.currentTimeMillisUnsafe(),
-			};
-			const document = snapshot.files['.github/beepboop.json']
-				?? (yield* inferredConfiguration(snapshot, discover(snapshot)).pipe(
-					Effect.catch(error => logFailure('setup.inference-failed', error).pipe(Effect.as(undefined))),
-				));
-			if (document) {
-				yield* Effect.gen({ self: this }, function*() {
-					const raw = yield* fromSync((): unknown => JSON.parse(document));
-					const resolved = yield* resolveConfiguration(raw, ref => this.gateway.preset(ref));
-					discovered.configuration = resolved.configuration;
-					discovered.presetShas = resolved.presetShas;
-				}).pipe(
-					Effect.catch(error =>
-						Effect.sync(() => {
-							discovered.diagnostics.push(
-								...(error instanceof Schema.SchemaError
-									? configurationDiagnostics(error)
-									: [configurationProblem(decodeError(error))]),
-							);
-						})
-					),
-				);
-			} else {
-				discovered.diagnostics.push({
-					code: 'unconfigured',
-					severity: 'blocking',
-					message: (yield* openSetupPull(this.gateway, name, id))
-						? 'The setup pull request is open. Merge it to enable releases.'
-						: 'Not configured yet. Configure releases opens a setup pull request.',
-				});
-			}
-			discovered.inventory = discover(snapshot, discovered.configuration?.managers);
-			if (discovered.configuration) {
-				discovered.diagnostics.push(...validateAgainst(discovered.configuration, discovered.inventory, snapshot));
-			}
-			const verification = this.gateway.verification(name, id);
-			discovered.inventory = yield* resolvePublished(discovered.inventory, this.dependencies.transport, verification);
-			const { repository, document: saved } = yield* this.store.repositories.saveDiscovery(discovered);
-			yield* this.releaseFromManifest(repository, saved).pipe(
-				this.store.auditFailure('beepboop', 'release.push.failed', name),
-			);
-			yield* maintainSetup(this.store, this.gateway, snapshot, this.publishingAccess(snapshot.repository)).pipe(
-				this.store.auditFailure('beepboop', 'repository.setup.failed', name),
-			);
-			yield* this.winget().watch(repository);
-			return repository;
-		}).pipe(
-			Effect.withSpan('repository.refresh', { attributes: { repositoryId: id, repository: name } }),
-			Effect.annotateLogs({ repositoryId: id, repository: name }),
-		);
 	}
 	private startedPreparation(
 		repository: RepositoryRecord,
@@ -822,9 +741,9 @@ export class AutomationService {
 							: all || added.has(repository.id)
 							? { kind: 'active' }
 							: payload.action === 'unsuspend' && repository.access.kind === 'suspended'
-							? yield* this.access(repository.name)
+							? yield* this.catalog.access(repository.name)
 							: undefined;
-					if (access) yield* this.setAccess(repository.id, access);
+					if (access) yield* this.catalog.setAccess(repository.id, access);
 					else yield* fromPromise(() => this.coordinator(repository.id).wake());
 				}
 				return new Response(null, { status: 202 });
@@ -898,7 +817,9 @@ export class AutomationService {
 				return;
 			}
 			if (event.kind === 'push') {
-				if (event.ref === `refs/heads/${repository.defaultBranch}`) yield* this.refresh(repository.name, repository.id);
+				if (event.ref === `refs/heads/${repository.defaultBranch}`) {
+					yield* this.catalog.refresh(repository.name, repository.id);
+				}
 				return;
 			}
 			const { action, run } = event;
@@ -941,7 +862,7 @@ export class AutomationService {
 				...new Set([...generated.map(edit => edit.path), ...workflows]),
 			]);
 			if (!generated.length || generated.some(edit => merged.files[edit.path] !== edit.after)) return;
-			yield* this.refresh(repository.name, repository.id);
+			yield* this.catalog.refresh(repository.name, repository.id);
 			const current = yield* this.store.repositories.get(repository.id);
 			if (!current) return;
 			const ready = yield* requireReady(current);
@@ -1093,7 +1014,7 @@ export class AutomationService {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
-			const refreshed = yield* this.refresh(repository.name, repository.id);
+			const refreshed = yield* this.catalog.refresh(repository.name, repository.id);
 			yield* this.winget().automatic(refreshed).pipe(
 				this.store.auditFailure('winget', 'winget.failed', repository.name),
 			);

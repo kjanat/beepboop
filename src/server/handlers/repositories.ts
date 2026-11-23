@@ -75,35 +75,15 @@ export const repositoryEndpoints = {
 		routes.repositoriesList,
 		(_, { service }) => service.store.repositories.all().pipe(Effect.map(rows => rows.map(shown))),
 	),
-	repositoriesResolve: admin(routes.repositoriesResolve, (input, { service }) =>
-		Effect.gen(function*() {
-			const wanted = yield* reference(input.repository);
-			const name = wanted.name.toLowerCase(), owner = wanted.owner?.toLowerCase();
-			const matches = (yield* service.store.repositories.enrollments()).filter(repository => {
-				const [candidateOwner = '', candidateName = ''] = repository.name.toLowerCase().split('/');
-				return candidateName === name && (owner === undefined || candidateOwner === owner);
-			});
-			const [found, ...others] = matches;
-			if (others.length) {
-				return yield* precondition(
-					`Repository ${input.repository} matches ${
-						matches.map(repository => repository.name).join(', ')
-					}; name the owner`,
-				);
-			}
-			const stored = found ? yield* service.store.repositories.get(found.id) : undefined;
-			if (stored) return shown(stored);
-			return yield* notFound(
-				'repository',
-				`Repository ${input.repository} is not enrolled; run beepboop repositories discover ${input.repository}`,
-				input.repository,
-			);
-		})),
+	repositoriesResolve: admin(
+		routes.repositoriesResolve,
+		(input, { service }) => service.catalog.resolve(input.repository).pipe(Effect.map(shown)),
+	),
 	repositoriesDiscover: admin(routes.repositoriesDiscover, (input, context) =>
 		Effect.gen(function*() {
 			yield* reference(input.repository);
 			const name = yield* ownerName(context, input.repository);
-			return shown(yield* context.service.discover(name, input.repositoryId));
+			return shown(yield* context.service.catalog.discover(name, input.repositoryId));
 		})),
 	setupPreview: admin(
 		routes.setupPreview,

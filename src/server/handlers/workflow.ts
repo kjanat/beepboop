@@ -141,7 +141,7 @@ export const workflowEndpoints = {
 			if (!permitted(repository)) {
 				return yield* forbidden(`${file ?? identity.workflowRef} cannot start releases of ${input.stream}`);
 			}
-			repository = yield* requireReady(yield* service.refresh(repository.name, repository.id));
+			repository = yield* requireReady(yield* service.catalog.refresh(repository.name, repository.id));
 			if (repository.sha !== identity.sha) {
 				return yield* conflict(
 					'stale-revision',
