@@ -112,6 +112,22 @@ test('raw reads refuse a branch name without a request', async () => {
 	expect(requested).toEqual([]);
 });
 
+test('raw reads stop downloading a body without a length once it passes 1 MiB', async () => {
+	let pulled = 0;
+	const body = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			if (pulled >= 8 * 1_048_576) return controller.close();
+			pulled += 65_536;
+			controller.enqueue(new Uint8Array(65_536).fill(120));
+		},
+	});
+	const read = await Effect.runPromise(
+		rawFile(() => Promise.resolve(new Response(body)), 'octo/widget', 'a'.repeat(40), 'README.md'),
+	);
+	expect(Option.isNone(read)).toBe(true);
+	expect(pulled).toBeLessThan(2 * 1_048_576);
+});
+
 test('a raw network error falls back to the contents API', async () => {
 	const repository = widget(world.github);
 	const head = world.github.head(repository);

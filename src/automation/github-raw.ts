@@ -23,7 +23,7 @@ export const rawFile = Effect.fnUntraced(
 		if (response.status !== 200 || Number(response.headers.get('content-length')) > contentsLimit) {
 			return Option.none<string>();
 		}
-		const bytes = yield* responseBytes(response);
+		const bytes = yield* responseBytes(response, { maxBytes: contentsLimit + 1 });
 		if (bytes.byteLength > contentsLimit) return Option.none<string>();
 		return Option.some(yield* Effect.try(() => new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
 	},
