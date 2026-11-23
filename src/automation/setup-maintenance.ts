@@ -7,11 +7,20 @@ import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryS
 import { marked } from '@/automation/setup-body';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { PublishingAccess } from '@/automation/setup-publishing';
-import { generatedFiles, openSetupPull, setupHead, setupStatus } from '@/automation/setup-pull-requests';
+import {
+	autoMergeSetup,
+	generatedFiles,
+	openSetupPull,
+	proposalScope,
+	revokeAutoMerge,
+	setupHead,
+	setupStatus,
+} from '@/automation/setup-pull-requests';
 import type { SetupChoices } from '@/automation/setup-types';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
 import { setupChoicesSchema } from '@/contract/setup';
+import { canonicalConfiguration, outdatedConfiguration } from '@/domain/configuration/canonical.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import type { Edit, Inventory, Snapshot } from '@/domain/inventory.ts';
 import { packageId, selectorKey } from '@/domain/package-identity.ts';
@@ -21,6 +30,8 @@ import { fromJson, fromPromise, fromSync, toDomainError } from '@/kernel/errors/
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import { retryTransient } from '@/kernel/http/retry.ts';
+import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
 import { record } from '@/kernel/schema/result.ts';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
@@ -201,6 +212,13 @@ export function maintainSetup(
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
 			}
+			const canonical = canonicalConfiguration(raw, inventory.packages);
+			if ((yield* proposalScope(plan.edits, canonical)) !== 'format') {
+				yield* revokeAutoMerge(gateway, name, id, pull.number);
+			}
+			const format = outdatedConfiguration(raw, inventory.packages)
+				? yield* fromPromise(() => sha256Hex(JSON.stringify(canonical)))
+				: undefined;
 			const result = yield* pullRequest(gateway, {
 				snapshot,
 				branch: pull.branch,
@@ -231,6 +249,7 @@ export function maintainSetup(
 				options: setupOptions(plan),
 				inferred: plan.adoption !== undefined,
 				edits: [...generated.values()],
+				...(format === undefined ? {} : { formatMigration: format }),
 				maintenanceFingerprint: undefined,
 				...observationsKept,
 			});
@@ -280,17 +299,23 @@ function migrateSetup(
 		const { name, id } = snapshot.repository;
 		const source = snapshot.files['.github/beepboop.json'];
 		const choices = savedSetup(saved).saved;
-		if (source === undefined || !choices || saved.migration === 'proposed') return;
+		if (source === undefined || !choices) return;
 		const raw = yield* fromSync((): unknown => JSON.parse(source));
-		if (!setupMissing(raw, choices)) return;
+		const stored = yield* store.repository(id);
+		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
+		const missing = saved.migration !== 'proposed' && setupMissing(raw, choices);
+		const canonical = canonicalConfiguration(raw, inventory.packages);
+		const format = outdatedConfiguration(raw, inventory.packages)
+			? yield* fromPromise(() => sha256Hex(JSON.stringify(canonical)))
+			: undefined;
+		if (!missing && (format === undefined || saved.formatMigration === format)) return;
 		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
 			Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
 		);
-		const stored = yield* store.repository(id);
 		const branch = setupBranch(snapshot);
 		const head = yield* setupHead(gateway, name, id, branch);
 		const workflowPermission = yield* gateway.canEditWorkflows(name, id);
-		const plan = yield* previewSetup(snapshot, withRegistryStatus(discover(snapshot), stored?.inventory), undefined, {
+		const plan = yield* previewSetup(snapshot, inventory, undefined, {
 			publishing,
 			saved: choices,
 			head,
@@ -318,11 +343,16 @@ function migrateSetup(
 			options: setupOptions(plan),
 			inferred: plan.adoption !== undefined,
 			edits: plan.edits,
-			migration: 'proposed',
+			...(missing ? { migration: 'proposed' } : {}),
+			...(format === undefined ? {} : { formatMigration: format }),
 			maintenanceFingerprint: undefined,
 			...observationsKept,
 		});
 		yield* store.audit('beepboop', 'repository.setup.migrated', `${name} ${snapshot.sha} ${result.url}`);
+		yield* autoMergeSetup(gateway, name, id, result.url, plan.edits, canonical).pipe(
+			retryTransient<DomainError>({ attempts: 3, delay: 1000, while: error => error.problem.code === 'upstream' }),
+			logRecovered('setup.auto-merge-failed', { repository: name, url: result.url }),
+		);
 	});
 }
 export function currentOptions(

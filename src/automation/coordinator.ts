@@ -1338,6 +1338,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				execution.repositoryId,
 				result.url,
 				method,
+				'version PR',
 			)
 				.pipe(
 					retryTransient<DomainError>({

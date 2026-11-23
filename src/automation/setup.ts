@@ -36,7 +36,8 @@ import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
 import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '@/domain/binary-platforms.ts';
 import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/domain/binary-platforms.ts';
 import { isLockfile } from '@/domain/catalog.ts';
-import { legacyConfiguration, readableConfiguration } from '@/domain/configuration/names.ts';
+import { canonicalConfiguration } from '@/domain/configuration/canonical.ts';
+import { legacyConfiguration } from '@/domain/configuration/names.ts';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
@@ -929,7 +930,7 @@ function drafted(
 			blockers.push(validated.failure.message);
 		}
 		const before = snapshot.files['.github/beepboop.json'] ?? '';
-		const written = readableConfiguration(configuration);
+		const written = canonicalConfiguration(configuration, inventory.packages);
 		const stored = yield* fromSync((): unknown => JSON.parse(before || '{}'));
 		// Do not reformat an unchanged configuration simply to make a PR.
 		const after = JSON.stringify(stored) === JSON.stringify(written)

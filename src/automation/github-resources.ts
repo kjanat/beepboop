@@ -21,6 +21,10 @@ export const repositorySchema = mutableStruct({
 	owner: identified,
 	default_branch: textSchema,
 	private: Schema.Boolean,
+	allow_auto_merge: Schema.optional(Schema.Boolean),
+	allow_squash_merge: Schema.optional(Schema.Boolean),
+	allow_merge_commit: Schema.optional(Schema.Boolean),
+	allow_rebase_merge: Schema.optional(Schema.Boolean),
 });
 export const commitSchema = mutableStruct({ sha: shaSchema, commit: mutableStruct({ verification }) });
 export const gitObjectSchema = mutableStruct({ sha: shaSchema, type: Schema.String });
@@ -70,6 +74,9 @@ export const pullSchema = mutableStruct({
 	assignees: Schema.optional(Schema.NullOr(mutableArray(mutableStruct({ login: Schema.String })))),
 	requested_reviewers: Schema.optional(Schema.NullOr(mutableArray(mutableStruct({ login: Schema.String })))),
 	head: mutableStruct({ ref: Schema.String, sha: shaSchema, repo: identified }),
+	auto_merge: Schema.optional(
+		Schema.NullOr(mutableStruct({ enabled_by: Schema.NullOr(mutableStruct({ login: Schema.String })) })),
+	),
 	base: mutableStruct({ ref: textSchema, repo: mutableStruct({ id: Schema.Finite, default_branch: textSchema }) }),
 });
 export const issueEventSchema = mutableStruct({ event: looseSchema, commit_id: looseSchema });
