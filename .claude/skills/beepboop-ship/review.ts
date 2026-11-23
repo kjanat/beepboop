@@ -34,6 +34,7 @@ export type CheckState = { name: string; status: string; conclusion: string };
 export type Outcome =
 	| { _tag: 'Waiting' }
 	| { _tag: 'Failed'; exit: 1 }
+	| { _tag: 'Conflicting'; exit: 4 }
 	| { _tag: 'Reviewed'; exit: 0 | 3; codex: CodexState };
 
 export function checkStates(
@@ -55,7 +56,12 @@ export function completedReviews(pages: typeof CommentPages.Type, head: string):
 		.filter(state => state.code_review.commit_sha === head && state.code_review.status === 'completed');
 }
 
-export function outcome(states: readonly CheckState[], reviews: readonly CodexState[]): Outcome {
+export function outcome(
+	states: readonly CheckState[],
+	reviews: readonly CodexState[],
+	mergeable: string,
+): Outcome {
+	if (mergeable === 'CONFLICTING') return { _tag: 'Conflicting', exit: 4 };
 	const checksDone = states.every(state =>
 		state.status === 'COMPLETED' || state.status === 'SUCCESS' || state.status === 'FAILURE'
 	);
