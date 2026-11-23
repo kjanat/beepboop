@@ -18,6 +18,7 @@ import { platformFetch, registryLayer } from '@/automation/managers/registry';
 import { Notifications } from '@/automation/notifications';
 import { metadataProblems } from '@/automation/package-metadata';
 import { pollPackages } from '@/automation/package-watch';
+import { preparationMerge } from '@/automation/preparation-pull-requests';
 import {
 	hasTagPromotion,
 	manifestProblems,
@@ -341,7 +342,7 @@ export class AutomationService {
 					? (yield* this.gateway.contains(repository.name, repository.id, result.head, target))
 						? { sha: result.head, extended: false }
 						: undefined
-					: yield* this.gateway.preparationMerge(repository.name, repository.id, result, target);
+					: yield* preparationMerge(this.gateway, repository.name, repository.id, result, target);
 				if (merge && !merge.extended) return { sha: merge.sha, started };
 			}
 			return undefined;
@@ -363,7 +364,7 @@ export class AutomationService {
 			const results = yield* fromPromise(() => this.coordinator(repository.id).preparationResults(stream, version));
 			for (const result of results) {
 				if (result.kind === 'commit') continue;
-				const merge = yield* this.gateway.preparationMerge(repository.name, repository.id, result, target).pipe(
+				const merge = yield* preparationMerge(this.gateway, repository.name, repository.id, result, target).pipe(
 					recover(error =>
 						logFailure('preparation-merge.failed', error, { repository: repository.name, pull: result.url }).pipe(
 							Effect.as(undefined),

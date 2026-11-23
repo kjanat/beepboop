@@ -13,6 +13,7 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { RepositoryGateway } from '@/automation/github';
 import { pullSchema } from '@/automation/github-resources';
+import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -53,7 +54,7 @@ test('PR creation succeeds with a stale response head while all later GitHub rea
 		}
 		return response;
 	});
-	const result = await Effect.runPromise(gateway.pullRequest(snapshot, 'release/test', 'Release', '', [{
+	const result = await Effect.runPromise(pullRequest(gateway, snapshot, 'release/test', 'Release', '', [{
 		path: 'package.json',
 		before: snapshot.files['package.json'] ?? '',
 		after: '{"name":"widget","version":"1.1.0"}\n',
@@ -239,7 +240,7 @@ for (const when of ['before update', 'during update'] as const) {
 		const repository = widget(world.github);
 		const gateway = new RepositoryGateway(world.env, Number(world.env.OWNER_ID));
 		const snapshot = await Effect.runPromise(gateway.snapshot(repository.name, repository.id));
-		const created = await Effect.runPromise(gateway.pullRequest(snapshot, 'release/base', 'Release', '', [{
+		const created = await Effect.runPromise(pullRequest(gateway, snapshot, 'release/base', 'Release', '', [{
 			path: 'package.json',
 			before: snapshot.files['package.json'] ?? '',
 			after: '{"name":"widget","version":"1.1.0"}\n',
@@ -257,7 +258,7 @@ for (const when of ['before update', 'during update'] as const) {
 		});
 		const mark = world.network.mark();
 		const result = await Effect.runPromise(
-			Effect.result(gateway.refreshPullRequest(snapshot, 'release/base', 'Updated', '', created.head)),
+			Effect.result(refreshPullRequest(gateway, snapshot, 'release/base', 'Updated', '', created.head)),
 		);
 		expect(result._tag === 'Failure' && result.failure.message).toBe(
 			`The preparation PR #${stored.number} targets maintenance; retarget it to ${repository.defaultBranch} to continue this release.`,

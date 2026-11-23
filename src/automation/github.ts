@@ -8,18 +8,12 @@ import {
 	commitSchema,
 	comparisonSchema,
 	contentSchema,
-	createdSchema,
 	createdTagSchema,
-	gitCommitSchema,
-	gitRefSchema,
 	gitTagSchema,
 	installationSchema,
 	issueEventSchema,
 	matchingRefSchema,
-	namedSchema,
-	pullSchema,
 	repositorySchema,
-	ruleSchema,
 	treeSchema,
 	userSchema,
 	workflowRunSchema,
@@ -27,24 +21,20 @@ import {
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { platformFetch } from '@/automation/managers/registry';
 import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/automation/release-graph/calls';
-import { marked, placeBlock, setupBlock } from '@/automation/setup-body';
-import { setupBranches } from '@/automation/setup-changes';
+import { marked } from '@/automation/setup-body';
 import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
-import type { AutoMerge, PreparationResult } from '@/automation/types';
 import { githubApiVersion } from '@/contract/http';
-import type { Edit, Snapshot } from '@/domain/inventory.ts';
+import type { Snapshot } from '@/domain/inventory.ts';
 import { parsePresetReference } from '@/domain/preset.ts';
 import type { RefState } from '@/domain/refs.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
-import type { AutoMergeMethod } from '@/domain/setup-terms.ts';
 import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
 import { legacyDiagnostic } from '@/kernel/errors/diagnostics.ts';
 import { DomainError, domainError, invalid, precondition, upstream } from '@/kernel/errors/domain-error.ts';
 import { responseBytes, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
 import { parseRetryAfter } from '@/kernel/http/http-date.ts';
 import { ioConcurrency, retryTransient } from '@/kernel/http/retry.ts';
-import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { decode, sha, textSchema } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
@@ -52,7 +42,6 @@ import { looseStruct, mutableArray, mutableStruct } from '@/kernel/schema/struct
 type Permission = Record<string, 'read' | 'write'>;
 const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
 const workflowDirectory = '.github/workflows/';
-const coAuthor = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 const ownerLogins = new Map<number, string>();
 const botIdentities = new Map<string, BotIdentity>();
 const contentEditsSchema = mutableStruct({
@@ -70,16 +59,6 @@ const contentEditsSchema = mutableStruct({
 			}),
 		}),
 	}),
-});
-const autoMergeSchema = mutableStruct({
-	data: Schema.optional(Schema.NullOr(mutableStruct({
-		enablePullRequestAutoMerge: Schema.NullOr(mutableStruct({
-			pullRequest: mutableStruct({ autoMergeRequest: Schema.NullOr(mutableStruct({ mergeMethod: Schema.String })) }),
-		})),
-	}))),
-	errors: Schema.optional(
-		mutableArray(mutableStruct({ type: Schema.optional(Schema.String), message: Schema.String })),
-	),
 });
 interface TagTarget {
 	__typename: string;
@@ -113,19 +92,8 @@ const tagRefsQuery =
 		tagTargetSelection(tagPeelDepth)
 	}}}}}}`;
 // GitHub signals a rate limit by GraphQL error type RATE_LIMITED with HTTP 200, or by HTTP 403 or 429 naming the limit.
-function rateLimited(message: string, type?: string): boolean {
+export function rateLimited(message: string, type?: string): boolean {
 	return type === 'RATE_LIMITED' || /rate limit|HTTP 429/i.test(message);
-}
-function preparationPullNumber(repository: string, url: string): Effect.Effect<string, DomainError> {
-	return Effect.gen(function*() {
-		const parsed = URL.parse(url);
-		const prefix = `/${repository}/pull/`;
-		if (
-			parsed?.origin !== 'https://github.com' || !parsed.pathname.startsWith(prefix)
-			|| !/^[1-9][0-9]*$/.test(parsed.pathname.slice(prefix.length))
-		) return yield* precondition('Invalid preparation PR identity');
-		return parsed.pathname.slice(prefix.length);
-	});
 }
 function detailOf(body: string): string {
 	try {
@@ -241,7 +209,7 @@ export class RepositoryGateway {
 		private credentials: Credentials,
 		private ownerId: number,
 		private transport: Fetcher = platformFetch,
-		private defer?: (work: Promise<void>) => void,
+		readonly defer?: (work: Promise<void>) => void,
 		private api?: GitHub['Service'],
 	) {}
 	call(
@@ -704,255 +672,6 @@ export class RepositoryGateway {
 			return login;
 		});
 	}
-	pullRequest<R = never>(
-		snapshot: Snapshot,
-		branch: string,
-		title: string,
-		body: string,
-		edits: Edit[],
-		expectedHead?: string,
-		checkpoint?: (head: string) => Effect.Effect<void, DomainError, R>,
-		setupEdits?: Edit[],
-		existingPull?: number,
-		options: { takeOver?: boolean; coAuthored?: boolean } = {},
-	): Effect.Effect<{ url: string; head: string }, DomainError, R> {
-		const { takeOver = false, coAuthored = false } = options;
-		const self = this;
-		return Effect.gen(function*() {
-			const { name, id } = snapshot.repository;
-			const token = yield* self.token(name, id, {
-				contents: 'write',
-				pull_requests: 'write',
-				...(edits.some(edit => edit.path.startsWith('.github/workflows/'))
-						|| setupEdits?.some(edit => edit.path.startsWith('.github/workflows/'))
-					? { workflows: 'write' as const }
-					: {}),
-			});
-			const existing = yield* self.read(
-				Schema.NullOr(gitRefSchema),
-				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
-				token,
-			);
-			const base = existing ? existing.object.sha : snapshot.sha;
-			if (existing && (!expectedHead || expectedHead !== base)) {
-				return yield* precondition('Branch changed; preserve user edits and review the conflict');
-			}
-			if (existing && setupEdits && !takeOver) {
-				const changed = (yield* self.read(comparisonSchema, `/repos/${name}/compare/${snapshot.sha}...${base}`, token))
-					.files;
-				if (changed.length >= 300 || changed.some(file => !setupEdits.some(edit => edit.path === file.filename))) {
-					return yield* precondition('Setup branch contains unrelated changes; review it before refreshing');
-				}
-				for (const edit of setupEdits) {
-					if ((yield* self.file(name, edit.path, base, token)) !== edit.after) {
-						return yield* precondition(`Setup branch was edited: ${edit.path}`);
-					}
-				}
-			}
-			const head = yield* self.editCommit(
-				name,
-				token,
-				setupEdits ? snapshot.sha : base,
-				edits,
-				coAuthored ? `${title}\n\n${coAuthor}` : title,
-			);
-			const rules = yield* self.read(
-				Schema.NullOr(mutableArray(ruleSchema)),
-				`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`,
-				token,
-			);
-			if (rules === null) {
-				return yield* precondition('Branch rules unavailable; publication of the preparation branch stopped');
-			}
-			if (rules.some((rule) => rule.type === 'required_signatures')) {
-				const { verification } = yield* self.read(gitCommitSchema, `/repos/${name}/git/commits/${head}`, token);
-				if (verification.verified !== true) {
-					return yield* precondition('Preparation commit does not satisfy the branch signature requirement');
-				}
-			}
-			if (existingPull !== undefined) {
-				const pull = yield* self.read(pullSchema, `/repos/${name}/pulls/${existingPull}`, token);
-				if (
-					pull.state !== 'open' || pull.head.sha !== base || pull.head.ref !== branch || pull.head.repo.id !== id
-				) return yield* precondition('Setup pull request changed during refresh');
-			}
-			if (checkpoint) yield* checkpoint(head);
-			if (existing) {
-				yield* self.call(
-					`/repos/${name}/git/refs/heads/${encodeURIComponent(branch)}`,
-					token,
-					'PATCH',
-					{ sha: head, force: setupEdits !== undefined },
-				);
-			} else {
-				yield* self.call(`/repos/${name}/git/refs`, token, 'POST', {
-					ref: `refs/heads/${branch}`,
-					sha: head,
-				});
-			}
-			return yield* self.finishPullRequest(snapshot, branch, title, body, head, token);
-		});
-	}
-	private editCommit(
-		name: string,
-		token: string,
-		base: string,
-		edits: Edit[],
-		message: string,
-	): Effect.Effect<string, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const commit = yield* self.read(gitCommitSchema, `/repos/${name}/git/commits/${base}`, token);
-			for (const edit of edits) {
-				const current = yield* self.file(name, edit.path, base, token);
-				if ((current ?? '') !== edit.before) return yield* precondition(`File changed: ${edit.path}`);
-				if (
-					edit.path.startsWith('/')
-					|| edit.path.split('/').some((p) => p === '..' || p === '.git')
-				) {
-					return yield* precondition('Unsafe edit path');
-				}
-			}
-			const tree = yield* self.read(createdSchema, `/repos/${name}/git/trees`, token, 'POST', {
-				base_tree: commit.tree.sha,
-				tree: edits.map((edit) => ({
-					path: edit.path,
-					mode: '100644',
-					type: 'blob',
-					content: edit.after,
-				})),
-			});
-			const { sha: head } = yield* self.read(createdSchema, `/repos/${name}/git/commits`, token, 'POST', {
-				message,
-				tree: tree.sha,
-				parents: [base],
-			});
-			return head;
-		});
-	}
-	/** Fast-forward the default branch to a signed bot commit that applies the version bump. */
-	commitVersion<R = never>(
-		snapshot: Snapshot,
-		message: string,
-		edits: Edit[],
-		head: string | undefined,
-		checkpoint: (head: string) => Effect.Effect<void, DomainError, R>,
-	): Effect.Effect<PreparationResult, DomainError, R> {
-		const self = this;
-		return Effect.gen(function*() {
-			const { name, id, defaultBranch } = snapshot.repository;
-			const token = yield* self.token(name, id, {
-				contents: 'write',
-				...(edits.some(edit => edit.path.startsWith('.github/workflows/')) ? { workflows: 'write' as const } : {}),
-			});
-			const branch = encodeURIComponent(defaultBranch);
-			let commit = head;
-			if (!commit) {
-				commit = yield* self.editCommit(name, token, snapshot.sha, edits, message);
-				yield* checkpoint(commit);
-			}
-			const current = yield* self.read(gitRefSchema, `/repos/${name}/git/ref/heads/${branch}`, token);
-			const landed = current.object.sha === commit
-				|| (current.object.sha !== snapshot.sha
-					&& (yield* self.read(comparisonSchema, `/repos/${name}/compare/${commit}...${current.object.sha}`, token))
-						.status === 'ahead');
-			if (!landed) {
-				if (current.object.sha !== snapshot.sha) {
-					return yield* precondition(
-						`${defaultBranch} moved to ${
-							current.object.sha.slice(0, 12)
-						} before the version commit landed. Start the release again.`,
-					);
-				}
-				yield* self.call(`/repos/${name}/git/refs/heads/${branch}`, token, 'PATCH', { sha: commit, force: false })
-					.pipe(
-						Effect.catchIf(
-							error => error.problem.code === 'precondition',
-							error =>
-								precondition(
-									`GitHub refused the version commit on ${defaultBranch}: ${error.message}. Let the Beepboop app push to ${defaultBranch}, or set prepare.versionLands to "via-version-pr".`,
-								),
-						),
-					);
-			}
-			return { url: `https://github.com/${name}/commit/${commit}`, head: commit, kind: 'commit' as const };
-		});
-	}
-	/** Bind release execution to the merged preparation pull request. */
-	private mergedPreparationPull(
-		repository: string,
-		repositoryId: number,
-		result: { url: string; head: string },
-		token: string,
-	): Effect.Effect<{ mergeSha: string; base: string; defaultBranch: string; head: string }, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const number = yield* preparationPullNumber(repository, result.url);
-			const pull = yield* self.read(pullSchema, `/repos/${repository}/pulls/${number}`, token);
-			const base = pull.base;
-			const mergeSha = pull.merged === true ? yield* self.mergeCommit(repository, number, token) : undefined;
-			if (!mergeSha || base.repo.id !== repositoryId) {
-				return yield* precondition('The preparation PR is not merged');
-			}
-			return { mergeSha, base: base.ref, defaultBranch: base.repo.default_branch, head: pull.head.sha };
-		});
-	}
-	preparedSnapshot(
-		repository: string,
-		repositoryId: number,
-		result: { url: string; head: string },
-		target: string,
-		extraPaths: string[] = [],
-	): Effect.Effect<Snapshot, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
-			const pull = yield* self.mergedPreparationPull(repository, repositoryId, result, token);
-			if (pull.head !== result.head) return yield* precondition('The preparation PR is not merged');
-			if (pull.mergeSha !== (yield* Effect.fromResult(sha(target)))) {
-				return yield* precondition('Target is not the merged preparation revision');
-			}
-			const snapshot = yield* self.snapshot(repository, repositoryId, target, extraPaths);
-			if (pull.base !== snapshot.repository.defaultBranch) {
-				return yield* precondition('Preparation was merged into a different branch');
-			}
-			return snapshot;
-		});
-	}
-	preparationMerge(
-		repository: string,
-		repositoryId: number,
-		result: { url: string; head: string },
-		target: string,
-	): Effect.Effect<{ sha: string; extended: boolean } | undefined, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(repository, repositoryId, { contents: 'read', pull_requests: 'read' });
-			const pull = yield* self.mergedPreparationPull(repository, repositoryId, result, token);
-			if (pull.base !== pull.defaultBranch) return undefined;
-			const extended = pull.head !== result.head;
-			if (extended) {
-				const carried = yield* self.read(
-					comparisonSchema,
-					`/repos/${repository}/compare/${yield* Effect.fromResult(sha(result.head))}...${yield* Effect.fromResult(
-						sha(pull.head),
-					)}`,
-					token,
-				);
-				if (carried.status !== 'ahead') {
-					return yield* precondition('The merged preparation PR no longer carries its version commit');
-				}
-			}
-			const comparison = yield* self.read(
-				comparisonSchema,
-				`/repos/${repository}/compare/${pull.mergeSha}...${yield* Effect.fromResult(sha(target))}`,
-				token,
-			);
-			return comparison.status === 'identical' || comparison.status === 'ahead'
-				? { sha: pull.mergeSha, extended }
-				: undefined;
-		});
-	}
 	contains(
 		repository: string,
 		repositoryId: number,
@@ -1048,50 +767,6 @@ export class RepositoryGateway {
 			return undefined;
 		});
 	}
-	/** Resume only the exact commit checkpointed before branch publication. */
-	resumePreparation(
-		snapshot: Snapshot,
-		branch: string,
-		title: string,
-		body: string,
-		head: string,
-	): Effect.Effect<{ url: string; head: string }, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const { name, id } = snapshot.repository;
-			const token = yield* self.token(name, id, { contents: 'write', pull_requests: 'write' });
-			const commit = yield* self.read(
-				gitCommitSchema,
-				`/repos/${name}/git/commits/${yield* Effect.fromResult(sha(head))}`,
-				token,
-			);
-			const parents = commit.parents;
-			if (parents.length !== 1 || parents[0]?.sha !== snapshot.sha) {
-				return yield* precondition('Preparation commit ancestry changed');
-			}
-			const rules = yield* self.read(
-				Schema.NullOr(mutableArray(ruleSchema)),
-				`/repos/${name}/rules/branches/${encodeURIComponent(branch)}`,
-				token,
-			);
-			if (rules === null) return yield* precondition('Branch rules unavailable');
-			if (rules.some(rule => rule.type === 'required_signatures') && commit.verification.verified !== true) {
-				return yield* precondition('Preparation commit signature is not verified');
-			}
-			const existing = yield* self.read(
-				Schema.NullOr(gitRefSchema),
-				`/repos/${name}/git/ref/heads/${encodeURIComponent(branch)}`,
-				token,
-			);
-			if (existing && existing.object.sha !== head) {
-				return yield* precondition('Preparation branch changed');
-			}
-			if (!existing) {
-				yield* self.call(`/repos/${name}/git/refs`, token, 'POST', { ref: `refs/heads/${branch}`, sha: head });
-			}
-			return yield* self.finishPullRequest(snapshot, branch, title, body, head, token);
-		});
-	}
 	previousRender(
 		name: string,
 		number: number,
@@ -1117,179 +792,6 @@ export class RepositoryGateway {
 			const bot = (yield* self.botIdentity).login.replace(/\[bot\]$/, '');
 			const render = edits.find(edit => edit.editor?.login === bot && typeof edit.diff === 'string');
 			return typeof render?.diff === 'string' ? render.diff : current;
-		});
-	}
-	/** Refresh setup documentation without creating an empty commit or overwriting branch edits. */
-	refreshPullRequest(
-		snapshot: Snapshot,
-		branch: string,
-		title: string,
-		body: string,
-		expectedHead: string,
-	): Effect.Effect<{ url: string; head: string }, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(snapshot.repository.name, snapshot.repository.id, {
-				contents: 'read',
-				pull_requests: 'write',
-			});
-			const current = yield* self.read(
-				Schema.NullOr(gitRefSchema),
-				`/repos/${snapshot.repository.name}/git/ref/heads/${encodeURIComponent(branch)}`,
-				token,
-			);
-			if (!current || current.object.sha !== expectedHead) {
-				return yield* precondition('Branch changed; preserve user edits and review the conflict');
-			}
-			return yield* self.finishPullRequest(snapshot, branch, title, body, expectedHead, token);
-		});
-	}
-	enableAutoMerge(
-		repository: string,
-		repositoryId: number,
-		url: string,
-		method: AutoMergeMethod,
-	): Effect.Effect<AutoMerge, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(repository, repositoryId, { contents: 'write', pull_requests: 'write' });
-			const number = yield* preparationPullNumber(repository, url);
-			const pull = yield* self.read(pullSchema, `/repos/${repository}/pulls/${number}`, token);
-			const response = yield* self.read(autoMergeSchema, '/graphql', token, 'POST', {
-				query:
-					'mutation($id:ID!,$method:PullRequestMergeMethod!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:$method}){pullRequest{autoMergeRequest{mergeMethod}}}}',
-				variables: { id: pull.node_id, method: method.toUpperCase() },
-			}).pipe(
-				Effect.catchIf(
-					error => error.problem.code === 'precondition' || error.problem.code === 'forbidden',
-					error =>
-						Effect.succeed<Decoded<typeof autoMergeSchema>>({ data: null, errors: [{ message: error.message }] }),
-				),
-			);
-			if (response.data?.enablePullRequestAutoMerge?.pullRequest.autoMergeRequest) {
-				return { method, state: 'enabled' as const };
-			}
-			const reason = response.errors?.map(error => error.message).join('; ') || 'GitHub returned no auto-merge request';
-			if (response.errors?.some(error => rateLimited(error.message, error.type))) {
-				return yield* upstream('github', `GitHub rate-limited auto-merge for ${repository}#${number}: ${reason}`);
-			}
-			const note =
-				`Beepboop could not turn on ${method} auto-merge for this version PR. GitHub said: ${reason}. The PR stays open until you merge it.`;
-			yield* self.call(`/repos/${repository}/issues/${number}/comments`, token, 'POST', { body: note }).pipe(
-				Effect.ignore,
-			);
-			return { method, state: 'refused' as const, note };
-		});
-	}
-	restatePreparation(
-		repository: string,
-		repositoryId: number,
-		url: string,
-		previous: string,
-		next: string,
-	): Effect.Effect<void, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const token = yield* self.token(repository, repositoryId, { pull_requests: 'write' });
-			const number = yield* preparationPullNumber(repository, url);
-			const pull = yield* self.read(pullSchema, `/repos/${repository}/pulls/${number}`, token);
-			const body = typeof pull.body === 'string' ? pull.body : '';
-			if (pull.state !== 'open' || !body.includes(previous)) return;
-			yield* self.call(`/repos/${repository}/pulls/${number}`, token, 'PATCH', { body: body.replace(previous, next) });
-		});
-	}
-	private finishPullRequest(
-		snapshot: Snapshot,
-		branch: string,
-		title: string,
-		body: string,
-		head: string,
-		token: string,
-	): Effect.Effect<{ url: string; head: string }, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const { name } = snapshot.repository;
-			const owner = name.split('/')[0];
-			const unmerged = (yield* self.read(
-				mutableArray(pullSchema),
-				`/repos/${name}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
-				token,
-			)).filter(pull => pull.merged !== true && typeof pull.merged_at !== 'string');
-			const setup = setupBranches.includes(branch);
-			const pulls = setup ? unmerged.filter(pull => pull.state === 'open') : unmerged;
-			if (pulls.length > 1) {
-				return yield* precondition(`Several unmerged pull requests use ${branch}; keep one of them`);
-			}
-			if (pulls[0] && pulls[0].state !== 'open') {
-				return yield* precondition(
-					`The preparation PR #${pulls[0].number} was closed without merging. Reopen it to continue this release.`,
-				);
-			}
-			const existing = pulls[0];
-			const validBase = (pull: Decoded<typeof pullSchema>) =>
-				pull.base.ref === snapshot.repository.defaultBranch ? Effect.void : precondition(
-					`The preparation PR #${pull.number} targets ${pull.base.ref}; retarget it to ${snapshot.repository.defaultBranch} to continue this release.`,
-				);
-			if (existing) yield* validBase(existing);
-			const previousBody = typeof existing?.body === 'string' ? existing.body : '';
-			const pull = existing
-				? yield* self.read(pullSchema, `/repos/${name}/pulls/${existing.number}`, token, 'PATCH', {
-					title,
-					body: setup
-						? placeBlock(
-							previousBody,
-							setupBlock(body),
-							yield* self.previousRender(name, existing.number, previousBody, token),
-						)
-						: body,
-				})
-				: yield* self.read(pullSchema, `/repos/${name}/pulls`, token, 'POST', {
-					title,
-					body: setup ? `${setupBlock(body)}\n` : body,
-					head: branch,
-					base: snapshot.repository.defaultBranch,
-				});
-			yield* validBase(pull);
-			const metadata = Effect.gen(function*() {
-				const available = yield* self.read(mutableArray(namedSchema), `/repos/${name}/labels?per_page=100`, token);
-				let labels = available
-					.map((label) => label.name)
-					.filter((name) =>
-						['maintenance', 'type:maintenance', 'area:release', 'release', 'dependencies'].includes(
-							name,
-						)
-					);
-				labels = labels.filter((name) => name !== 'dependencies');
-				if (!labels.length) {
-					yield* self.call(`/repos/${name}/labels`, token, 'POST', {
-						name: 'maintenance',
-						color: '527a67',
-						description: 'Repository maintenance and release automation',
-					});
-					labels = ['maintenance'];
-				}
-				yield* self.read(
-					mutableArray(namedSchema),
-					`/repos/${name}/issues/${pull.number}/labels`,
-					token,
-					'POST',
-					{ labels },
-				);
-				const maintainer = yield* self.ownerLogin();
-				if (!pull.assignees?.some(assignee => assignee.login === maintainer)) {
-					yield* self.call(`/repos/${name}/issues/${pull.number}/assignees`, token, 'POST', {
-						assignees: [maintainer],
-					});
-				}
-				if (!pull.requested_reviewers?.some(reviewer => reviewer.login === maintainer)) {
-					yield* self.call(`/repos/${name}/pulls/${pull.number}/requested_reviewers`, token, 'POST', {
-						reviewers: [maintainer],
-					});
-				}
-			}).pipe(logRecovered('pull-request.metadata-failed', { repository: name, number: pull.number }));
-			if (self.defer) self.defer(Effect.runPromiseWith(yield* Effect.context())(metadata));
-			else yield* metadata;
-			return { url: pull.html_url, head };
 		});
 	}
 }

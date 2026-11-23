@@ -1,5 +1,6 @@
 import { Effect, Schema } from 'effect';
 import { discover } from '@/automation/managers';
+import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
 import { streamReleases } from '@/automation/release-capability';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
@@ -105,14 +106,9 @@ export const repositoryEndpoints = {
 			if (blockers.length) return yield* precondition(blockers.join('\n'));
 			if (!plan.edits.length) return yield* precondition('Release setup already matches the reviewed configuration');
 			const result = head && !takeOver && saved?.sourceSha === snapshot.sha && sameEdits(previous, plan.edits)
-				? yield* service.gateway.refreshPullRequest(
-					snapshot,
-					branch,
-					title,
-					body,
-					head,
-				)
-				: yield* service.gateway.pullRequest(
+				? yield* refreshPullRequest(service.gateway, snapshot, branch, title, body, head)
+				: yield* pullRequest(
+					service.gateway,
 					snapshot,
 					branch,
 					title,

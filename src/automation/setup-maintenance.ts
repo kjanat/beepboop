@@ -2,6 +2,7 @@ import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
 import { discover } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
+import { pullRequest } from '@/automation/preparation-pull-requests';
 import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
 import { marked } from '@/automation/setup-body';
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
@@ -199,7 +200,8 @@ export function maintainSetup(
 				yield* save({ ...saved, ...applied, maintenanceFingerprint: fingerprint, checkedSha: snapshot.sha });
 				return;
 			}
-			const result = yield* gateway.pullRequest(
+			const result = yield* pullRequest(
+				gateway,
 				snapshot,
 				pull.branch,
 				proposal.title,
@@ -297,7 +299,8 @@ function migrateSetup(
 			presetShas: resolved.presetShas,
 		}, resolved.configuration);
 		if (plan.blockers.length || !plan.edits.length) return;
-		const result = yield* gateway.pullRequest(
+		const result = yield* pullRequest(
+			gateway,
 			snapshot,
 			branch,
 			setupTitle(branch, plan.edits),
