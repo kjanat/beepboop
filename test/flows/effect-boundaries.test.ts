@@ -151,7 +151,7 @@ test('invalid JSR version JSON remains a typed verification failure', async () =
 				? Response.json({ scope: 'octo', name: 'widget', versions: { '1.0.0': {} } })
 				: new Response('{'),
 		)));
-	expect(result.outcome).toBe('uncertain');
+	expect(result._tag).toBe('LookupFailed');
 });
 
 test('Action identity, CLI status, and CLI login response reads cancel and unlock', async () => {

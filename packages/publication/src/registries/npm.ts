@@ -2,11 +2,11 @@ import type { Effect } from 'effect';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { npmDiscoverer } from '@/discovery/managers/npm.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
-import type { VerificationOutcome } from '@/publication/registries/outcome.ts';
+import type { LookupOutcome } from '@/publication/registries/outcome.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';
 import { latestVersion, unpublished, verifyRegistry } from '@/publication/registries/verification.ts';
 
-export function npmLatest(name: string, request: Fetcher): Effect.Effect<VerificationOutcome> {
+export function npmLatest(name: string, request: Fetcher): Effect.Effect<LookupOutcome> {
 	return latestVersion(
 		request,
 		`https://registry.npmjs.org/${encodeURIComponent(name)}`,

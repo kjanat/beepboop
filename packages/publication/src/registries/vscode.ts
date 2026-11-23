@@ -3,15 +3,15 @@ import { vscodeDiscoverer } from '@/discovery/managers/vscode.ts';
 import { parseExtension } from '@/domain/package-identity.ts';
 import { responseJson } from '@/kernel/http/body.ts';
 import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
-import type { Publication } from '@/publication/publication.ts';
 import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';
 import {
+	checkOutcomes,
 	latestVersion,
-	publicationResult,
 	registryRequest,
 	unconfirmed,
 	unpublished,
+	verificationFailure,
 } from '@/publication/registries/verification.ts';
 
 const marketplaceQuery = mutableStruct({
@@ -50,18 +50,18 @@ export const vscodeManager: Adapter<'vscode'> = {
 	},
 	verifyPublication(publication, request) {
 		const url = `https://marketplace.visualstudio.com/items?itemName=${encodeURIComponent(publication.name)}`;
-		const result = publicationResult(publication, url);
+		const result = checkOutcomes(publication, url);
 		return Effect.gen(function*() {
 			const response = yield* registryRequest(request, gallery, {
 				method: 'POST',
 				headers: galleryHeaders,
 				body: galleryQuery(publication.name, false),
 			});
-			if (!response.ok) return result('uncertain');
+			if (!response.ok) return result.failed(`HTTP ${response.status}`);
 			const versions = marketplaceVersions(yield* responseJson(response));
-			if (!versions) return result('uncertain');
-			return result(versions.includes(publication.version) ? 'succeeded' : 'pending');
-		}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
+			if (!versions) return result.failed('invalid registry response');
+			return versions.includes(publication.version) ? result.published() : result.pending();
+		}).pipe(Effect.scoped, Effect.orElseSucceed(() => result.failed(verificationFailure)));
 	},
 	secondaryLatest: {
 		'open-vsx'(pkg, request) {
@@ -80,19 +80,21 @@ export const vscodeManager: Adapter<'vscode'> = {
 	secondaryPublication: {
 		'open-vsx'(publication, request) {
 			return Result.match(parseExtension(publication.name), {
-				onFailure: () => Effect.succeed<Publication>({ ...publication, outcome: 'uncertain' }),
+				onFailure: () => Effect.succeed(VerificationOutcome.Unverifiable()),
 				onSuccess: ({ publisher, extension }) => {
 					const url = `https://open-vsx.org/api/${encodeURIComponent(publisher)}/${encodeURIComponent(extension)}/${
 						encodeURIComponent(publication.version)
 					}`;
-					const result = publicationResult(publication, url);
+					const result = checkOutcomes(publication, url);
 					return Effect.gen(function*() {
 						const response = yield* registryRequest(request, url);
-						const missing = unconfirmed(response);
-						if (missing) return result(missing);
+						const missing = unconfirmed(response, url);
+						if (missing) return missing;
 						const found = safeDecode(openVsxExtension, yield* responseJson(response));
-						return result(found.success && found.data.version === publication.version ? 'succeeded' : 'uncertain');
-					}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
+						return found.success && found.data.version === publication.version
+							? result.published()
+							: result.failed('invalid registry response');
+					}).pipe(Effect.scoped, Effect.orElseSucceed(() => result.failed(verificationFailure)));
 				},
 			});
 		},

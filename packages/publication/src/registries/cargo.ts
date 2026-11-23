@@ -5,15 +5,17 @@ import { compareVersions, isPrerelease } from '@/domain/semver.ts';
 import { responseText } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import type { Publication } from '@/publication/publication.ts';
+import type { CheckOutcome } from '@/publication/registries/outcome.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';
 import {
+	checkOutcomes,
 	LookupFailure,
 	latestText,
 	latestVersion,
-	publicationResult,
 	registryRequest,
 	unconfirmed,
 	unpublished,
+	verificationFailure,
 	verifyRegistry,
 } from '@/publication/registries/verification.ts';
 export function crateIndexUrl(name: string): string {
@@ -40,30 +42,30 @@ function indexLatest(body: string): unknown {
 		undefined,
 	) ?? unpublished;
 }
-function verifyIndex(publication: Publication, request: Fetcher): Effect.Effect<Publication> {
+function verifyIndex(publication: Publication, request: Fetcher): Effect.Effect<CheckOutcome> {
 	const url = crateIndexUrl(publication.name);
-	const result = publicationResult(publication, url);
+	const result = checkOutcomes(publication, url);
 	return Effect.gen(function*() {
 		const response = yield* registryRequest(request, url);
-		const missing = unconfirmed(response);
-		if (missing) return result(missing);
+		const missing = unconfirmed(response, url);
+		if (missing) return missing;
 		const lines = (yield* responseText(response)).split('\n').filter(line => line.trim());
 		const entries = lines.map(line => Result.try(() => object(JSON.parse(line))));
-		if (entries.some(Result.isFailure)) return result('uncertain');
+		if (entries.some(Result.isFailure)) return result.failed('invalid registry response');
 		const entry =
 			entries.flatMap(parsed =>
 				Result.isSuccess(parsed) && parsed.success.vers === publication.version ? [parsed.success] : []
 			)[0];
-		if (!entry) return result('pending');
+		if (!entry) return result.pending();
 		const digest = entry.cksum;
 		if (
 			entry.name !== publication.name || entry.yanked !== false || typeof digest !== 'string' || !digest
 			|| (publication.digest && publication.digest !== digest)
 		) {
-			return result('failed');
+			return result.rejected();
 		}
-		return result('succeeded', digest);
-	}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
+		return result.published(digest);
+	}).pipe(Effect.scoped, Effect.orElseSucceed(() => result.failed(verificationFailure)));
 }
 export const cargoManager = {
 	...cargoDiscoverer,
@@ -91,7 +93,7 @@ export const cargoManager = {
 			return { name: entry.crate, version: entry.num, withdrawn: entry.yanked !== false, digest: entry.checksum };
 		}).pipe(
 			Effect.filterOrElse(
-				verified => verified.outcome !== 'uncertain',
+				verified => verified._tag !== 'LookupFailed',
 				() => verifyIndex(publication, request),
 			),
 		);

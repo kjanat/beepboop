@@ -6,7 +6,8 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { ResponseReadError, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import type { Outcome, Publication } from '@/publication/publication.ts';
-import { VerificationOutcome } from '@/publication/registries/outcome.ts';
+import type { LookupOutcome } from '@/publication/registries/outcome.ts';
+import { CheckOutcome, VerificationOutcome } from '@/publication/registries/outcome.ts';
 
 export interface RegistryRequest {
 	method?: 'POST';
@@ -34,22 +35,46 @@ export function registryRequest(
 		})
 	));
 }
-export function unconfirmed(response: Response): Outcome | undefined {
-	if (response.status === 404) return 'pending';
-	if (!response.ok) return 'uncertain';
+export function unconfirmed(response: Response, url: string): CheckOutcome | undefined {
+	if (response.status === 404) return VerificationOutcome.Pending({ url });
+	if (!response.ok) return VerificationOutcome.LookupFailed({ url, reason: `HTTP ${response.status}` });
 	return undefined;
 }
-export function publicationResult(
-	publication: Publication,
-	url: string,
-): (outcome: Outcome, digest?: string) => Publication {
-	return (outcome, digest) => ({
+export interface CheckOutcomes {
+	published(digest?: string): CheckOutcome;
+	pending(): CheckOutcome;
+	rejected(): CheckOutcome;
+	failed(reason: string): CheckOutcome;
+}
+export function checkOutcomes(publication: Publication, url: string): CheckOutcomes {
+	return {
+		published: digest =>
+			VerificationOutcome.Published({
+				version: publication.version,
+				url,
+				...(digest === undefined ? {} : { digest }),
+			}),
+		pending: () => VerificationOutcome.Pending({ url }),
+		rejected: () => VerificationOutcome.Rejected({ url }),
+		failed: reason => VerificationOutcome.LookupFailed({ url, reason }),
+	};
+}
+export function verifiedPublication(publication: Publication, outcome: CheckOutcome): Publication {
+	const settled = (state: Outcome, url?: string, digest?: string): Publication => ({
 		...publication,
-		outcome,
-		url,
+		outcome: state,
+		...(url === undefined ? {} : { url }),
 		...(digest === undefined ? {} : { digest }),
 	});
+	return CheckOutcome.$match(outcome, {
+		Published: ({ url, digest }) => settled('succeeded', url, digest),
+		Pending: ({ url }) => settled('pending', url),
+		Rejected: ({ url }) => settled('failed', url),
+		LookupFailed: ({ url }) => settled('uncertain', url),
+		Unverifiable: () => settled('uncertain'),
+	});
 }
+export const verificationFailure = 'verification request failed';
 /** Transport handling is shared; registry response semantics belong to each adapter. */
 export function verifyRegistry(
 	publication: Publication,
@@ -57,12 +82,12 @@ export function verifyRegistry(
 	url: string,
 	decode: (body: unknown) => RegistryEntry,
 	channel?: string,
-): Effect.Effect<Publication> {
-	const result = publicationResult(publication, url);
+): Effect.Effect<CheckOutcome> {
+	const result = checkOutcomes(publication, url);
 	return Effect.gen(function*() {
 		const response = yield* registryRequest(request, url);
-		const missing = unconfirmed(response);
-		if (missing) return result(missing);
+		const missing = unconfirmed(response, url);
+		if (missing) return missing;
 		const body: unknown = yield* responseJson(response);
 		const entry = decode(body);
 		const digest = entry.digest;
@@ -70,18 +95,18 @@ export function verifyRegistry(
 			entry.name !== publication.name || entry.version !== publication.version || entry.withdrawn === true
 			|| typeof digest !== 'string' || !digest || (publication.digest && publication.digest !== digest)
 		) {
-			return result('failed');
+			return result.rejected();
 		}
 		if (channel) {
 			const tagged = yield* registryRequest(request, channel);
-			if (!tagged.ok) return result('pending');
+			if (!tagged.ok) return result.pending();
 			const tags: unknown = yield* responseJson(tagged);
 			if (!tags || typeof tags !== 'object' || Reflect.get(tags, publication.channel ?? '') !== publication.version) {
-				return result('pending');
+				return result.pending();
 			}
 		}
-		return result('succeeded', digest);
-	}).pipe(Effect.scoped, Effect.orElseSucceed(() => result('uncertain')));
+		return result.published(digest);
+	}).pipe(Effect.scoped, Effect.orElseSucceed(() => result.failed(verificationFailure)));
 }
 export const unpublished: unique symbol = Symbol('unpublished');
 export class LookupFailure {
@@ -92,7 +117,7 @@ export function latestVersion(
 	url: string,
 	decode: (body: unknown) => unknown,
 	query?: RegistryRequest,
-): Effect.Effect<VerificationOutcome> {
+): Effect.Effect<LookupOutcome> {
 	return lookup(
 		request,
 		url,
@@ -104,7 +129,7 @@ export function latestText(
 	request: Fetcher,
 	url: string,
 	decode: (body: string) => unknown,
-): Effect.Effect<VerificationOutcome> {
+): Effect.Effect<LookupOutcome> {
 	return lookup(request, url, response => responseText(response).pipe(Effect.map(decode)));
 }
 function lookup(
@@ -112,7 +137,7 @@ function lookup(
 	url: string,
 	read: (response: Response) => Effect.Effect<unknown, unknown>,
 	query?: RegistryRequest,
-): Effect.Effect<VerificationOutcome> {
+): Effect.Effect<LookupOutcome> {
 	return Effect.gen(function*() {
 		const response = yield* registryRequest(request, url, query).pipe(
 			Effect.mapError(error =>
@@ -133,11 +158,11 @@ function lookup(
 			return VerificationOutcome.LookupFailed({ url, reason: version.reason });
 		}
 		return Result.match(semver(version), {
-			onSuccess: (value): VerificationOutcome => VerificationOutcome.Published({ version: value.replace(/^v/, '') }),
-			onFailure: (): VerificationOutcome => VerificationOutcome.LookupFailed({ url, reason: 'no valid version' }),
+			onSuccess: (value): LookupOutcome => VerificationOutcome.Published({ version: value.replace(/^v/, '') }),
+			onFailure: (): LookupOutcome => VerificationOutcome.LookupFailed({ url, reason: 'no valid version' }),
 		});
 	}).pipe(
 		Effect.scoped,
-		Effect.orElseSucceed((reason): VerificationOutcome => VerificationOutcome.LookupFailed({ url, reason })),
+		Effect.orElseSucceed((reason): LookupOutcome => VerificationOutcome.LookupFailed({ url, reason })),
 	);
 }
