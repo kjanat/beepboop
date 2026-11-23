@@ -63,12 +63,12 @@ test('refresh reads public repository files from raw.githubusercontent.com and p
 	const service = await world.run(Automation);
 
 	const publicMark = world.network.mark();
-	const shared = await world.run(service.refresh(repository.name, repository.id));
+	const shared = await world.run(service.catalog.refresh(repository.name, repository.id));
 	expect(fileReads(publicMark)).toEqual({ contents: [], raw: read });
 
 	repository.private = true;
 	const privateMark = world.network.mark();
-	const hidden = await world.run(service.refresh(repository.name, repository.id));
+	const hidden = await world.run(service.catalog.refresh(repository.name, repository.id));
 	expect(fileReads(privateMark)).toEqual({ contents: read, raw: [] });
 	expect(hidden.configuration).toEqual(shared.configuration);
 	expect(hidden.inventory).toEqual(shared.inventory);

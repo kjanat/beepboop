@@ -35,7 +35,7 @@ test('a watched package version opens one issue directly in the subscribed repos
 	});
 	const reconcile = () => world.run(Automation.use(service => service.scheduled));
 	await world.run(Effect.gen(function*() {
-		yield* (yield* Automation).discover(repository.name, repository.id);
+		yield* (yield* Automation).catalog.discover(repository.name, repository.id);
 	}));
 
 	world.npm.publish('engine', '1.0.0');

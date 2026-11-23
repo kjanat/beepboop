@@ -245,7 +245,9 @@ for (const startingSuspended of [false, true]) {
 	test(`discovery cannot overwrite access changed in flight: initially suspended=${startingSuspended}`, async () => {
 		const repository = await discoveredWidget(world, await world.cliSession());
 		const service = await world.run(Automation);
-		if (startingSuspended) await world.run(service.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+		if (startingSuspended) {
+			await world.run(service.catalog.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+		}
 		const entered = Promise.withResolvers<void>();
 		const resume = Promise.withResolvers<void>();
 		world.network.serve('registry.npmjs.org', async request => {
@@ -253,10 +255,10 @@ for (const startingSuspended of [false, true]) {
 			await resume.promise;
 			return world.npm.handle(request);
 		});
-		const refreshing = world.run(service.refresh(repository.name, repository.id));
+		const refreshing = world.run(service.catalog.refresh(repository.name, repository.id));
 		await entered.promise;
 		const access = startingSuspended ? { kind: 'active' as const } : { kind: 'suspended' as const, since: Date.now() };
-		await world.run(service.setAccess(repository.id, access));
+		await world.run(service.catalog.setAccess(repository.id, access));
 		resume.resolve();
 		expect((await refreshing).access).toEqual(access);
 		expect((await stored(repository)).access).toEqual(access);
