@@ -129,6 +129,7 @@ import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import { identifyExecution } from '@/persistence/codecs/stored';
 import { decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { projectionRules } from '@/persistence/d1/completions';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
 import { executionId, releaseEventId } from '@/persistence/identity-keys';
@@ -439,7 +440,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 			const store = yield* this.store;
-			return yield* this.journal.drain(rows => new ProjectionStore(store.db).apply(rows)).pipe(
+			return yield* this.journal.drain(rows => new ProjectionStore(store.db, projectionRules).apply(rows)).pipe(
 				Effect.tap(() =>
 					Effect.sync(() => {
 						this.projectionRetryAt = undefined;

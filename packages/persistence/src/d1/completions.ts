@@ -3,14 +3,15 @@ import type { Execution } from '@/automation/types';
 import { precedenceKey } from '@/domain/semver.ts';
 import { isDecodingFailure } from '@/kernel/errors/decoding.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
-import { decodeEventV1 } from '@/persistence/codecs/v1';
+import { decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { backfillPage, drainBackfill } from '@/persistence/d1/backfill-page';
 import type { Sql } from '@/persistence/d1/database';
 import { parse } from '@/persistence/d1/database';
 import { jsonBatches } from '@/persistence/d1/json-batches';
+import type { CompletionMetadata, ProjectionRules } from '@/persistence/d1/projection';
 import { readyRead } from '@/persistence/d1/ready-read';
 
-export function completionMetadata(document: string, repositoryId: number) {
+export function completionMetadata(document: string, repositoryId: number): CompletionMetadata | undefined {
 	try {
 		const event = decodeEventV1(JSON.parse(document));
 		if (event.event !== 'release' || !event.release || event.release.repository.id !== repositoryId) return undefined;
@@ -28,6 +29,17 @@ export function completionMetadata(document: string, repositoryId: number) {
 		return undefined;
 	}
 }
+
+function executionState(document: string): string | undefined {
+	try {
+		return decodeExecutionV1(JSON.parse(document)).state;
+	} catch (error) {
+		if (!isDecodingFailure(error)) throw error;
+		return undefined;
+	}
+}
+
+export const projectionRules: ProjectionRules = { executionState, completion: completionMetadata };
 
 const legacyRow = mutableStruct({
 	id: Schema.String,
