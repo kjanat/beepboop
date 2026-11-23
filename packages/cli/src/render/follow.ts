@@ -1,5 +1,5 @@
 import type { Ask, CLIError, Out, ProgressHandle } from '@kjanat/dreamcli';
-import { Effect, Schema } from 'effect';
+import { Clock, Duration, Effect, Schema } from 'effect';
 import type { Client } from '@/cli/client/api';
 import type { Look, State } from '@/cli/render/look';
 import { lookOf, registryOf, table } from '@/cli/render/look';
@@ -50,7 +50,7 @@ const tracked = looseStruct({
 type Tracked = Decoded<typeof tracked>;
 
 export const followInterval = 5_000;
-export const followPolls = 720;
+export const followLimit = Duration.minutes(60);
 
 export interface Followed {
 	repository: string;
@@ -248,7 +248,8 @@ export function followRelease(
 		let announced = !followed.bumped;
 		let promotionId = followed.promotion;
 		let reran = false;
-		for (let poll = 0; poll < followPolls; poll++) {
+		const start = yield* Clock.monotonicTimeNanos;
+		while (Duration.isLessThan(Duration.nanos((yield* Clock.monotonicTimeNanos) - start), followLimit)) {
 			yield* client.pause(followInterval);
 			const rows = yield* snapshot(client, followed);
 			const preparation = rows.find(row => row.id === followed.execution.id);
@@ -353,7 +354,7 @@ export function followRelease(
 		} else spinner.fail();
 		out.error(
 			`Stopped following ${look.version(followed.version)} after ${
-				(followPolls * followInterval) / 60_000
+				Duration.toMinutes(followLimit)
 			} minutes. The release goes on in Beepboop. Follow it with beepboop runs list --repository ${followed.repository}.`,
 		);
 		out.setExitCode(1);

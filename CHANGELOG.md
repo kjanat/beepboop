@@ -32,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- `beepboop release` and `beepboop runs recover --action redispatch` follow a release for at most 60 minutes, 720 polls 5 seconds apart. Then they stop with exit code 1 and say that the release goes on in Beepboop and that `beepboop runs list` follows it.
+- `beepboop release` and `beepboop runs recover --action redispatch` poll a release every 5 seconds for at most 60 minutes, and slow server answers count toward the 60 minutes. Then they stop with exit code 1 and say that the release goes on in Beepboop and that `beepboop runs list` follows it.
 - Discovery of a public repository reads its files at the commit from `raw.githubusercontent.com` and spends no installation rate limit on them, and falls back to the GitHub API when that read fails.
 - Beepboop reuses a GitHub App installation token for the same repository and permissions until five minutes before it expires, instead of requesting a new one for every GitHub call. Each use still checks the installation's owner, permissions and suspension. A token handed to a workflow run is always new.
 - A preset in `extends` loads through Git's ref listing and `raw.githubusercontent.com` without a GitHub API request, so presets stop spending the unauthenticated limit of 60 API requests an hour, and the GitHub API still answers when that read fails.
