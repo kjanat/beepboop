@@ -1150,7 +1150,7 @@ describe('release streams', () => {
 				'      - uses: kjanat/beepboop/actions/publish-tagged-release@v1',
 			].join('\n'),
 		}, 1, 'octo/tool'));
-		expect(target(stream(release.graph, 'main'), 'github-release').packages).toEqual(['pkg:github/octo/tool']);
+		expect(target(stream(release.graph, 'main'), 'github-release').operations).toEqual(['release.yml#release']);
 	});
 
 	test('rehearsals, staging registries and release tooling', async () => {
