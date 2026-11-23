@@ -1,4 +1,3 @@
-import type { WinGetSubmission } from '@/automation/winget';
 import { githubHref, registryHref } from '@/contract/links';
 import { managerSpec } from '@/domain/catalog.ts';
 import type {
@@ -10,6 +9,7 @@ import type {
 } from '@/domain/destinations.ts';
 import { channelKey, isChannelOutcome, registryDestination, winget } from '@/domain/destinations.ts';
 import type { Inventory, Package } from '@/domain/inventory.ts';
+import type { WinGetSubmission } from '@/publication/winget/submission.ts';
 
 export type ManifestOutcome =
 	| { destination: ManifestDestinationId; state: 'unsubmitted' }

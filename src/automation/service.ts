@@ -26,8 +26,6 @@ import { repositorySnapshot } from '@/automation/snapshot';
 import { Store } from '@/automation/store';
 import type { AutomationEvent, Execution, ReleaseStarted, Stream } from '@/automation/types';
 import { unchangedSince } from '@/automation/unchanged-paths';
-import type { WinGetBindings } from '@/automation/winget';
-import { WinGetService } from '@/automation/winget';
 import { configuredGrant } from '@/credentials/access.ts';
 import { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
 import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
@@ -85,6 +83,8 @@ import { executionId } from '@/persistence/identity-keys';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/publication/registries/jsr.ts';
 import { registryLayer } from '@/publication/registries/registry.ts';
 import { resolvePublished } from '@/publication/registries/verify.ts';
+import type { WinGetBindings } from '@/publication/winget/service.ts';
+import { WinGetService } from '@/publication/winget/service.ts';
 import { releaseAfterMerge } from '@/setup/body.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
 import { inferredConfiguration } from '@/setup/draft.ts';
@@ -213,7 +213,7 @@ export class AutomationService {
 		);
 	}
 	winget() {
-		return new WinGetService(this.store, this.gateway, this.env);
+		return new WinGetService(this.store.db, this.gateway, this.env);
 	}
 	notifications() {
 		return new Notifications(this.store.db, () => this.vault(), this.dependencies.transport);
