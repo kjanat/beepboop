@@ -22,10 +22,35 @@ const git = Effect.fnUntraced(function*(
 	cwd: string,
 	args: readonly string[],
 	env: NodeJS.ProcessEnv = process.env,
+	input?: string,
 ): Effect.fn.Return<string, ToolFailure> {
-	const result = yield* attempt(() => runGit(args, { cwd, env }));
+	const result = yield* attempt(() => runGit(args, { cwd, env, ...(input === undefined ? {} : { input }) }));
 	if (!result.ok) return yield* refuse(`git ${args.join(' ')} failed: ${result.stderr.trim()}`);
 	return result.stdout;
+});
+
+const publishedActions = Effect.fnUntraced(function*(
+	root: string,
+	env: NodeJS.ProcessEnv,
+): Effect.fn.Return<void, ToolFailure> {
+	const listing = yield* git(root, [
+		'ls-files',
+		'--stage',
+		'--',
+		':(glob)actions/**/action.yml',
+		':(glob)actions/**/action.yaml',
+	], env);
+	for (const line of listing.split('\n').filter(Boolean)) {
+		const [entry = '', path = ''] = line.split('\t');
+		const [mode = '', blob = ''] = entry.split(' ');
+		const read = yield* attempt(() => Bun.spawnSync(['git', 'cat-file', 'blob', blob], { cwd: root }));
+		if (read.exitCode !== 0) return yield* refuse(`git cat-file blob ${blob} failed: ${read.stderr.toString().trim()}`);
+		const source = read.stdout.toString();
+		const published = source.replaceAll(`$/${actionsSource}/`, '$/actions/');
+		if (published === source) continue;
+		const rewritten = yield* git(root, ['hash-object', '-w', '--stdin'], env, published);
+		yield* git(root, ['update-index', '--cacheinfo', `${mode},${rewritten},${path}`], env);
+	}
 });
 
 export const distributionTree = Effect.fn('distributionTree')(function*(
@@ -37,6 +62,7 @@ export const distributionTree = Effect.fn('distributionTree')(function*(
 	const env = { ...process.env, GIT_INDEX_FILE: join(index, 'index') };
 	yield* git(root, ['read-tree', source], env);
 	yield* git(root, ['read-tree', '--prefix=actions/', `${source}:${actionsSource}`], env);
+	yield* publishedActions(root, env);
 	for (const name of (yield* attempt(() => readdirSync(bundles))).filter(name => name.endsWith('.ts')).sort()) {
 		const path = join(bundles, name);
 		const blob = yield* git(root, ['hash-object', '-w', '--', path]);

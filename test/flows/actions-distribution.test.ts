@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitAll, gitOutput, materialize } from '@root/test/support/actions.ts';
@@ -7,7 +7,25 @@ import { Effect, Exit } from 'effect';
 import { publishDistribution } from '@/tooling/actions/distribute';
 import { releaseLevel } from '@/tooling/actions/release';
 
-const begin = 'name: Begin\ninputs:\n  stream:\n    default: main\nruns:\n  using: composite\n  steps: []\n';
+const begin = [
+	'name: Begin',
+	'inputs:',
+	'  stream:',
+	'    default: main',
+	'runs:',
+	'  using: composite',
+	'  steps:',
+	'    - uses: $/actions/deps/bun',
+	'    - uses: $/actions/token',
+	'',
+].join('\n');
+const token = 'runs:\n  using: composite\n  steps:\n    - uses: $/actions/deps/bun\n';
+const untouched = {
+	'actions/deps/bun/action.yml': 'runs:\n  using: composite\n  steps: []\n',
+	'actions/publish-refs/README.md': 'The source tree names $/packages/actions/actions/token.\n',
+	'actions/token/my-action.yml': 'uses: $/packages/actions/actions/deps/bun\n',
+};
+const moving = (text: string) => text.replaceAll('$/actions/', '$/packages/actions/actions/');
 const bundled = {
 	'client.ts': 'console.log("client");\n',
 	'generate-winget.ts': '#!/usr/bin/env bun\nconsole.log(1);\n',
@@ -20,8 +38,15 @@ function publishedTree(dir: string, commit: string): string {
 test('distribution reproduces the published actions tree from packages/actions and moves it on change', async () => {
 	const remote = mkdtempSync(join(tmpdir(), 'beepboop-actions-remote-'));
 	const bundles = mkdtempSync(join(tmpdir(), 'beepboop-actions-bundles-'));
-	const { dir, sha: legacySource } = materialize({ 'actions/begin/action.yml': begin, 'README.md': 'one\n' });
+	const { dir } = materialize({
+		'actions/begin/action.yml': begin,
+		'actions/token/action.yaml': token,
+		...untouched,
+		'README.md': 'one\n',
+	});
 	try {
+		chmodSync(join(dir, 'actions/token/action.yaml'), 0o755);
+		const legacySource = commitAll(dir, 'Make the token manifest executable');
 		gitOutput(remote, ['init', '--bare', '-q']);
 		gitOutput(dir, ['remote', 'add', 'origin', remote]);
 		for (const [name, content] of Object.entries(bundled)) {
@@ -37,16 +62,16 @@ test('distribution reproduces the published actions tree from packages/actions a
 
 		mkdirSync(join(dir, 'packages/actions'), { recursive: true });
 		gitOutput(dir, ['mv', 'actions', 'packages/actions/actions']);
+		writeFileSync(join(dir, 'packages/actions/actions/begin/action.yml'), moving(begin));
+		writeFileSync(join(dir, 'packages/actions/actions/token/action.yaml'), moving(token));
 		const moved = commitAll(dir, 'Move actions into packages/actions');
 		expect(await Effect.runPromise(publishDistribution(dir, moved, bundles))).toEqual({
 			_tag: 'Unchanged',
 			commit: legacy,
 		});
 
-		writeFileSync(
-			join(dir, 'packages/actions/actions/begin/action.yml'),
-			begin.replace('inputs:\n', 'inputs:\n  version:\n    default: ""\n'),
-		);
+		const versioned = begin.replace('inputs:\n', 'inputs:\n  version:\n    default: ""\n');
+		writeFileSync(join(dir, 'packages/actions/actions/begin/action.yml'), moving(versioned));
 		const changed = commitAll(dir, 'Add a version input');
 		const published = await Effect.runPromise(publishDistribution(dir, changed, bundles));
 		expect(published._tag).toBe('Published');
@@ -59,13 +84,25 @@ test('distribution reproduces the published actions tree from packages/actions a
 		expect(publishedTree(dir, published.commit).split('\n')).toEqual([
 			'100644 README.md',
 			'100644 actions/begin/action.yml',
+			'100644 actions/deps/bun/action.yml',
+			'100644 actions/publish-refs/README.md',
 			'100644 actions/runtime/client.ts',
 			'100755 actions/runtime/generate-winget.ts',
+			'100755 actions/token/action.yaml',
+			'100644 actions/token/my-action.yml',
 			'100644 packages/actions/actions/begin/action.yml',
+			'100644 packages/actions/actions/deps/bun/action.yml',
+			'100644 packages/actions/actions/publish-refs/README.md',
+			'100755 packages/actions/actions/token/action.yaml',
+			'100644 packages/actions/actions/token/my-action.yml',
 		]);
-		expect(gitOutput(dir, ['rev-parse', `${published.commit}:actions/begin/action.yml`])).toBe(
-			gitOutput(dir, ['rev-parse', `${changed}:packages/actions/actions/begin/action.yml`]),
+		for (const [path, content] of Object.entries({ ...untouched, 'actions/token/action.yaml': token })) {
+			expect(gitOutput(dir, ['show', `${published.commit}:${path}`])).toBe(content.trimEnd());
+		}
+		expect(gitOutput(dir, ['cat-file', '-s', `${published.commit}:actions/begin/action.yml`])).toBe(
+			String(versioned.length),
 		);
+		expect(gitOutput(dir, ['show', `${published.commit}:actions/begin/action.yml`])).toBe(versioned.trimEnd());
 		expect(await Effect.runPromise(releaseLevel(dir, legacy, published.commit))).toBe('minor');
 
 		const stale = await Effect.runPromiseExit(publishDistribution(dir, moved, bundles));
