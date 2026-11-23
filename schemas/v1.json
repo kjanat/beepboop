@@ -10,7 +10,7 @@
 			"type": "array",
 			"items": {
 				"type": "string",
-				"pattern": "^github>([\\w.-]+\\/[\\w.-]+):([\\w-]+)(?:#([\\w./-]+))?$"
+				"pattern": "^(?:github>([\\w.-]+\\/[\\w.-]+):([\\w-]+)(?:#([\\w./-]+))?|beepboop:(default|github-action|maintenance|npm|rust-workspace))$"
 			}
 		},
 		"managers": {

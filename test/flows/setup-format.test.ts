@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import type { Repository } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
-import { applyChoices } from '@root/test/support/setup.ts';
+import { applyChoices, previewSetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Schema } from 'effect';
@@ -63,7 +63,7 @@ test('a deprecated-key configuration gets one setup PR with the canonical file a
 	const { repository, canonical } = await managed();
 	repository.allowAutoMerge = true;
 	rewrite(repository, legacyConfiguration);
-	expect(world.github.file(repository, configurationPath)).toContain('"versioning"');
+	expect(world.github.file(repository, configurationPath)).toContain('"required"');
 	await tick();
 	await tick();
 	const pulls = setupPulls(repository);
@@ -71,6 +71,45 @@ test('a deprecated-key configuration gets one setup PR with the canonical file a
 		['open', 'SQUASH', [setupAutoMerge.enabled('squash')]],
 	]);
 	expect(world.github.file(repository, configurationPath, updateBranch)).toBe(canonical);
+});
+
+const fileShape = looseStruct({
+	extends: Schema.optional(Schema.Array(Schema.String)),
+	streams: looseStruct({ main: looseStruct({ versionScope: Schema.optional(Schema.String) }) }),
+});
+const resolvedShape = looseStruct({
+	configuration: looseStruct({ streams: looseStruct({ main: looseStruct({ versioning: Schema.String }) }) }),
+});
+
+test('a fresh setup extends beepboop:default and leaves out the values the preset carries', async () => {
+	const { repository, canonical } = await managed();
+	const written = decodeSync(fileShape, JSON.parse(canonical));
+	expect([written.extends, written.streams.main.versionScope]).toEqual([['beepboop:default'], undefined]);
+	const api = bearer(world, await world.cliSession());
+	const discovered = await api('/api/repositories/discover', { repository: repository.name });
+	expect(decodeSync(resolvedShape, discovered.body).configuration.streams.main.versioning).toBe('workspace');
+});
+
+test('a configuration without extends that states every value gets no format PR and no extends', async () => {
+	const { repository } = await managed();
+	repository.allowAutoMerge = true;
+	rewrite(repository, configuration => {
+		const { extends: _extends, ...rest } = configuration;
+		const streams = decodeSync(looseStruct({ main: looseStruct({}) }), rest.streams);
+		return { ...rest, streams: { ...streams, main: { ...streams.main, versionScope: 'one-for-stream' } } };
+	});
+	const stated = world.github.file(repository, configurationPath) ?? '';
+	await tick();
+	await tick();
+	expect(setupPulls(repository)).toEqual([]);
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const plan = await previewSetup(api, repository.name);
+	const after = decodeSync(
+		fileShape,
+		JSON.parse(plan.edits.find(edit => edit.path === configurationPath)?.after ?? stated),
+	);
+	expect([after.extends, after.streams.main.versionScope]).toEqual([undefined, 'one-for-stream']);
 });
 
 test('auto-merge uses a merge method the repository allows', async () => {

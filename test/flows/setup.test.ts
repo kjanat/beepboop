@@ -8,7 +8,7 @@ import {
 	widget,
 	widgetConfiguration,
 } from '@root/test/support/repositories.ts';
-import { applySetup, discoverSetup, editPull } from '@root/test/support/setup.ts';
+import { applySetup, discoverSetup, editPull, withDefaultPreset } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
@@ -1993,7 +1993,7 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 				}),
 			}),
 		}),
-		JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
+		withDefaultPreset(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
 	);
 	expect(configuration.streams.main.credentials).toEqual(['crates-io']);
 	expect(configuration.streams.main.promote.publishWhen).toBe('approved-in-beepboop');

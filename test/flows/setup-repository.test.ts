@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import type { Repository } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
-import { applyChoices, editPull, previewSetup } from '@root/test/support/setup.ts';
+import { applyChoices, editPull, previewSetup, withDefaultPreset } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
@@ -381,7 +381,7 @@ const releaseMode = mutableStruct({
 });
 function modeOf(repository: Repository, ref?: string) {
 	const { main } =
-		decodeSync(releaseMode, JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'))
+		decodeSync(releaseMode, withDefaultPreset(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'))
 			.streams;
 	for (const legacy of ['start', 'versioning', 'required']) expect(main).not.toHaveProperty(legacy);
 	expect(main.promote).not.toHaveProperty('approval');
