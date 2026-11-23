@@ -1,6 +1,4 @@
 import { Effect, Result, Schema } from 'effect';
-import { fileEdits } from '@/automation/editors';
-import { planRelease, publicationOrder } from '@/automation/managers';
 import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { isLockfile } from '@/domain/catalog.ts';
 import type { Edit, Inventory, Snapshot } from '@/domain/inventory.ts';
@@ -15,6 +13,8 @@ import { decodeRequest, precondition } from '@/kernel/errors/domain-error.ts';
 import { invalid } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, strictStruct } from '@/kernel/schema/structs.ts';
+import { fileEdits } from '@/release/domain/planning/editors.ts';
+import { planRelease, publicationOrder } from '@/release/domain/planning/managers.ts';
 
 const operation = strictStruct({
 	id: nameSchema,
