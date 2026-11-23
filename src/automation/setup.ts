@@ -1,6 +1,6 @@
 import { Effect, Result, Schema } from 'effect';
 import { companionProposals } from '@/automation/companion-detection';
-import { canVerifyPublication, discover } from '@/automation/managers';
+import { canVerifyPublication } from '@/automation/managers';
 import { newVersionStartRefusal } from '@/automation/release-capability';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import { actionReleaseOffer } from '@/automation/setup-action';
@@ -22,6 +22,7 @@ import {
 import type { Configuration } from '@/automation/types';
 import { bumpable, setupChoicesSchema, startable } from '@/contract/setup';
 import { binaryCandidates } from '@/discovery/analysis/binary-candidates.ts';
+import { discover } from '@/discovery/discover.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { ReleaseGraph } from '@/discovery/release-graph/graph.ts';
 import { inferReleaseGraph } from '@/discovery/release-graph/graph.ts';

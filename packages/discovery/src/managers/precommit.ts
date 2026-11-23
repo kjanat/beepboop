@@ -1,7 +1,6 @@
 import { Effect, Result } from 'effect';
 import type { Scalar } from 'yaml';
 import { isMap, isScalar, isSeq } from 'yaml';
-import type { ReleaseReference } from '@/automation/types';
 import { hookConfig } from '@/domain/catalog.ts';
 import type { Edit, HookReference, Snapshot } from '@/domain/inventory.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -48,7 +47,12 @@ export function discoverHooks(snapshot: Snapshot): Result.Result<HookReference[]
 		return references;
 	});
 }
-export function planHookUpdates(snapshot: Snapshot, release: ReleaseReference): Effect.Effect<Edit[], DomainError> {
+export interface HookRelease {
+	repository: { name: string };
+	commit: string;
+	tag?: string;
+}
+export function planHookUpdates(snapshot: Snapshot, release: HookRelease): Effect.Effect<Edit[], DomainError> {
 	return Effect.gen(function*() {
 		const edits: Edit[] = [];
 		for (const [path, before] of Object.entries(snapshot.files)) {

@@ -3,7 +3,6 @@ import { alreadyPrepared, applyVersionFiles, fileEdits } from '@/automation/edit
 import type { VerificationContext } from '@/automation/gateway.ts';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { ManagerRegistry } from '@/automation/managers/registry';
-import { metadataDiagnostics } from '@/automation/package-metadata';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { Publication, ReleasePlan } from '@/automation/types';
 import type { ManagerName } from '@/domain/catalog.ts';
@@ -20,12 +19,6 @@ import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
 
 export { publicationOrder } from '@/domain/publication-order.ts';
-
-export function discover(snapshot: Snapshot, enabled: ManagerName[] = managerRegistry.names()): Inventory {
-	const inventory = managerRegistry.discover(snapshot, enabled);
-	inventory.diagnostics.push(...metadataDiagnostics(snapshot, inventory.packages));
-	return inventory;
-}
 
 export function selectedReleasePackages(
 	inventory: Inventory,

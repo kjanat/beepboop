@@ -9,9 +9,9 @@ import { applySetup, discoverSetup, previewSetup } from '@root/test/support/setu
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Result, Schema } from 'effect';
-import { discover } from '@/automation/managers';
 import type { SetupChoices } from '@/automation/setup-types';
 import { integrateWorkflow, workflowActions, workflowCredentials } from '@/automation/setup-workflows';
+import { discover } from '@/discovery/discover.ts';
 import { decodeSync, looseStruct, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 
 let world: World;

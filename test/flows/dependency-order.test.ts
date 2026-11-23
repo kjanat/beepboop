@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test';
 import { jsonFile, publishWorkflow } from '@root/test/support/repositories.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { discover } from '@/automation/managers';
 import { planReleaseSet } from '@/automation/planning';
 import { compileReleaseSet } from '@/automation/release-set';
 import type { Execution } from '@/automation/types';
+import { discover } from '@/discovery/discover.ts';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
 import type { Package, Snapshot } from '@/domain/inventory.ts';
 import { publicationOrder } from '@/domain/publication-order.ts';

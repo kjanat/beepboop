@@ -1,7 +1,5 @@
 import { Effect, Result, Schema } from 'effect';
-import { packageManifests } from '@/automation/managers/package-json';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
-import { emptyInventory } from '@/automation/managers/registry';
 import {
 	latestVersion,
 	publicationResult,
@@ -10,14 +8,11 @@ import {
 	unpublished,
 } from '@/automation/managers/verification';
 import type { Publication } from '@/automation/types';
-import { object } from '@/discovery/managers/manifest-editing.ts';
-import { identityOf, parseExtension } from '@/domain/package-identity.ts';
-import { excluded, registry } from '@/domain/package-publication.ts';
-import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { vscodeDiscoverer } from '@/discovery/managers/vscode.ts';
+import { parseExtension } from '@/domain/package-identity.ts';
 import { responseJson } from '@/kernel/http/body.ts';
 import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 
-const identifier = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 const marketplaceQuery = mutableStruct({
 	results: mutableArray(mutableStruct({
 		extensions: mutableArray(mutableStruct({ versions: mutableArray(mutableStruct({ version: Schema.String })) })),
@@ -40,8 +35,7 @@ function marketplaceVersions(body: unknown): string[] | undefined {
 }
 
 export const vscodeManager: Adapter<'vscode'> = {
-	name: 'vscode',
-	identity: pkg => identityOf(pkg),
+	...vscodeDiscoverer,
 	latest(pkg, request) {
 		return latestVersion(
 			request,
@@ -101,36 +95,5 @@ export const vscodeManager: Adapter<'vscode'> = {
 				},
 			});
 		},
-	},
-	discover(snapshot) {
-		const inventory = emptyInventory();
-		for (const { path, manifest } of packageManifests(snapshot, inventory.diagnostics)) {
-			if (typeof object(manifest.engines).vscode !== 'string') continue;
-			inventory.managers = ['vscode'];
-			if (typeof manifest.publisher !== 'string' || !identifier.test(manifest.publisher)) {
-				inventory.diagnostics.push(
-					fileProblem(path, 'invalid-manifest', `VS Code extension publisher is missing or invalid`),
-				);
-				continue;
-			}
-			if (typeof manifest.name !== 'string' || !identifier.test(manifest.name)) {
-				inventory.diagnostics.push(
-					fileProblem(path, 'invalid-manifest', `VS Code extension name is missing or invalid`),
-				);
-				continue;
-			}
-			inventory.packages.push({
-				manager: 'vscode',
-				name: `${manifest.publisher}.${manifest.name}`,
-				...(typeof manifest.version === 'string' ? { version: manifest.version } : {}),
-				manifest: path,
-				versionSource: `${path}#version`,
-				publication: manifest.private === true ? excluded('private') : registry,
-				dependencies: Array.isArray(manifest.extensionDependencies)
-					? manifest.extensionDependencies.filter(dependency => typeof dependency === 'string')
-					: [],
-			});
-		}
-		return inventory;
 	},
 };

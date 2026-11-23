@@ -1,28 +1,17 @@
 import { Effect } from 'effect';
-import type { ParseError } from 'jsonc-parser';
-import { applyEdits, modify, parse } from 'jsonc-parser';
 import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
-import { emptyInventory, Registry } from '@/automation/managers/registry';
+import { Registry } from '@/automation/managers/registry';
 import { latestVersion, publicationResult, unconfirmed, unpublished } from '@/automation/managers/verification';
-import { jsonIndent, object } from '@/discovery/managers/manifest-editing.ts';
-import { jsrManifest, jsrPackageNamePattern } from '@/domain/catalog.ts';
-import { identityOf } from '@/domain/package-identity.ts';
-import { registry } from '@/domain/package-publication.ts';
-import { fromJson, fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
-import { fileProblem } from '@/kernel/errors/diagnostics.ts';
+import { jsrDiscoverer } from '@/discovery/managers/jsr.ts';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import { jsrPackageNamePattern } from '@/domain/catalog.ts';
+import { fromJson, fromPromise, toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { domainError, upstream } from '@/kernel/errors/domain-error.ts';
 import { responseBytes, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
-import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
 
-const precedence = ['jsr.json', 'jsr.jsonc', 'deno.json', 'deno.jsonc'];
-function rank(path: string): number {
-	return precedence.indexOf(path.slice(path.lastIndexOf('/') + 1));
-}
-const licenseTerm = String.raw`\(?(?!UNLICENSED\b|LicenseRef-)[A-Za-z0-9][A-Za-z0-9.+-]*\)?`;
-const spdxLicense = new RegExp(`^${licenseTerm}(?: (?:AND|OR|WITH) ${licenseTerm})*$`);
 export function jsrLatest(name: string, request: Fetcher): Effect.Effect<RegistryVersion> {
 	if (!jsrPackageNamePattern.test(name)) {
 		return Effect.succeed({ kind: 'failed', url: 'https://jsr.io', reason: 'Invalid JSR package name' });
@@ -106,59 +95,7 @@ export function jsrTokenRefused(names: string[]): DomainError {
 	return setupRefused(`Store a JSR access token as ${jsrTokenAlias} so Beepboop can set up ${names.join(', ')}`);
 }
 export const jsrManager: Adapter<'jsr'> = {
-	name: 'jsr',
-	identity: pkg => identityOf(pkg),
-	discover(snapshot) {
-		const inventory = emptyInventory();
-		const manifests = new Map<string, string>();
-		for (const path of Object.keys(snapshot.files).filter(path => jsrManifest.test(path))) {
-			const dir = parentDirectory(path);
-			const chosen = manifests.get(dir);
-			if (!chosen || rank(path) < rank(chosen)) manifests.set(dir, path);
-		}
-		for (const path of manifests.values()) {
-			const source = snapshot.files[path] ?? '';
-			const errors: ParseError[] = [];
-			const manifest = object(parse(source, errors, { allowTrailingComma: true }));
-			const deno = /(?:^|\/)deno\.jsonc?$/.test(path);
-			if (deno && !errors.length && manifest.name === undefined) continue;
-			inventory.managers = ['jsr'];
-			if (errors.length || typeof manifest.name !== 'string' || !jsrPackageNamePattern.test(manifest.name)) {
-				inventory.diagnostics.push(fileProblem(path, 'invalid-manifest', `invalid JSR manifest`));
-				continue;
-			}
-			if (
-				manifest.license !== undefined
-				&& (typeof manifest.license !== 'string' || !spdxLicense.test(manifest.license))
-			) {
-				inventory.diagnostics.push(
-					fileProblem(path, 'license-missing', `JSR requires an SPDX license expression in "license"`),
-				);
-			}
-			inventory.packages.push({
-				manager: 'jsr',
-				name: manifest.name,
-				manifest: path,
-				...(typeof manifest.version === 'string' ? { version: manifest.version } : {}),
-				versionSource: `${path}#version`,
-				publication: registry,
-				dependencies: [],
-			});
-		}
-		return inventory;
-	},
-	ownsVersionSource: source => /(?:^|\/)(?:jsr|deno)\.jsonc?#version$/.test(source),
-	editVersion({ before, version }) {
-		const indent = jsonIndent(before);
-		return fromSync(() =>
-			applyEdits(
-				before,
-				modify(before, ['version'], version, {
-					formattingOptions: { insertSpaces: !indent.startsWith('\t'), tabSize: indent.length },
-				}),
-			)
-		);
-	},
+	...jsrDiscoverer,
 	latest: (pkg, request) => jsrLatest(pkg.name, request),
 	verifyPublication(publication, request) {
 		if (!jsrPackageNamePattern.test(publication.name) || !/^[0-9A-Za-z.+-]+$/.test(publication.version)) {

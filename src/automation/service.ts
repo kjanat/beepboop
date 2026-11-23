@@ -11,10 +11,9 @@ import type { Credentials } from '@/automation/gateway.ts';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEvent } from '@/automation/inbox';
-import { discover, planRelease, resolvePublished } from '@/automation/managers';
+import { planRelease, resolvePublished } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import { registryLayer } from '@/automation/managers/registry';
-import { metadataProblems } from '@/automation/package-metadata';
 import { preparationMerge } from '@/automation/preparation-pull-requests';
 import {
 	hasTagPromotion,
@@ -43,6 +42,8 @@ import { SecretDeliveryStore } from '@/credentials/adapters/d1/secret-deliveries
 import type { Grant } from '@/credentials/grant.ts';
 import { isRuntimeGrant, secretAliases } from '@/credentials/grant.ts';
 import { Secrets, secretsLayer, Vault } from '@/credentials/vault.ts';
+import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
+import { discover } from '@/discovery/discover.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration/schema.ts';
 import type { Package, RepositoryRecord, Snapshot } from '@/domain/inventory.ts';

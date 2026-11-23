@@ -1,5 +1,4 @@
 import { Effect, Schema } from 'effect';
-import { discover } from '@/automation/managers';
 import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
 import { streamReleases } from '@/automation/release-capability';
 import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
@@ -8,6 +7,7 @@ import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } 
 import { generatedFiles, openSetupPull, setupHead } from '@/automation/setup-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { routes } from '@/contract/routes';
+import { discover } from '@/discovery/discover.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';

@@ -6,11 +6,11 @@ import { materialize } from '@root/test/support/actions.ts';
 import { npmManifest } from '@root/test/support/repositories.ts';
 import { Effect, Result } from 'effect';
 import { parse, stringify } from 'yaml';
-import { discover } from '@/automation/managers';
 import { previewSetup } from '@/automation/setup';
 import { actionReleaseOffer } from '@/automation/setup-action';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices } from '@/automation/setup-types';
+import { discover } from '@/discovery/discover.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 
 function snapshot(files: Record<string, string>): Snapshot {

@@ -1,7 +1,10 @@
 # Ecosystem managers
 
-The release planner uses `ManagerRegistry` in
-`src/automation/managers/registry.ts`. Built-in adapters are registered in
+Discovery uses `DiscoveryRegistry` in
+`packages/discovery/src/managers/registry.ts`, and the built-in discoverers are
+registered in `packages/discovery/src/managers/builtins.ts`. The release
+planner uses `ManagerRegistry` in `src/automation/managers/registry.ts`, which
+adds publication verification. Its adapters are registered in
 `src/automation/managers/builtins.ts`.
 
 A manager implements discovery and can supply these capabilities:
@@ -19,8 +22,9 @@ one adapter must claim a version source. Verifiers support discovery, pre-upload
 checks, and recovery of unknown outcomes. Successful publication reports from
 authenticated producers are recorded directly.
 
-Cargo and npm each own discovery, editing, and verification in their adapter.
-OCI supplies publication verification. Workflow discovery identifies release and
+Each ecosystem's discoverer in `packages/discovery/src/managers` owns discovery
+and version editing. Its adapter in `src/automation/managers` adds
+verification. OCI supplies publication verification. Workflow discovery identifies release and
 container capabilities; GoReleaser, manifest, and pre-commit adapters provide
 discovery. GitHub release publication uses the successful write response. Manifest
 publication uses the authenticated producer report.
@@ -58,8 +62,9 @@ manifest patterns, marker patterns, lockfile names, destinations and version
 policy. Snapshots fetch the content of manifest paths and record marker and
 lockfile paths with empty content. Setup adds `uv lock` to the preparation
 commands when the repository has a `uv.lock`. To add an ecosystem,
-add its name and catalog entry, implement its adapter, and register it in `builtins.ts`. The typecheck
-fails until the catalog and `builtins.ts` cover the same names. Run
+add its name and catalog entry, implement its discoverer and adapter, and
+register them in both `builtins.ts` files. The typecheck fails until the catalog
+and both `builtins.ts` files cover the same names. Run
 `run schema:generate` to add the name to `schemas/v1.json`. Include fixtures for
 discovery, version edits, dependency ranges, and verification failures for every
 capability the adapter provides.

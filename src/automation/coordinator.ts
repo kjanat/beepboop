@@ -50,13 +50,11 @@ import {
 import { preparationBody } from '@/automation/managed';
 import {
 	canVerifyPublication,
-	discover,
 	observedVersion,
 	placeholderVersion,
 	verifyPublication,
 	verifySecondaryPublications,
 } from '@/automation/managers';
-import { metadataProblems } from '@/automation/package-metadata';
 import type { PackageTagResult, PackageTagRow, Release } from '@/automation/package-tags';
 import {
 	frozenPackageTagRows,
@@ -102,6 +100,8 @@ import type { ClaimStep, LedgerManager, LedgerPackage, NextStep, PublishReport, 
 import { ledgerManagers } from '@/contract/ledger';
 import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
 import { coversBinding } from '@/credentials/grant.ts';
+import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
+import { discover } from '@/discovery/discover.ts';
 import type { CheckJob } from '@/discovery/workflow-analysis/deployment-jobs.ts';
 import { checkJobs, deploys } from '@/discovery/workflow-analysis/deployment-jobs.ts';
 import type { WorkflowJobs } from '@/discovery/workflow-analysis/job-gate.ts';

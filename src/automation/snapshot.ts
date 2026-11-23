@@ -1,8 +1,8 @@
 import { Effect, Result } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
-import { pkgbuildFile } from '@/automation/managers/channels';
-import { workspaceMembers } from '@/automation/managers/workspaces';
 import { object } from '@/discovery/managers/manifest-editing.ts';
+import { pkgbuildFile } from '@/discovery/managers/pkgbuild.ts';
+import { workspaceMembers } from '@/discovery/managers/workspaces.ts';
 import { bindInputs, matrixCombinations, substitute } from '@/discovery/release-graph/bindings.ts';
 import {
 	actionBindings,

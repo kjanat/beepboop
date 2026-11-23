@@ -9,7 +9,7 @@ import type { Scope } from 'effect';
 import { Clock, Effect, Result, Schema } from 'effect';
 import type { LedgerEntry, LedgerPackage } from '@/contract/ledger.ts';
 import { claimStep, nextStep, publishWaitMinutes, settledStep } from '@/contract/ledger.ts';
-import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata.ts';
+import { filled, lacking, licenseFile, readmeFile } from '@/discovery/analysis/metadata-fields.ts';
 import { runMain } from '@/host/main.ts';
 import { terminate } from '@/host/process.ts';
 import { sha256Hex } from '@/kernel/crypto/sha256.ts';
