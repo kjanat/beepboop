@@ -278,7 +278,7 @@ test('a deployed CLI adds a notification destination without a security-key touc
 });
 
 test('outages answer as retryable upstream errors and corrupt rows as internal errors', async () => {
-	const { failureOf } = await import('@root/actions/runtime/protocol.ts');
+	const { failureOf } = await import('@/actions/protocol.ts');
 	const repository = widget(world.github);
 	const token = await world.cliSession();
 	const send = cliTransport(world, token);
@@ -319,7 +319,7 @@ test('outages answer as retryable upstream errors and corrupt rows as internal e
 });
 
 test('workflow requests retry upstream failures on idempotent endpoints only', async () => {
-	const { retried } = await import('@root/actions/runtime/protocol.ts');
+	const { retried } = await import('@/actions/protocol.ts');
 	const upstream = () => Response.json({ error: 'GitHub is down', problem: { code: 'upstream' } }, { status: 502 });
 	const replies = (...responses: Response[]) =>
 		Effect.suspend(() => {
@@ -365,8 +365,8 @@ test('workflow requests retry upstream failures on idempotent endpoints only', a
 });
 
 test('workflow transport failures retry the same idempotent request with fresh timeouts', async () => {
-	const { retried } = await import('@root/actions/runtime/protocol.ts');
-	const { postJson } = await import('@root/actions/runtime/session.ts');
+	const { retried } = await import('@/actions/protocol.ts');
+	const { postJson } = await import('@/actions/session.ts');
 	for (const [idempotent, failures, expected] of [[true, 1, 2], [true, 3, 3], [false, 1, 1]] as const) {
 		const requests: { body: string; signal: AbortSignal }[] = [];
 		world.network.serve('transport.test', async request => {
@@ -417,7 +417,7 @@ test('a broken Worker configuration fails with a logged internal error', async (
 });
 
 test('the Actions request builders produce bodies the server parses', async () => {
-	const { endpoints, modes, requestBody } = await import('@root/actions/runtime/protocol.ts');
+	const { endpoints, modes, requestBody } = await import('@/actions/protocol.ts');
 	const ids = {
 		start: 'workflowStart',
 		begin: 'workflowBegin',
@@ -483,7 +483,7 @@ test('the Actions request builders produce bodies the server parses', async () =
 });
 
 test('the token action reads permission-* inputs, the permissions JSON, or neither', async () => {
-	const { requestBody } = await import('@root/actions/runtime/protocol.ts');
+	const { requestBody } = await import('@/actions/protocol.ts');
 	const permissions = (environment: Record<string, string>) =>
 		Result.map(
 			requestBody('token', environment, 0),

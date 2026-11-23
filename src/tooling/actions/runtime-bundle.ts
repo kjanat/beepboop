@@ -24,7 +24,7 @@ export function bundleRuntime(output: string): Effect.Effect<void, ToolFailure> 
 	return Effect.gen(function*() {
 		yield* attemptPromise(() => mkdir(output, { recursive: true }));
 		const result = yield* attemptPromise(() => Bun.build({
-			entrypoints: entrypoints.map(entry => join(root, 'actions/runtime', `${entry}.ts`)),
+			entrypoints: entrypoints.map(entry => join(root, 'packages/actions/src', `${entry}.ts`)),
 			target: 'bun',
 			format: 'esm',
 			naming: '[name].ts',

@@ -1,11 +1,11 @@
 import { expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { requestBody } from '@root/actions/runtime/protocol.ts';
 import { materialize } from '@root/test/support/actions.ts';
 import { npmManifest } from '@root/test/support/repositories.ts';
 import { Effect, Result } from 'effect';
 import { parse, stringify } from 'yaml';
+import { requestBody } from '@/actions/protocol.ts';
 import { previewSetup } from '@/automation/setup';
 import { actionReleaseOffer } from '@/automation/setup-action';
 import { parseSetupPlan } from '@/automation/setup-plan';

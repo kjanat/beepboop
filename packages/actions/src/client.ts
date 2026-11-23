@@ -1,17 +1,9 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Environment, Mode } from '@root/actions/runtime/protocol.ts';
-import {
-	attempt,
-	endpoints,
-	exchange,
-	fail,
-	parseMode,
-	requestBody,
-	required,
-} from '@root/actions/runtime/protocol.ts';
-import { identityToken, mask, postJson, readServiceOrigin } from '@root/actions/runtime/session.ts';
 import { Clock, Effect } from 'effect';
+import type { Environment, Mode } from '@/actions/protocol.ts';
+import { attempt, endpoints, exchange, fail, parseMode, requestBody, required } from '@/actions/protocol.ts';
+import { identityToken, mask, postJson, readServiceOrigin } from '@/actions/session.ts';
 import { writeOutputTo } from '@/host/github-output.ts';
 import { runMain } from '@/host/main.ts';
 import { record, text } from '@/kernel/schema/result.ts';

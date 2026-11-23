@@ -10,7 +10,7 @@
 	"type": "module",
 	"bin": {
 		"beepboop": "packages/cli/src/main.ts",
-		"winget": "actions/runtime/generate-winget.ts"
+		"winget": "packages/actions/src/generate-winget.ts"
 	},
 	"workspaces": [
 		"packages/*"
@@ -39,7 +39,7 @@
 		"discover": "./scripts/discover.ts",
 		"fmt": "kfmt",
 		"gate": "run -pk check lint test purl:check schema:check actions:check boundaries && run -s build:cli check:cli check:jsr",
-		"homebrew": "bun actions/runtime/generate-homebrew.ts",
+		"homebrew": "bun packages/actions/src/generate-homebrew.ts",
 		"lint": "biome check . --error-on-warnings",
 		"move": "bun src/tooling/workspace/move.ts",
 		"prepare": "run -qs types sync && effect-tsgo patch --typescript --oxlint",
@@ -51,14 +51,14 @@
 		"purl:update": "run -s purl:fetch purl:generate",
 		"schema:check": "bun src/tooling/schema/generate.ts --check",
 		"schema:generate": "bun src/tooling/schema/generate.ts",
-		"scoop": "bun actions/runtime/generate-scoop.ts",
+		"scoop": "bun packages/actions/src/generate-scoop.ts",
 		"prestart": "run -pk types db:local",
 		"start": "astro dev",
 		"sync": "astro sync",
 		"test": "bun scripts/test.ts --check --parallel",
 		"test:browser": "playwright test --config browser/playwright.config.ts",
 		"types": "wrangler types >/dev/null",
-		"winget": "bun actions/runtime/generate-winget.ts"
+		"winget": "bun packages/actions/src/generate-winget.ts"
 	},
 	"overrides": {
 		"wrangler": "$wrangler"

@@ -26,11 +26,11 @@ function inline(program: string): string[] {
 
 test('action and tooling entrypoints print only the failure message and exit 1', async () => {
 	const runs = await Promise.all([
-		exitOf(['actions/runtime/client.ts']),
-		exitOf(['actions/runtime/prepare.ts']),
-		exitOf(['actions/runtime/publish.ts']),
-		exitOf(['actions/runtime/pull-request.ts']),
-		exitOf(['actions/runtime/refs.ts']),
+		exitOf(['packages/actions/src/client.ts']),
+		exitOf(['packages/actions/src/prepare.ts']),
+		exitOf(['packages/actions/src/publish.ts']),
+		exitOf(['packages/actions/src/pull-request.ts']),
+		exitOf(['packages/actions/src/refs.ts']),
 		exitOf(['src/tooling/schema/generate.ts', '--bogus']),
 	]);
 	expect(runs).toEqual([

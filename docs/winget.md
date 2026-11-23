@@ -66,9 +66,10 @@ installer success codes are only emitted when explicitly configured.
 
 ## Development
 
-The generator is in `src/distribution/winget`. `bun run winget` and the Action
-run `actions/runtime/generate-winget.ts`. Publication bundles it with the other
-Action runtimes, so the Action installs no packages.
+The generator is in `src/distribution/winget`. `bun run winget` runs
+`packages/actions/src/generate-winget.ts`. Publication bundles it with the
+other Action runtimes into `actions/runtime/generate-winget.ts`, so the Action
+installs no packages.
 
 ## Publish the Action
 

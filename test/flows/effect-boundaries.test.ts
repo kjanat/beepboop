@@ -1,12 +1,12 @@
 import { expect, spyOn, test } from 'bun:test';
 import { join } from 'node:path';
-import { identityToken } from '@root/actions/runtime/session';
 import { tokenRequest } from '@root/test/support/actions';
 import type { World } from '@root/test/support/world';
 import { adminSubject, eachWorld, issuer, origin } from '@root/test/support/world';
 import { experimental_AstroContainer } from 'astro/container';
 import { createContext } from 'astro/middleware';
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
+import { identityToken } from '@/actions/session.ts';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { goManager } from '@/automation/managers/go';
 import { jsrManager, setUpJsrPackage } from '@/automation/managers/jsr';

@@ -1,6 +1,4 @@
 import { expect, spyOn, test } from 'bun:test';
-import { exchange, failureOf } from '@root/actions/runtime/protocol';
-import { pullRequestTransport } from '@root/actions/runtime/pull-request';
 import { call, cliTransport, discoveredWidget } from '@root/test/support/client';
 import { durableObjectState, MemoryStorage } from '@root/test/support/do-storage';
 import { widget } from '@root/test/support/repositories';
@@ -9,6 +7,8 @@ import { adminSubject, eachWorld, epoch, issuer, origin } from '@root/test/suppo
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Logger, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { decodeJwt } from 'jose';
+import { exchange, failureOf } from '@/actions/protocol.ts';
+import { pullRequestTransport } from '@/actions/pull-request.ts';
 import { workflowIdentity } from '@/auth/actions-oidc.ts';
 import { administrator } from '@/auth/admin.ts';
 import { AutomationCoordinator } from '@/automation/coordinator';

@@ -11,9 +11,9 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import type { ActionFailure, Invalid } from '@root/actions/runtime/protocol.ts';
-import { attempt, refuse, required } from '@root/actions/runtime/protocol.ts';
 import { Effect, Result } from 'effect';
+import type { ActionFailure, Invalid } from '@/actions/protocol.ts';
+import { attempt, refuse, required } from '@/actions/protocol.ts';
 import { checkoutAt } from '@/host/git.ts';
 import { runMain } from '@/host/main.ts';
 import { hasPathSegment } from '@/kernel/path/relative-path.ts';

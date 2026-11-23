@@ -4,16 +4,6 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Command, Runner } from '@root/actions/runtime/publish.ts';
-import {
-	command,
-	distributionLicensed,
-	main,
-	publicRepository,
-	publishPackages,
-	pythonMissing,
-	requireAll,
-} from '@root/actions/runtime/publish.ts';
 import { begin, runIdentity } from '@root/test/support/actions.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { Repository, Run } from '@root/test/support/github.ts';
@@ -46,6 +36,16 @@ import {
 import type { RunIdentity, World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
+import type { Command, Runner } from '@/actions/publish.ts';
+import {
+	command,
+	distributionLicensed,
+	main,
+	publicRepository,
+	publishPackages,
+	pythonMissing,
+	requireAll,
+} from '@/actions/publish.ts';
 import { publishMinutes } from '@/automation/setup-workflows';
 import type { Execution } from '@/automation/types';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';

@@ -4,7 +4,6 @@
 		"includes": [
 			"src/**",
 			"scripts/**",
-			"actions/**",
 			"test/**",
 			"browser/**",
 			"packages/**",
