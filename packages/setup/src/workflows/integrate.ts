@@ -16,7 +16,8 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import { yaml, yamlData } from '@/kernel/parse/yaml.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';
 import { ledgerManagers, publishWaitMinutes } from '@/publication/contract.ts';
-import { crateOutcome, ledgerCommand, plainCrateNames } from '@/setup/editing/commands.ts';
+import { crateOutcome, plainCrateNames } from '@/publication/crate-script.ts';
+import { ledgerCommand } from '@/setup/editing/commands.ts';
 import type { SetupWorkflow } from '@/setup/types.ts';
 import { annotatePins, matchEnding, pinned, renderWorkflow } from '@/setup/workflows/actions.ts';
 import {

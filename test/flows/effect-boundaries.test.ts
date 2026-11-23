@@ -18,13 +18,14 @@ import { yamlData, yamlDocument } from '@/kernel/parse/yaml.ts';
 import { decodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
 import { onRequest } from '@/middleware';
 import { goManager } from '@/publication/registries/go.ts';
-import { jsrManager, setUpJsrPackage } from '@/publication/registries/jsr.ts';
+import { jsrManager } from '@/publication/registries/jsr.ts';
 import { verifyImage } from '@/publication/registries/oci.ts';
 import { pypiManager } from '@/publication/registries/pypi.ts';
 import type { Manager } from '@/publication/registries/registry.ts';
 import { registryLayer } from '@/publication/registries/registry.ts';
 import { verifyRegistry } from '@/publication/registries/verification.ts';
 import { vscodeManager } from '@/publication/registries/vscode.ts';
+import { setUpJsrPackage } from '@/publication/setup/jsr.ts';
 import { loaders } from '@/server/loaders';
 import { temporaryDirectory } from '@/tooling/runtime';
 

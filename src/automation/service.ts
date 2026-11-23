@@ -30,7 +30,7 @@ import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
 import { SecretDeliveryStore } from '@/credentials/adapters/d1/secret-deliveries.ts';
 import type { Grant } from '@/credentials/grant.ts';
 import { isRuntimeGrant, secretAliases } from '@/credentials/grant.ts';
-import { Secrets, secretsLayer, Vault } from '@/credentials/vault.ts';
+import { secretsLayer, Vault } from '@/credentials/vault.ts';
 import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
 import { discover } from '@/discovery/discover.ts';
 import { RepositoryCatalog } from '@/discovery/repositories/catalog.ts';
@@ -78,9 +78,9 @@ import { Database, databaseLayer, sql } from '@/persistence/d1/database';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
 import { executionId } from '@/persistence/identity-keys';
-import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/publication/registries/jsr.ts';
 import { registryLayer } from '@/publication/registries/registry.ts';
 import { resolvePublished } from '@/publication/registries/verify.ts';
+import { setUpJsrPackages } from '@/publication/setup/jsr.ts';
 import type { WinGetBindings } from '@/publication/winget/service.ts';
 import { WinGetService } from '@/publication/winget/service.ts';
 import { releaseAfterMerge } from '@/setup/body.ts';
@@ -392,20 +392,13 @@ export class AutomationService {
 		});
 	}
 	prepareJsr(execution: Execution): Effect.Effect<void, DomainError> {
-		const ids = new Set([
+		const ids = [
 			...(execution.workflow?.publications ?? []),
 			...(execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required ?? []),
-		]);
-		const names = [...ids].flatMap(id => id.startsWith('pkg:jsr/') ? [decodeURIComponent(id.slice(8))] : []);
-		if (!names.length) return Effect.void;
-		const repository = execution.repository;
-		return Effect.gen(function*() {
-			const secrets = yield* Secrets;
-			const token = yield* secrets.reveal(jsrTokenAlias, `setup:${execution.id}`).pipe(
-				Effect.catchIf(error => error.problem.code !== 'upstream', () => Effect.fail(jsrTokenRefused(names))),
-			);
-			for (const name of names) yield* setUpJsrPackage(name, repository, token);
-		}).pipe(Effect.provide(Layer.mergeAll(registryLayer(this.dependencies.transport), secretsLayer(this.vault()))));
+		];
+		return setUpJsrPackages(ids, execution.repository, `setup:${execution.id}`).pipe(
+			Effect.provide(Layer.mergeAll(registryLayer(this.dependencies.transport), secretsLayer(this.vault()))),
+		);
 	}
 	private releaseFromManifest(stored: RepositoryRecord, saved: string): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
