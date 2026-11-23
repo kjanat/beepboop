@@ -331,11 +331,11 @@ from Beepboop itself, so it needs no preset repository. A setup PR that creates
 `"extends": ["beepboop:default"]` and leaves out the values that preset
 carries. A setup PR for an existing file keeps every value the file states.
 
-A repository without `.github/beepboop.json` releases when the workflows on its
-default branch already run the Beepboop actions and setup would change none of
-them. Beepboop then uses the configuration that the setup PR would write.
-Without such workflows the repository stays unconfigured until you merge its
-setup PR.
+A repository without `.github/beepboop.json` releases when a workflow on its
+default branch runs `kjanat/beepboop/actions/begin` and setup would change none
+of its workflows. Beepboop then uses the configuration that the setup PR would
+write. Without such a workflow the repository stays unconfigured until you
+merge its setup PR.
 
 A `github>owner/repository:name` preset reads `name.json` at the root of that
 repository. Presets merge in order, and the local configuration merges last.
