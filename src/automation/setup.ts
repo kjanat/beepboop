@@ -37,6 +37,7 @@ import type { BinaryBuild, BinaryCandidate, BinaryRelease, BinaryTarget } from '
 import { binaryTargets, defaultBinaryTargets, leftOut, unbuildable } from '@/domain/binary-platforms.ts';
 import { isLockfile } from '@/domain/catalog.ts';
 import { canonicalConfiguration } from '@/domain/configuration/canonical.ts';
+import { withoutDefaults } from '@/domain/configuration/minimal.ts';
 import { legacyConfiguration } from '@/domain/configuration/names.ts';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
@@ -44,6 +45,7 @@ import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, packageId, selectorKey } from '@/domain/package-identity.ts';
 import { packageMarkdown } from '@/domain/package-label';
 import { publishable } from '@/domain/package-publication.ts';
+import { defaultPreset } from '@/domain/preset.ts';
 import { publicationStages } from '@/domain/publication-stages';
 import {
 	configurableStarts,
@@ -904,6 +906,8 @@ function drafted(
 		if (choices.actionsRevision) configuration.actionsRevision = choices.actionsRevision;
 		else delete configuration.actionsRevision;
 		configuration.$schema ??= 'https://beepboop.kjanat.dev/schema/v1.json';
+		const fresh = !snapshot.files['.github/beepboop.json'];
+		if (fresh && Object.hasOwn(streams, 'main')) configuration.extends = [defaultPreset];
 		configuration.streams = streams;
 		configuration.managers = [...managers].sort();
 		const validated = Result.gen(function*() {
@@ -931,8 +935,8 @@ function drafted(
 			blockers.push(validated.failure.message);
 		}
 		const before = snapshot.files['.github/beepboop.json'] ?? '';
-		const written = canonicalConfiguration(configuration, inventory.packages);
 		const stored = yield* fromSync((): unknown => JSON.parse(before || '{}'));
+		const written = withoutDefaults(canonicalConfiguration(configuration, inventory.packages), stored);
 		// Do not reformat an unchanged configuration simply to make a PR.
 		const after = JSON.stringify(stored) === JSON.stringify(written)
 			? before

@@ -332,7 +332,7 @@ export class RepositoryGateway {
 		const self = this;
 		return Effect.gen(function*() {
 			const parsed = parsePresetReference(reference);
-			if (!parsed) return yield* precondition('Invalid preset');
+			if (parsed?.kind !== 'github') return yield* precondition('Invalid preset');
 			const { repository: name, preset, ref } = parsed;
 			const published = yield* rawPreset(self.transport, name, preset, ref);
 			if (Option.isSome(published)) return published.value;

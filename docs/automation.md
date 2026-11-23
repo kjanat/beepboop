@@ -323,8 +323,16 @@ Use `extends` to share configuration:
 }
 ```
 
-Publish the [preset templates](../presets/) in your preset repository before you
-reference them. Presets merge in order, and the local configuration merges last.
+Beepboop ships the [preset templates](../presets/) as built-in presets:
+`beepboop:default`, `beepboop:npm`, `beepboop:rust-workspace`,
+`beepboop:github-action` and `beepboop:maintenance`. A built-in preset loads
+from Beepboop itself, so it needs no preset repository. A setup PR that creates
+`.github/beepboop.json` with a `main` stream writes
+`"extends": ["beepboop:default"]` and leaves out the values that preset
+carries. A setup PR for an existing file keeps every value the file states.
+
+A `github>owner/repository:name` preset reads `name.json` at the root of that
+repository. Presets merge in order, and the local configuration merges last.
 Objects merge by key. Arrays replace the inherited array. Each execution saves
 the resolved preset commit SHAs. On refresh, Beepboop validates the
 configuration with the schema that generates
