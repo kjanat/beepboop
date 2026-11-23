@@ -6,8 +6,11 @@ import {
 	completedReviews,
 	outcome,
 	PullRequestView,
+	waitFor,
 } from '@root/.claude/skills/beepboop-ship/review.ts';
-import { Schema } from 'effect';
+import { virtualTime } from '@root/test/support/time.ts';
+import { Effect, Schema } from 'effect';
+import { ToolFailure } from '@/tooling/runtime.ts';
 
 const head = 'a'.repeat(40);
 const done = [
@@ -78,4 +81,44 @@ test('required checks are read from check runs and status contexts', () => {
 		{ name: 'CodeQL', status: 'PENDING', conclusion: '' },
 		{ name: 'browser', status: 'missing', conclusion: '' },
 	]);
+});
+
+function fakeGh(failures: number, message = 'GraphQL: Something went wrong') {
+	const calls: string[][] = [];
+	const run = (args: string[]) => {
+		calls.push(args);
+		if (calls.length <= failures) return Effect.fail(new ToolFailure({ message }));
+		if (args[0] === 'pr') {
+			return Effect.succeed(JSON.stringify({ headRefOid: head, mergeable: 'MERGEABLE', statusCheckRollup: done }));
+		}
+		return Effect.succeed(JSON.stringify([[comment(codexLogin, summary(false))]]));
+	};
+	return { calls, run };
+}
+
+test('transient gh failures are retried until the normal result', async () => {
+	const gh = fakeGh(3);
+	const verdict = await virtualTime(waitFor('1', gh.run));
+	expect(verdict.exit).toBe(0);
+	expect(gh.calls.length).toBe(5);
+});
+
+test('an undecodable gh reply is transient', async () => {
+	let first = true;
+	const gh = fakeGh(0);
+	const run = (args: string[]) => {
+		if (first) {
+			first = false;
+			return Effect.succeed('<html>502 Bad Gateway</html>');
+		}
+		return gh.run(args);
+	};
+	expect((await virtualTime(waitFor('1', run))).exit).toBe(0);
+});
+
+test('gh failing five times exits 5 with the message and never 1', async () => {
+	const gh = fakeGh(Infinity, 'HTTP 502');
+	const verdict = await virtualTime(waitFor('1', gh.run));
+	expect(verdict).toEqual({ exit: 5, output: 'gh error: HTTP 502' });
+	expect(gh.calls.length).toBe(5);
 });

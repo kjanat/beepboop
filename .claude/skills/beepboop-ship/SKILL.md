@@ -88,14 +88,16 @@ state. It exits 0 when `code_review.has_any_findings` is `false` and 3
 otherwise. It exits 1 when a check failed before Codex finished, and 2 after an
 hour without a result. It exits 4 and prints `conflicting` as soon as GitHub
 reports `mergeable` as `CONFLICTING`, because GitHub runs no CI on a
-conflicting PR. `UNKNOWN` keeps polling.
+conflicting PR. `UNKNOWN` keeps polling. A failed or undecodable `gh` call is
+retried up to 5 times, 2 to 30 seconds apart. When the retries run out it prints
+`gh error: <message>` and exits 5. Exit 5 says nothing about the checks.
 
 ## 7. Merge gate
 
 Merge only when all hold on the head commit:
 
 - `verify`, `CodeQL` and `browser` concluded `SUCCESS`.
-- `wait.ts` exited 0. On exit 4, `git fetch origin master`, rebase onto
+- `wait.ts` exited 0. On exit 5, run `wait.ts` again. On exit 4, `git fetch origin master`, rebase onto
   `origin/master`, rerun the gate, force-push with lease, and wait again. On exit 3, read the inline review comments
   (`gh api repos/kjanat/beepboop/pulls/<pr>/comments`), fix each real finding
   with a failing test, push, and wait again. Reply to each finding, prefixed by
