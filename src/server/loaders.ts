@@ -5,14 +5,15 @@ import { withAutomation } from '@/automation/service.ts';
 import type { UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
 import { readableValues } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
-import { grantRow, parseGrant } from '@/credentials/grant.ts';
+import type { ActiveCredential } from '@/credentials/adapters/d1/credentials.ts';
+import type { CredentialDeliveryRow } from '@/credentials/adapters/d1/secret-deliveries.ts';
+import { grantRow } from '@/credentials/grant.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { recover } from '@/kernel/errors/classify.ts';
 import type { Readable } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
 import type { CLISessionRow } from '@/persistence/d1/cli-sessions.ts';
-import type { ActiveCredential, DeliveryRow } from '@/persistence/d1/credentials.ts';
 import type { Section } from '@/server/sections.ts';
 
 export interface LoaderContext {
@@ -36,7 +37,7 @@ export function panel<T, R>(name: string, work: Effect.Effect<T, DomainError, R>
 }
 
 export type SecretSummary = ActiveCredential;
-export type DeliverySummary = DeliveryRow;
+export type DeliverySummary = CredentialDeliveryRow;
 export type CLISession = CLISessionRow;
 
 interface Rows<T, U> {
@@ -71,10 +72,7 @@ function runsWithCompletions(service: AutomationService, repositoryId?: number) 
 	);
 }
 function grants(service: AutomationService) {
-	return service.credentials.grantDocuments().pipe(
-		Effect.flatMap(documents => Effect.forEach(documents, parseGrant)),
-		Effect.map(grants => grants.map(grantRow)),
-	);
+	return service.grants.list().pipe(Effect.map(grants => grants.map(grantRow)));
 }
 const concurrent = { concurrency: ioConcurrency } as const;
 
@@ -178,7 +176,7 @@ export const loaders = {
 			service.authentication.authenticators.list(actor),
 			service.credentials.active(),
 			grants(service),
-			service.credentials.deliveries(),
+			service.secretDeliveries.list(),
 			repositories(service),
 		], concurrent).pipe(
 			Effect.map(([keys, secretRows, grantRows, deliveryRows, repositoryRows]) => ({

@@ -1,11 +1,9 @@
 import { Effect, Schema } from 'effect';
-import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
-import { optionalColumn, parse, sql, upsertDocument } from '@/persistence/d1/database';
-import { documentRow } from '@/persistence/d1/document-row';
+import { optionalColumn, parse, sql } from '@/persistence/d1/database';
 
 const versionRow = mutableStruct({ version: Schema.NullOr(Schema.Finite) });
 const sealedRow = mutableStruct({
@@ -22,17 +20,10 @@ const listedRow = mutableStruct({
 	created_at: Schema.Finite,
 });
 const activeRow = mutableStruct({ alias: Schema.String, version: Schema.Finite, created_at: Schema.Finite });
-const deliveryRow = mutableStruct({
-	grant_id: Schema.String,
-	version: Schema.Finite,
-	state: Schema.String,
-	updated_at: Schema.Finite,
-});
 
 export type SealedCredential = Decoded<typeof sealedRow>;
 export type ListedCredential = Decoded<typeof listedRow>;
 export type ActiveCredential = Decoded<typeof activeRow>;
-export type DeliveryRow = Decoded<typeof deliveryRow>;
 
 export interface Sealed {
 	alias: string;
@@ -85,54 +76,6 @@ export class CredentialStore {
 					clock.currentTimeMillisUnsafe(),
 				),
 			]).pipe(Effect.asVoid);
-		});
-	}
-	grantDocuments(filter: { alias?: string; repositoryId?: number } = {}): Effect.Effect<unknown[], DomainError> {
-		const rows = filter.alias === undefined
-			? filter.repositoryId === undefined
-				? this.sql.all('SELECT document FROM grants')
-				: this.sql.all('SELECT document FROM grants WHERE repository_id=?', filter.repositoryId)
-			: filter.repositoryId === undefined
-			? this.sql.all('SELECT document FROM grants WHERE alias=?', filter.alias)
-			: this.sql.all(
-				'SELECT document FROM grants WHERE alias=? AND repository_id=?',
-				filter.alias,
-				filter.repositoryId,
-			);
-		return rows.pipe(
-			Effect.flatMap(rows => parse(mutableArray(documentRow), rows)),
-			Effect.flatMap(rows => fromSync(() => rows.map((row): unknown => JSON.parse(row.document)))),
-		);
-	}
-	hasGrant(id: string): Effect.Effect<boolean, DomainError> {
-		return this.sql.first('SELECT id FROM grants WHERE id=?', id).pipe(Effect.map(row => row !== null));
-	}
-	putGrant(grant: { id: string; alias: string; repositoryId: number }): Effect.Effect<void, DomainError> {
-		return upsertDocument(
-			this.sql,
-			'grants',
-			'id',
-			{ id: grant.id, alias: grant.alias, repository_id: grant.repositoryId },
-			grant,
-		);
-	}
-	deleteGrant(id: string): Effect.Effect<void, DomainError> {
-		return this.sql.run('DELETE FROM grants WHERE id=?', id).pipe(Effect.asVoid);
-	}
-	deliveries(): Effect.Effect<DeliveryRow[], DomainError> {
-		return this.sql.all('SELECT grant_id,version,state,updated_at FROM secret_deliveries').pipe(
-			Effect.flatMap(rows => parse(mutableArray(deliveryRow), rows)),
-		);
-	}
-	recordDelivery(grantId: string, version: number, state: string): Effect.Effect<void, DomainError> {
-		return Effect.clockWith(clock => {
-			return this.sql.run(
-				'INSERT INTO secret_deliveries(grant_id,version,state,updated_at) VALUES(?,?,?,?) ON CONFLICT(grant_id,version) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at',
-				grantId,
-				version,
-				state,
-				clock.currentTimeMillisUnsafe(),
-			).pipe(Effect.asVoid);
 		});
 	}
 }

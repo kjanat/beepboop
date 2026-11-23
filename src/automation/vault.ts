@@ -2,8 +2,11 @@ import { Context, Effect, Layer } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import type { Store } from '@/automation/store';
+import type { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
+import type { GrantStore } from '@/credentials/adapters/d1/grants.ts';
+import type { SecretDeliveryStore } from '@/credentials/adapters/d1/secret-deliveries.ts';
 import type { Grant, SecretGrant } from '@/credentials/grant.ts';
-import { grantRow, isRuntimeGrant, parseGrant, runtimeGrant } from '@/credentials/grant.ts';
+import { isRuntimeGrant, runtimeGrant } from '@/credentials/grant.ts';
 import type { SecretTarget } from '@/github/secrets.ts';
 import { putSecret } from '@/github/secrets.ts';
 import { base64, bytes } from '@/kernel/crypto/base64.ts';
@@ -11,7 +14,12 @@ import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { forbidden, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { credentialAliasPattern } from '@/kernel/schema/ids.ts';
-import type { CredentialStore } from '@/persistence/d1/credentials';
+
+export interface CredentialStores {
+	readonly credentials: CredentialStore;
+	readonly grants: GrantStore;
+	readonly deliveries: SecretDeliveryStore;
+}
 
 function secretTarget(grant: SecretGrant): SecretTarget {
 	return grant._tag === 'EnvironmentSecret'
@@ -26,7 +34,7 @@ export function validCredential(alias: string, value: string): Effect.Effect<voi
 export class Vault {
 	constructor(
 		private store: Store,
-		private credentials: CredentialStore,
+		private stores: CredentialStores,
 		private keyring: Record<string, string>,
 		private activeKey: string,
 	) {}
@@ -73,16 +81,16 @@ export class Vault {
 	replace(alias: string, value: string, actor: string): Effect.Effect<number, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			yield* validCredential(alias, value);
-			const version = yield* this.credentials.nextVersion(alias);
+			const version = yield* this.stores.credentials.nextVersion(alias);
 			const sealed = yield* this.seal(`${alias}:${version}:${this.activeKey}`, value);
-			yield* this.credentials.store({ alias, version, keyId: this.activeKey, ...sealed });
+			yield* this.stores.credentials.store({ alias, version, keyId: this.activeKey, ...sealed });
 			yield* this.store.audit(actor, 'credential.replace', alias);
 			return version;
 		});
 	}
 	reveal(alias: string, actor: string): Effect.Effect<{ value: string; version: number }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const row = yield* this.credentials.sealed(alias);
+			const row = yield* this.stores.credentials.sealed(alias);
 			if (!row) return yield* notFound('credential', 'No stored value under this name', alias);
 			const value = yield* this.open(`${alias}:${row.version}:${row.key_id}`, row.key_id, row);
 			yield* this.store.audit(actor, 'credential.access', alias);
@@ -90,22 +98,16 @@ export class Vault {
 		});
 	}
 	grant(grant: Grant, actor: string): Effect.Effect<void, DomainError> {
-		return fromSync(() => grantRow(grant)).pipe(
-			Effect.flatMap(row => this.credentials.putGrant(row)),
+		return this.stores.grants.put(grant).pipe(
 			Effect.andThen(this.store.audit(actor, 'credential.grant', grant.id)),
 		);
 	}
 	revoke(id: string, actor: string): Effect.Effect<void, DomainError> {
-		return this.credentials.deleteGrant(id).pipe(Effect.andThen(this.store.audit(actor, 'credential.revoke', id)));
-	}
-	private grants(filter: { alias: string; repositoryId?: number }): Effect.Effect<Grant[], DomainError> {
-		return this.credentials.grantDocuments(filter).pipe(
-			Effect.flatMap(documents => Effect.forEach(documents, parseGrant)),
-		);
+		return this.stores.grants.delete(id).pipe(Effect.andThen(this.store.audit(actor, 'credential.revoke', id)));
 	}
 	runtime(alias: string, operation: string, identity: WorkflowIdentity): Effect.Effect<string, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const allowed = (yield* this.grants({ alias, repositoryId: identity.repositoryId })).some(
+			const allowed = (yield* this.stores.grants.list({ alias, repositoryId: identity.repositoryId })).some(
 				(g) =>
 					runtimeGrant(g, operation, identity.repository, identity.ref)
 					&& g.environment === identity.environment
@@ -122,7 +124,7 @@ export class Vault {
 		actor: string,
 	): Effect.Effect<{ id: string; state: string }[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const grants = yield* this.grants({ alias });
+			const grants = yield* this.stores.grants.list({ alias });
 			const secret = yield* this.reveal(alias, actor);
 			return yield* Effect.forEach(grants.filter((g): g is SecretGrant => !isRuntimeGrant(g)), grant => {
 				const permissions: Record<string, 'read' | 'write'> = grant._tag === 'EnvironmentSecret'
@@ -134,7 +136,7 @@ export class Vault {
 					return 'succeeded';
 				}).pipe(
 					Effect.orElseSucceed(() => 'failed'),
-					Effect.tap(state => this.credentials.recordDelivery(grant.id, secret.version, state)),
+					Effect.tap(state => this.stores.deliveries.record(grant.id, secret.version, state)),
 					Effect.map(state => ({ id: grant.id, state })),
 				);
 			});
