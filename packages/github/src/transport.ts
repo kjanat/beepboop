@@ -5,8 +5,26 @@ import { responseJson, responseText, scopedResponse } from '@/kernel/http/body.t
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { parseRetryAfter } from '@/kernel/http/http-date.ts';
 import { retryTransient } from '@/kernel/http/retry.ts';
+import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 
 export const githubApiVersion = '2026-03-10';
+
+export interface GitHubRequests {
+	call(
+		path: string,
+		token: string,
+		method?: string,
+		body?: unknown,
+		readOnlyGraphql?: boolean,
+	): Effect.Effect<unknown, DomainError>;
+	read<S extends Contract>(
+		schema: S,
+		path: string,
+		token: string,
+		method?: string,
+		body?: unknown,
+	): Effect.Effect<Decoded<S>, DomainError>;
+}
 
 // GitHub signals a rate limit by GraphQL error type RATE_LIMITED with HTTP 200, or by HTTP 403 or 429 naming the limit.
 export function rateLimited(message: string, type?: string): boolean {

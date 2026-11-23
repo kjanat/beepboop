@@ -9,6 +9,7 @@
 	"dependencies": {
 		"@beepboopbot/domain": "workspace:*",
 		"@beepboopbot/kernel": "workspace:*",
-		"effect": "^4.1.2"
+		"effect": "^4.1.2",
+		"tweetnacl-sealedbox-js": "^1.2.0"
 	}
 }

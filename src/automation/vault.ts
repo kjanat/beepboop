@@ -1,11 +1,11 @@
 import { Context, Effect, Layer, Schema } from 'effect';
-import { seal } from 'tweetnacl-sealedbox-js';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/github';
 import type { Store } from '@/automation/store';
 import { workflowFilePattern } from '@/domain/catalog.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import { putSecret } from '@/github/secrets.ts';
 import { base64, bytes } from '@/kernel/crypto/base64.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -30,7 +30,6 @@ export type Grant =
 	| (GrantFields & { delivery: 'runtime' })
 	| (GrantFields & { delivery: 'repository'; secretName: string })
 	| (GrantFields & { delivery: 'environment'; environment: string; secretName: string });
-const secretPublicKey = mutableStruct({ key: textSchema, key_id: textSchema });
 const grantFields = {
 	id: textSchema,
 	alias: Schema.String.check(matchesPattern(/^[\w-]+$/)),
@@ -181,17 +180,9 @@ export class Vault {
 				const permissions: Record<string, 'read' | 'write'> = grant.delivery === 'environment'
 					? { environments: 'write', contents: 'read' }
 					: { secrets: 'write', contents: 'read' };
-				const path = grant.delivery === 'environment'
-					? `/repositories/${grant.repositoryId}/environments/${encodeURIComponent(grant.environment)}/secrets`
-					: `/repos/${grant.repository}/actions/secrets`;
 				return Effect.gen(function*() {
 					const token = yield* gateway.token(grant.repository, grant.repositoryId, permissions);
-					const publicKey = yield* gateway.read(secretPublicKey, `${path}/public-key`, token);
-					const encrypted = yield* fromSync(() => seal(new TextEncoder().encode(secret.value), bytes(publicKey.key)));
-					yield* gateway.call(`${path}/${grant.secretName}`, token, 'PUT', {
-						encrypted_value: base64(encrypted),
-						key_id: publicKey.key_id,
-					});
+					yield* putSecret(gateway, grant, grant.secretName, secret.value, token);
 					return 'succeeded';
 				}).pipe(
 					Effect.orElseSucceed(() => 'failed'),
