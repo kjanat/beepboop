@@ -6,8 +6,10 @@ import { withEnvironment } from '@root/test/support/process.ts';
 import { Effect, Schema, Struct } from 'effect';
 import type { Package } from '@/automation/inventory';
 import { verifyPublication } from '@/automation/managers';
+import { managerRegistry } from '@/automation/managers/builtins';
 import { cargoManager, crateIndexUrl } from '@/automation/managers/cargo';
 import type { Publication } from '@/automation/types';
+import { managerNames, managerSpec } from '@/contract/catalog';
 import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
 import { generateCask } from '@/distribution/homebrew/generate';
 import { writeRendered } from '@/distribution/output';
@@ -504,4 +506,10 @@ test('a crate whose latest version the crates.io API cannot answer is read from 
 		url: 'https://index.crates.io/sv/g-/svg-data',
 		reason: 'invalid registry response',
 	});
+});
+
+test('the catalog marks a manager verifiable exactly when its adapter verifies publications', () => {
+	expect(managerNames.map(name => [name, managerSpec(name).verifiable])).toEqual(
+		managerNames.map(name => [name, managerRegistry.canVerify(name)]),
+	);
 });

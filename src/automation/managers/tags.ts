@@ -1,4 +1,6 @@
 import { Result } from 'effect';
+import type { Inventory } from '@/automation/inventory';
+import { publishable } from '@/automation/package-publication';
 import { goreleaserConfig, npmTargets } from '@/contract/catalog';
 import { compareVersions, semver } from '@/contract/semver';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
@@ -38,4 +40,7 @@ export function tagQueries(paths: readonly string[]): string[] {
 	return [...prefixes]
 		.filter(prefix => ![...prefixes].some(other => other !== prefix && prefix.startsWith(other)))
 		.sort();
+}
+export function versionsInFiles(inventory: Inventory): boolean {
+	return inventory.packages.some(p => publishable(p) && tagPrefix(p.versionSource) === undefined);
 }
