@@ -1,75 +1,22 @@
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import type { Store } from '@/automation/store';
-import { workflowFilePattern } from '@/domain/catalog.ts';
-import { matchesRef } from '@/domain/ref-policy.ts';
-import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import type { Grant, SecretGrant } from '@/credentials/grant.ts';
+import { grantRow, isRuntimeGrant, parseGrant, runtimeGrant } from '@/credentials/grant.ts';
+import type { SecretTarget } from '@/github/secrets.ts';
 import { putSecret } from '@/github/secrets.ts';
 import { base64, bytes } from '@/kernel/crypto/base64.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { decodeRequest, forbidden, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
-import { credentialAliasPattern, githubSecretNamePattern } from '@/kernel/schema/ids.ts';
-import { textSchema } from '@/kernel/schema/result.ts';
-import { decodeSync, matchesPattern, mutableStruct } from '@/kernel/schema/structs.ts';
+import { forbidden, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import { credentialAliasPattern } from '@/kernel/schema/ids.ts';
 import type { CredentialStore } from '@/persistence/d1/credentials';
 
-interface GrantFields {
-	id: string;
-	alias: string;
-	repositoryId: number;
-	repository: string;
-	operation: string;
-	workflow: string;
-	ref: string;
-	environment?: string;
-	secretName?: string;
-}
-export type Grant =
-	| (GrantFields & { delivery: 'runtime' })
-	| (GrantFields & { delivery: 'repository'; secretName: string })
-	| (GrantFields & { delivery: 'environment'; environment: string; secretName: string });
-const grantFields = {
-	id: textSchema,
-	alias: Schema.String.check(matchesPattern(/^[\w-]+$/)),
-	repositoryId: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
-	repository: Schema.String.check(matchesPattern(repositoryNamePattern)),
-	operation: textSchema,
-	workflow: Schema.String.check(matchesPattern(workflowFilePattern)),
-	ref: Schema.String.check(Schema.isStartingWith('refs/')),
-};
-const secretName = Schema.String.check(matchesPattern(githubSecretNamePattern, { message: 'Secret name required' }))
-	.annotateKey({ messageMissingKey: 'Secret name required' });
-const grantSchema = Schema.Union([
-	mutableStruct({
-		...grantFields,
-		delivery: Schema.Literal('runtime'),
-		environment: Schema.optional(textSchema),
-		secretName: Schema.optional(textSchema),
-	}),
-	mutableStruct({
-		...grantFields,
-		delivery: Schema.Literal('repository'),
-		environment: Schema.optional(textSchema),
-		secretName,
-	}),
-	mutableStruct({
-		...grantFields,
-		delivery: Schema.Literal('environment'),
-		environment: Schema.String.check(Schema.isMinLength(1, { message: 'Environment required' })),
-		secretName,
-	}),
-]);
-export function runtimeGrant(grant: Grant, operation: string, repository: string, ref: string): boolean {
-	return grant.delivery === 'runtime' && grant.operation === operation && grant.repository === repository
-		&& matchesRef(grant.ref, ref);
-}
-export function parseGrant(value: unknown): Effect.Effect<Grant, DomainError> {
-	return fromSync(() => decodeSync(grantSchema, value));
-}
-export function requestGrant(value: unknown): Effect.Effect<Grant, DomainError> {
-	return decodeRequest(grantSchema, value);
+function secretTarget(grant: SecretGrant): SecretTarget {
+	return grant._tag === 'EnvironmentSecret'
+		? { delivery: 'environment', repositoryId: grant.repositoryId, environment: grant.environment }
+		: { delivery: 'repository', repository: grant.repository };
 }
 export function validCredential(alias: string, value: string): Effect.Effect<void, DomainError> {
 	return !credentialAliasPattern.test(alias) || !value || value.length > 48000
@@ -143,7 +90,8 @@ export class Vault {
 		});
 	}
 	grant(grant: Grant, actor: string): Effect.Effect<void, DomainError> {
-		return this.credentials.putGrant(grant).pipe(
+		return fromSync(() => grantRow(grant)).pipe(
+			Effect.flatMap(row => this.credentials.putGrant(row)),
 			Effect.andThen(this.store.audit(actor, 'credential.grant', grant.id)),
 		);
 	}
@@ -176,13 +124,13 @@ export class Vault {
 		return Effect.gen({ self: this }, function*() {
 			const grants = yield* this.grants({ alias });
 			const secret = yield* this.reveal(alias, actor);
-			return yield* Effect.forEach(grants.filter((g) => g.delivery !== 'runtime'), grant => {
-				const permissions: Record<string, 'read' | 'write'> = grant.delivery === 'environment'
+			return yield* Effect.forEach(grants.filter((g): g is SecretGrant => !isRuntimeGrant(g)), grant => {
+				const permissions: Record<string, 'read' | 'write'> = grant._tag === 'EnvironmentSecret'
 					? { environments: 'write', contents: 'read' }
 					: { secrets: 'write', contents: 'read' };
 				return Effect.gen(function*() {
 					const token = yield* gateway.token(grant.repository, grant.repositoryId, permissions);
-					yield* putSecret(gateway, grant, grant.secretName, secret.value, token);
+					yield* putSecret(gateway, secretTarget(grant), grant.secretName, secret.value, token);
 					return 'succeeded';
 				}).pipe(
 					Effect.orElseSucceed(() => 'failed'),

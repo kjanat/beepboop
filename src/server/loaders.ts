@@ -5,7 +5,7 @@ import { withAutomation } from '@/automation/service.ts';
 import type { UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
 import { readableValues } from '@/automation/store.ts';
 import type { Execution } from '@/automation/types.ts';
-import { parseGrant } from '@/automation/vault.ts';
+import { grantRow, parseGrant } from '@/credentials/grant.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { recover } from '@/kernel/errors/classify.ts';
 import type { Readable } from '@/kernel/errors/decoding.ts';
@@ -73,6 +73,7 @@ function runsWithCompletions(service: AutomationService, repositoryId?: number) 
 function grants(service: AutomationService) {
 	return service.credentials.grantDocuments().pipe(
 		Effect.flatMap(documents => Effect.forEach(documents, parseGrant)),
+		Effect.map(grants => grants.map(grantRow)),
 	);
 }
 const concurrent = { concurrency: ioConcurrency } as const;

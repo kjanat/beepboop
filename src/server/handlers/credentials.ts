@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
-import { configuredGrant } from '@/automation/access';
-import { parseGrant, validCredential } from '@/automation/vault';
+import { validCredential } from '@/automation/vault';
 import { routes } from '@/contract/routes';
+import { configuredGrant } from '@/credentials/access.ts';
+import { grantRow, parseGrant } from '@/credentials/grant.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';
@@ -24,6 +25,7 @@ export const credentialEndpoints = {
 			credentials: service.credentials.list(),
 			grants: service.credentials.grantDocuments().pipe(
 				Effect.flatMap(documents => Effect.forEach(documents, parseGrant)),
+				Effect.map(grants => grants.map(grantRow)),
 			),
 			deliveries: service.credentials.deliveries(),
 		})),

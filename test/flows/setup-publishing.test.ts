@@ -62,6 +62,7 @@ jobs:
 			yield* service.vault().replace(alias, 'fixture-owner-token', 'test');
 			if (alias !== 'crates-io') {
 				yield* service.vault().grant({
+					_tag: 'EnvironmentSecret',
 					id: 'fixture-cargo-grant',
 					alias,
 					repository: repository.name,
@@ -69,7 +70,6 @@ jobs:
 					operation: 'publish',
 					workflow: 'publish.yml',
 					ref: 'refs/tags/v*',
-					delivery: 'environment',
 					environment: 'release',
 					secretName,
 				}, 'test');
