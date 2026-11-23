@@ -1,6 +1,5 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
-import { rateLimited } from '@/automation/github';
 import {
 	comparisonSchema,
 	createdSchema,
@@ -17,6 +16,7 @@ import { repositorySnapshot } from '@/automation/snapshot';
 import type { AutoMerge, PreparationResult } from '@/automation/types';
 import type { Edit, Snapshot } from '@/domain/inventory.ts';
 import type { AutoMergeMethod } from '@/domain/setup-terms.ts';
+import { rateLimited } from '@/github/transport.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition, upstream } from '@/kernel/errors/domain-error.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';

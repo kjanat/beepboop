@@ -27,7 +27,6 @@ import {
 	verifiableCancellation,
 } from '@/automation/execution';
 import { mergeArtifacts, resolveInputs } from '@/automation/execution-outputs';
-import { GitHubRejection } from '@/automation/github';
 import type { GitHubRelease, WorkflowRun } from '@/automation/github-resources';
 import {
 	checkRunsSchema,
@@ -155,6 +154,7 @@ import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/domain/version.ts';
 import { tagPrefix } from '@/domain/version-tags.ts';
+import { GitHubRejection } from '@/github/transport.ts';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/kernel/errors/classify.ts';
 import { decodeError, isDecodingFailure } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

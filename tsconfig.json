@@ -11,7 +11,8 @@
 			"@/package-url/*": ["./packages/domain/src/purl/*"],
 			"@/persistence/*": ["./packages/persistence/src/*"],
 			"@/cli/*": ["./packages/cli/src/*"],
-			"@/domain/*": ["./packages/domain/src/*"]
+			"@/domain/*": ["./packages/domain/src/*"],
+			"@/github/*": ["./packages/github/src/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",

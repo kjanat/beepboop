@@ -7,7 +7,7 @@ import type { AutomationCoordinator } from '@/automation/coordinator';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution, deriveExecution } from '@/automation/execution';
 import type { Credentials } from '@/automation/github';
-import { GitHub, gitHubLayer, RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/github';
 import { workflowRunsSchema } from '@/automation/github-resources';
 import type { InboxEvent, SetupPullEdit, SetupPullMerge } from '@/automation/inbox';
 import { inboxEvent } from '@/automation/inbox';
@@ -54,6 +54,7 @@ import { compareVersions } from '@/domain/semver.ts';
 import { validateAgainst } from '@/domain/validate';
 import { semVer } from '@/domain/version.ts';
 import { latestTag, versionsInFiles } from '@/domain/version-tags.ts';
+import { GitHubTransport, gitHubTransportLayer } from '@/github/transport.ts';
 import { fromJson, fromPromise, fromSync, recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
@@ -1206,7 +1207,7 @@ export const makeAutomation = Effect.gen(function*() {
 	const db = yield* Database;
 	const vault = yield* ApplicationSecrets;
 	const auth = yield* Authentication;
-	const github = yield* GitHub;
+	const github = yield* GitHubTransport;
 	const { fetch: transport } = yield* HttpTransport;
 	return new AutomationService(env, {
 		authentication: auth,
@@ -1244,7 +1245,7 @@ export function applicationLayer(
 		Layer.succeed(ApplicationConfiguration, { env, defer }),
 		Layer.succeed(HttpTransport, { fetch: transport }),
 		databaseLayer(env.DB),
-		gitHubLayer(transport),
+		gitHubTransportLayer(transport),
 	);
 	const secrets = Layer.effect(
 		ApplicationSecrets,

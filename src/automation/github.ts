@@ -1,4 +1,4 @@
-import { Clock, Context, Data, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { Clock, Effect, Exit, Option, Schema } from 'effect';
 import { signJwt } from 'micro509/jose';
 import { importPkcs8Pem } from 'micro509/keys';
 import { rawFile } from '@/automation/github-raw';
@@ -20,19 +20,19 @@ import {
 	workflowRunSchema,
 } from '@/automation/github-resources';
 import type { BotIdentity } from '@/automation/token';
-import { githubApiVersion } from '@/contract/http';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { parsePresetReference } from '@/domain/preset.ts';
 import type { RefState } from '@/domain/refs.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import type { GitHubTransport } from '@/github/transport.ts';
+import { GitHubRejection, gitHubRequest, githubApiVersion, rateLimited } from '@/github/transport.ts';
 import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';
-import { legacyDiagnostic } from '@/kernel/errors/diagnostics.ts';
-import { DomainError, domainError, invalid, precondition, upstream } from '@/kernel/errors/domain-error.ts';
-import { responseBytes, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition, upstream } from '@/kernel/errors/domain-error.ts';
+import { responseBytes, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
-import { parseRetryAfter } from '@/kernel/http/http-date.ts';
-import { ioConcurrency, retryTransient } from '@/kernel/http/retry.ts';
+import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { decode, sha, textSchema } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
@@ -88,126 +88,13 @@ const tagRefsQuery =
 	`query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){refs(refPrefix:"refs/tags/",first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{name target{${
 		tagTargetSelection(tagPeelDepth)
 	}}}}}}`;
-// GitHub signals a rate limit by GraphQL error type RATE_LIMITED with HTTP 200, or by HTTP 403 or 429 naming the limit.
-export function rateLimited(message: string, type?: string): boolean {
-	return type === 'RATE_LIMITED' || /rate limit|HTTP 429/i.test(message);
-}
-function detailOf(body: string): string {
-	try {
-		const parsed: unknown = JSON.parse(body);
-		return typeof parsed === 'object' && parsed !== null && 'message' in parsed
-			? String(parsed.message)
-			: body.slice(0, 200);
-	} catch {
-		return body.slice(0, 200);
-	}
-}
-
-class ServerError extends Data.TaggedError('ServerError')<{ readonly message: string }> {}
-
-export class GitHubRejection extends DomainError {
-	constructor(readonly status: number, message: string, readonly retryAt?: number) {
-		super({ problem: { code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message });
-	}
-}
-
-export const gitHubRequest = Effect.fn('GitHub.request')(function*(
-	transport: Fetcher,
-	path: string,
-	token: string,
-	method = 'GET',
-	body?: unknown,
-	readOnlyGraphql = false,
-) {
-	const clock = yield* Clock.Clock;
-
-	if (!path.startsWith('/')) {
-		return yield* invalid('Invalid API path');
-	}
-	if (
-		readOnlyGraphql
-		&& !(method === 'POST' && path === '/graphql' && typeof body === 'object' && body !== null && 'query' in body
-			&& typeof body.query === 'string' && /^\s*query\b/.test(body.query))
-	) {
-		return yield* invalid('Read-only retries require a GraphQL query');
-	}
-	const route = `${method} ${path.split('?')[0]}`;
-	const reach = Effect.tryPromise({
-		try: signal =>
-			transport(`https://api.github.com${path}`, {
-				method,
-				redirect: 'manual',
-				signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
-				headers: {
-					...(token ? { Authorization: `Bearer ${token}` } : {}),
-					Accept: 'application/vnd.github+json',
-					'X-GitHub-Api-Version': githubApiVersion,
-					'User-Agent': 'beepboop',
-					'Content-Type': 'application/json',
-				},
-				...(body === undefined ? {} : { body: JSON.stringify(body) }),
-			}),
-		catch: error =>
-			upstream('github', `GitHub unreachable on ${route}: ${error instanceof Error ? error.message : String(error)}`),
-	});
-	const failed = (response: Response) =>
-		responseText(response, { maxBytes: 8192 }).pipe(
-			Effect.timeout('2 seconds'),
-			Effect.map(detailOf),
-			Effect.orElseSucceed(() => ''),
-			Effect.map(detail => {
-				const accepted = response.headers.get('x-accepted-github-permissions');
-				return `GitHub HTTP ${response.status} on ${route}${detail ? `: ${detail}` : ''}${
-					accepted ? ` (GitHub accepts ${accepted})` : ''
-				}`;
-			}),
-		);
-	const safeRead = method === 'GET' || readOnlyGraphql;
-	const maxAttempts = 3;
-	let attempt = 0;
-	const answered = Effect.gen(function*() {
-		attempt++;
-		const response = yield* scopedResponse(reach);
-		if (response.status === 404 && method === 'GET') return null;
-		if (!response.ok) {
-			if (safeRead && response.status >= 500 && attempt < maxAttempts) {
-				return yield* new ServerError({ message: `GitHub HTTP ${response.status} on ${route}` });
-			}
-			const message = yield* failed(response);
-			if (response.status >= 400 && response.status < 500 && response.status !== 408) {
-				const retryAt = response.status === 429 || response.status === 403 && rateLimited(message)
-					? parseRetryAfter(response.headers.get('retry-after') ?? '', clock.currentTimeMillisUnsafe())
-						?? clock.currentTimeMillisUnsafe() + 60_000
-					: undefined;
-				return yield* new GitHubRejection(response.status, message, retryAt);
-			}
-			if (response.status >= 500 && safeRead) return yield* new ServerError({ message });
-			return yield* response.status >= 500
-				? upstream('github', message)
-				: domainError({ code: 'precondition', diagnostics: [legacyDiagnostic(message)] }, message);
-		}
-		if (response.status === 204) return null;
-		return yield* responseJson(response).pipe(
-			Effect.mapError(() => upstream('github', `GitHub sent invalid JSON on ${route}`)),
-		);
-	}).pipe(Effect.scoped);
-	return yield* answered.pipe(
-		retryTransient<ServerError | DomainError>({
-			attempts: maxAttempts,
-			delay: 500,
-			while: failure => failure._tag === 'ServerError',
-		}),
-		Effect.catchTag('ServerError', ({ message }) => upstream('github', message)),
-	);
-});
-
 export class RepositoryGateway {
 	constructor(
 		private credentials: Credentials,
 		private ownerId: number,
 		private transport: Fetcher = platformFetch,
 		readonly defer?: (work: Promise<void>) => void,
-		private api?: GitHub['Service'],
+		private api?: GitHubTransport['Service'],
 	) {}
 	call(
 		path: string,
@@ -717,21 +604,4 @@ export class RepositoryGateway {
 export interface Credentials {
 	GITHUB_APP_ID: string;
 	GITHUB_APP_PRIVATE_KEY: string;
-}
-
-export class GitHub extends Context.Service<GitHub, {
-	readonly call: (
-		path: string,
-		token: string,
-		method?: string,
-		body?: unknown,
-		readOnlyGraphql?: boolean,
-	) => Effect.Effect<unknown, DomainError>;
-}>()('beepboop/GitHub') {}
-
-export function gitHubLayer(transport: Fetcher): Layer.Layer<GitHub> {
-	return Layer.succeed(GitHub, {
-		call: (path, token, method, body, readOnlyGraphql) =>
-			gitHubRequest(transport, path, token, method, body, readOnlyGraphql),
-	});
 }

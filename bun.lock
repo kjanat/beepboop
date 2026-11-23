@@ -75,6 +75,14 @@
         "re2js": "2.10.0",
       },
     },
+    "packages/github": {
+      "name": "@beepboopbot/github",
+      "version": "0.0.0",
+      "dependencies": {
+        "@beepboopbot/kernel": "workspace:*",
+        "effect": "^4.1.2",
+      },
+    },
     "packages/host": {
       "name": "@beepboopbot/host",
       "version": "0.0.0",
@@ -163,6 +171,8 @@
     "@babel/types": ["@babel/types@7.29.15", "", { "dependencies": { "@babel/helper-string-parser": "^7.29.15", "@babel/helper-validator-identifier": "^7.29.7" } }, "sha512-/XKpKDakL//LZ66bq1XsZOswuqeI5MZqPLDu18o3XdkU1fNJ7bdPtzgnc4ZNS+bBGHV0FJG8jjb8SwcC3nNVQQ=="],
 
     "@beepboopbot/domain": ["@beepboopbot/domain@workspace:packages/domain"],
+
+    "@beepboopbot/github": ["@beepboopbot/github@workspace:packages/github"],
 
     "@beepboopbot/host": ["@beepboopbot/host@workspace:packages/host"],
 
