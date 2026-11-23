@@ -4,18 +4,18 @@ import type { Selection } from '@/automation/setup-defaults';
 import { suggestedCommands, ungenerated } from '@/automation/setup-defaults';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { failure } from '@/cli/output';
-import type { BinaryBuild } from '@/contract/binary-platforms';
-import { defaultBinaryTargets } from '@/contract/binary-platforms';
 import { setupChoicesSchema, setupStream } from '@/contract/setup';
 import type { ChoicesField, StreamField, WorkflowField } from '@/contract/setup-fields';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
+import type { BinaryBuild } from '@/domain/binary-platforms.ts';
+import { defaultBinaryTargets } from '@/domain/binary-platforms.ts';
+import { packageLabel } from '@/domain/package-label';
 import {
 	approvalOfPublishWhen,
 	bumpOfVersionLands,
 	triggersOfExistingTriggers,
 	versioningOfVersionScope,
-} from '@/contract/setup-terms';
-import { packageLabel } from '@/domain/package-label';
+} from '@/domain/setup-terms.ts';
 import { mutableArray, safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 
 type Stream = SetupChoices['streams'][number];

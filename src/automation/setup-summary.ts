@@ -1,5 +1,5 @@
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
-import { registryLabel } from '@/contract/catalog';
+import { registryLabel } from '@/domain/catalog.ts';
 import { publicationStages } from '@/domain/publication-stages';
 import { listed } from '@/kernel/text/listing.ts';
 

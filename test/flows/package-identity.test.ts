@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { matchesPackage, packageId, packageKey, packagePurl } from '@/automation/package-identity';
+import { matchesPackage, packageId, packageKey, packagePurl } from '@/domain/package-identity.ts';
 
 const leftPad = { manager: 'npm', name: 'left-pad', version: '1.3.0' } as const;
 const scoped = {

@@ -1,8 +1,8 @@
 import { Result } from 'effect';
-import type { Inventory } from '@/automation/inventory';
-import { publishable } from '@/automation/package-publication';
-import { goreleaserConfig, npmTargets } from '@/contract/catalog';
-import { compareVersions, semver } from '@/contract/semver';
+import { goreleaserConfig, npmTargets } from '@/domain/catalog.ts';
+import type { Inventory } from '@/domain/inventory.ts';
+import { publishable } from '@/domain/package-publication.ts';
+import { compareVersions, semver } from '@/domain/semver.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 
 export const majorSuffix = /^v(?:[2-9]|[1-9][0-9]+)$/;

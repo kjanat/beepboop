@@ -20,7 +20,7 @@ import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/su
 import type { SigningKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import type { TagSigner } from '@/automation/refs';
+import type { TagSigner } from '@/domain/refs.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

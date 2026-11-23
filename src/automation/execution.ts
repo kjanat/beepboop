@@ -1,13 +1,13 @@
 import { Clock, Effect } from 'effect';
 import { outputsComplete } from '@/automation/execution-outputs';
 import type { GitHubRunResult } from '@/automation/github-state';
-import type { DiscoveredWorkflow, Package, RepositoryRecord } from '@/automation/inventory';
-import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/automation/package-identity';
 import { freezePackageTags, packageTagGroups } from '@/automation/package-tags';
-import { streamModuleTags } from '@/automation/refs';
 import { githubFailureReason, githubRunLabel } from '@/automation/run-labels';
 import type { Configuration, Execution, Publication, ReleaseReference, WorkflowBinding } from '@/automation/types';
-import { managerSpec } from '@/contract/catalog';
+import { managerSpec } from '@/domain/catalog.ts';
+import type { DiscoveredWorkflow, Package, RepositoryRecord } from '@/domain/inventory.ts';
+import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/domain/package-identity.ts';
+import { streamModuleTags } from '@/domain/refs.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

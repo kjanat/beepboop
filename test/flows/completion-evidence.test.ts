@@ -2,7 +2,7 @@ import { expect, spyOn, test } from 'bun:test';
 import { TestD1 } from '@root/test/support/d1';
 import { Effect } from 'effect';
 import { Store } from '@/automation/store';
-import { compare, precedenceKey } from '@/contract/semver';
+import { compare, precedenceKey } from '@/domain/semver.ts';
 import { ProjectionBackfill } from '@/persistence/d1/backfill';
 import type { Projection } from '@/persistence/d1/projection';
 import { ProjectionStore } from '@/persistence/d1/projection';

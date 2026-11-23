@@ -1,12 +1,12 @@
 import { Result } from 'effect';
-import type { ManagerDestinationId } from '@/contract/catalog';
+import type { ManagerDestinationId } from '@/domain/catalog.ts';
 import {
 	destinationLabels,
 	destinationOfPurlType,
 	isManagerName,
 	legacyJsrIdentity,
 	managerSpec,
-} from '@/contract/catalog';
+} from '@/domain/catalog.ts';
 import { parsePackageIdentity } from '@/package-url';
 
 interface PackageName {

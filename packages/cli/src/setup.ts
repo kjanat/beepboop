@@ -1,6 +1,5 @@
 import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
-import { repositoryReference } from '@/automation/repository-name';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import { streamSummary } from '@/automation/setup-summary';
 import type { SetupPlan } from '@/automation/setup-types';
@@ -14,6 +13,7 @@ import type { SetupFlagValues } from '@/cli/setup-flags';
 import { applySetupFlags, readSetupFlags } from '@/cli/setup-flags';
 import { routes } from '@/contract/routes';
 import { setupChoicesSchema } from '@/contract/setup';
+import { repositoryReference } from '@/domain/repository-name.ts';
 import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 import { listed } from '@/kernel/text/listing.ts';
 

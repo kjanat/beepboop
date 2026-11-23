@@ -12,8 +12,8 @@ import { editableConfiguration, passChecks, widget } from '@root/test/support/re
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { behaviourChanges } from '@/automation/setup-changes';
-import type { VersionPrMerge } from '@/contract/setup-terms';
-import { versionPrMergeSentences } from '@/contract/setup-terms';
+import type { VersionPrMerge } from '@/domain/setup-terms.ts';
+import { versionPrMergeSentences } from '@/domain/setup-terms.ts';
 import { runCard } from '@/server/views/runs';
 
 let world: World;

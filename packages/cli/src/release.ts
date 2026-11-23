@@ -1,22 +1,22 @@
 import type { Ask, CLIError, Out } from '@kjanat/dreamcli';
 import { Effect, Schema } from 'effect';
-import { repositoryReference } from '@/automation/repository-name';
 import type { Client } from '@/cli/client';
 import { followRelease } from '@/cli/follow';
 import { lookOf, registryOf, step, table } from '@/cli/look';
 import { emit, failure, prompted, unprompted } from '@/cli/output';
-import { versionBump } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
-import { semverPattern } from '@/contract/semver';
-import type { AutoMergeMethod, VersionPrMerge } from '@/contract/setup-terms';
+import { packageLabel } from '@/domain/package-label';
+import { versionBump } from '@/domain/release-start.ts';
+import { repositoryReference } from '@/domain/repository-name.ts';
+import { semverPattern } from '@/domain/semver.ts';
+import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
 import {
 	publishWhenNames,
 	publishWhenSentences,
 	startFromEffect,
 	versionPrMerge,
 	versionPrMergeSentences,
-} from '@/contract/setup-terms';
-import { packageLabel } from '@/domain/package-label';
+} from '@/domain/setup-terms.ts';
 import { git } from '@/host/git.ts';
 import { decodeWith } from '@/kernel/schema/decode.ts';
 import { shaSchema } from '@/kernel/schema/result.ts';

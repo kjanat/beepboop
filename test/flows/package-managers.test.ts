@@ -4,18 +4,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnvironment } from '@root/test/support/process.ts';
 import { Effect, Schema, Struct } from 'effect';
-import type { Package } from '@/automation/inventory';
 import { verifyPublication } from '@/automation/managers';
 import { managerRegistry } from '@/automation/managers/builtins';
 import { cargoManager, crateIndexUrl } from '@/automation/managers/cargo';
 import type { Publication } from '@/automation/types';
-import { managerNames, managerSpec } from '@/contract/catalog';
 import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
 import { generateCask } from '@/distribution/homebrew/generate';
 import { writeRendered } from '@/distribution/output';
 import type { ScoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
 import { generateManifests, wingetConfiguration } from '@/distribution/winget/generate';
+import { managerNames, managerSpec } from '@/domain/catalog.ts';
+import type { Package } from '@/domain/inventory.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

@@ -1,10 +1,10 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { glob, object } from '@/automation/managers/helpers';
-import { packageId } from '@/automation/package-identity';
-import { publishable } from '@/automation/package-publication';
 import { filled, lacking, licenseFile, readmeFile } from '@/contract/package-metadata';
+import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
+import { publishable } from '@/domain/package-publication.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { parentDirectory, walkRelative } from '@/kernel/path/relative-path.ts';
 

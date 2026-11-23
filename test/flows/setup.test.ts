@@ -13,7 +13,6 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { parse, parseDocument } from 'yaml';
-import { mergeConfiguration } from '@/automation/configuration';
 import { discover } from '@/automation/managers';
 import { bodyChoices, releaseAfterMerge, setupBody, setupOptions } from '@/automation/setup';
 import { pinned } from '@/automation/setup-actions';
@@ -32,6 +31,7 @@ import { streamSummary } from '@/automation/setup-summary';
 import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
 import { integrateWorkflow, publishMinutes } from '@/automation/setup-workflows';
 import { setupChoicesSchema } from '@/contract/setup';
+import { mergeConfiguration } from '@/domain/repository-configuration.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

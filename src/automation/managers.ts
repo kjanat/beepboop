@@ -1,22 +1,22 @@
 import { Effect } from 'effect';
 import { alreadyPrepared, applyVersionFiles, fileEdits } from '@/automation/editors';
-import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { managerRegistry } from '@/automation/managers/builtins';
 import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
-import { tagPrefix } from '@/automation/managers/tags';
-import { matchesPackage, packageId, publishablePackages } from '@/automation/package-identity';
 import { metadataDiagnostics } from '@/automation/package-metadata';
-import { publishable } from '@/automation/package-publication';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { Publication, ReleasePlan } from '@/automation/types';
-import { parseVersionRequest } from '@/automation/version';
-import type { ManagerName } from '@/contract/catalog';
-import { isLockfile, managerSpec } from '@/contract/catalog';
-import type { VersionFile } from '@/contract/version-files';
+import type { ManagerName } from '@/domain/catalog.ts';
+import { isLockfile, managerSpec } from '@/domain/catalog.ts';
+import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
+import { matchesPackage, packageId, publishablePackages } from '@/domain/package-identity.ts';
+import { publishable } from '@/domain/package-publication.ts';
+import type { VersionFile } from '@/domain/version-files.ts';
+import { parseVersionRequest } from '@/domain/version-request.ts';
+import { tagPrefix } from '@/domain/version-tags.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 
-export { publicationOrder } from '@/automation/managers/order';
+export { publicationOrder } from '@/domain/publication-order.ts';
 
 export function discover(snapshot: Snapshot, enabled: ManagerName[] = managerRegistry.names()): Inventory {
 	const inventory = managerRegistry.discover(snapshot, enabled);

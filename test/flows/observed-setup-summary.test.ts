@@ -1,12 +1,12 @@
 import { expect, test } from 'bun:test';
 import { Effect } from 'effect';
-import type { Snapshot } from '@/automation/inventory';
 import { discover } from '@/automation/managers';
 import { previewSetup, setupBody } from '@/automation/setup';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import { checkPublishing } from '@/automation/setup-publishing';
 import { streamSummary } from '@/automation/setup-summary';
+import type { Snapshot } from '@/domain/inventory.ts';
 
 test('observed release publishing is described without inventing tag triggers or version PRs', async () => {
 	const files = {

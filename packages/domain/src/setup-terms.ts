@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
-import type { ApprovalPolicy, ConfigurableStart, VersionBump } from '@/contract/release-start';
-import { startWorkflowFile } from '@/contract/release-start';
+import type { ApprovalPolicy, ConfigurableStart, VersionBump } from '@/domain/release-start.ts';
+import { startWorkflowFile } from '@/domain/release-start.ts';
 
 type Versioning = 'workspace' | 'independent' | 'none';
 type TriggerHandover = 'review' | 'dispatchOnly' | 'preserve';

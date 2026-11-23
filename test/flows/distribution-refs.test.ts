@@ -8,8 +8,8 @@ import { gitOutput, materialize } from '@root/test/support/actions.ts';
 import type { SigningKey } from '@root/test/support/signing.ts';
 import { signingKey } from '@root/test/support/signing.ts';
 import { Effect, Result } from 'effect';
-import type { DistributionEvidence, RefChange, RefPlan } from '@/automation/refs';
-import { tagObject, tagPayload } from '@/automation/refs';
+import type { DistributionEvidence, RefChange, RefPlan } from '@/domain/refs.ts';
+import { tagObject, tagPayload } from '@/domain/refs.ts';
 
 let key: SigningKey;
 beforeAll(() => {

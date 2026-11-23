@@ -1,7 +1,7 @@
 import { Result } from 'effect';
-import type { Package } from '@/automation/inventory';
-import { packageId } from '@/automation/package-identity';
-import { publishable } from '@/automation/package-publication';
+import type { Package } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
+import { publishable } from '@/domain/package-publication.ts';
 import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
 
 export type PublicationOrder = { kind: 'ordered'; order: string[] } | { kind: 'cycle'; message: string };

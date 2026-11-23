@@ -1,7 +1,7 @@
-import type { Channel, ChannelOutcome, RegistryOutcome } from '@/automation/destinations';
-import type { PackagePublication } from '@/automation/package-publication';
-import type { ManagerName } from '@/contract/catalog';
+import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration } from '@/domain/configuration';
+import type { Channel, ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
+import type { PackagePublication } from '@/domain/package-publication.ts';
 import type { Access } from '@/domain/repository';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { PackageIdentity } from '@/package-url';

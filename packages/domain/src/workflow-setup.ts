@@ -1,7 +1,7 @@
 import { Effect, Schema, Struct } from 'effect';
-import { binaries } from '@/contract/binary-platforms';
-import { tagPrefixPattern, validTagPrefix, workflowFilePattern } from '@/contract/catalog';
-import { existingTriggers, existingTriggersDescription, triggersOfExistingTriggers } from '@/contract/setup-terms';
+import { binaries } from '@/domain/binary-platforms.ts';
+import { tagPrefixPattern, validTagPrefix, workflowFilePattern } from '@/domain/catalog.ts';
+import { existingTriggers, existingTriggersDescription, triggersOfExistingTriggers } from '@/domain/setup-terms.ts';
 import { credentialAliasPattern, githubSecretNamePattern } from '@/kernel/schema/ids.ts';
 import type { Decoded, Encoded } from '@/kernel/schema/structs.ts';
 import {

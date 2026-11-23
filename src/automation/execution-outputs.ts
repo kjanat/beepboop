@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
-import type { InputDeclaration, OutputDeclaration, Platform } from '@/automation/outputs';
 import type { Artifact, Execution } from '@/automation/types';
+import type { InputDeclaration, OutputDeclaration, Platform } from '@/domain/outputs.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { sha256DigestPattern } from '@/kernel/schema/ids.ts';

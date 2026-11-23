@@ -1,10 +1,10 @@
 import { Effect, Result } from 'effect';
 import { deriveExecution } from '@/automation/execution';
-import type { Inventory, Snapshot } from '@/automation/inventory';
 import { discover } from '@/automation/managers';
-import { tagPrefix } from '@/automation/managers/tags';
-import { packageId, selectorKey, soleMatch } from '@/automation/package-identity';
 import type { Execution } from '@/automation/types';
+import type { Inventory, Snapshot } from '@/domain/inventory.ts';
+import { packageId, selectorKey, soleMatch } from '@/domain/package-identity.ts';
+import { tagPrefix } from '@/domain/version-tags.ts';
 import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

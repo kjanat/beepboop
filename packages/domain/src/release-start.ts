@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { workflowFilePattern } from '@/contract/catalog';
+import { workflowFilePattern } from '@/domain/catalog.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { matchesPattern, mutableArray, refined, strictStruct } from '@/kernel/schema/structs.ts';
 

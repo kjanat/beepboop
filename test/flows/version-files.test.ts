@@ -2,7 +2,7 @@ import { expect, spyOn, test } from 'bun:test';
 import { Cause, Effect, Exit, Result } from 'effect';
 import { RE2JS } from 're2js';
 import { applyVersionFiles } from '@/automation/editors';
-import { versionFileSchema } from '@/contract/version-files';
+import { versionFileSchema } from '@/domain/version-files.ts';
 import { decodeSync, safeDecode } from '@/kernel/schema/structs.ts';
 
 const literal = { path: 'README.md', format: 'text', prefix: 'version="', suffix: '"' };
@@ -13,7 +13,7 @@ test('adversarial version patterns finish within an externally enforced deadline
 		process.execPath,
 		'-e',
 		`
-		import { textVersionPattern } from './src/contract/version-files.ts';
+		import { textVersionPattern } from './packages/domain/src/version-files.ts';
 		import { Result } from 'effect';
 		for (const expression of ['(?<version>(a+)+)$', '(?<version>(a|aa)+)$']) {
 			const compiled = textVersionPattern(expression);

@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect';
-import { compareVersions } from '@/contract/semver';
-import { semVer } from '@/contract/version';
+import { compareVersions } from '@/domain/semver.ts';
+import { semVer } from '@/domain/version.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { invalid, record, text } from '@/kernel/schema/result.ts';

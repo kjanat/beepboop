@@ -10,7 +10,7 @@ export const workflowManager: Adapter<'workflow'> = {
 	name: 'workflow',
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		const detected = new Set<import('@/contract/catalog').ManagerName>();
+		const detected = new Set<import('@/domain/catalog.ts').ManagerName>();
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {
 			if (!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) continue;
 			const parsed = Result.all({

@@ -1,8 +1,8 @@
 import { Result, Schema } from 'effect';
 import type { Publication, PublishKind } from '@/automation/types';
-import { registryLabel } from '@/contract/catalog';
 import type { LedgerEntry, LedgerManager, LedgerPackage } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
+import { registryLabel } from '@/domain/catalog.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';

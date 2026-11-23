@@ -16,7 +16,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import type { Execution } from '@/automation/types';
-import type { ReleaseStart, VersionBump } from '@/contract/release-start';
+import type { ReleaseStart, VersionBump } from '@/domain/release-start.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

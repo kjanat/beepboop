@@ -1,7 +1,7 @@
 import { Result } from 'effect';
-import type { Package } from '@/automation/inventory';
-import { publishable } from '@/automation/package-publication';
-import { identifiedManagers, legacyJsrIdentity } from '@/contract/catalog';
+import { identifiedManagers, legacyJsrIdentity } from '@/domain/catalog.ts';
+import type { Package } from '@/domain/inventory.ts';
+import { publishable } from '@/domain/package-publication.ts';
 import type { InvalidPackageUrl, PackageIdentity } from '@/package-url';
 import { invalidPackageUrl, packageIdentity, parsePackageIdentity, purl } from '@/package-url';
 

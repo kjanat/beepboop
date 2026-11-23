@@ -4,7 +4,7 @@ import { TestClock } from 'effect/testing';
 import type { DistributionFile } from '@/automation/distribution';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/automation/distribution';
 import { RepositoryGateway } from '@/automation/github';
-import type { Edit } from '@/automation/inventory';
+import type { Edit } from '@/domain/inventory.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 const repository = 'octo/widget';

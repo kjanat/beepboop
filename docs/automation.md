@@ -1596,7 +1596,7 @@ The builds live in the binding's `setup.binaries`:
 
 Generated jobs use Ubuntu 26.04 (including ARM64), macOS 26 (including Intel),
 Windows Server 2025 with Visual Studio 2026, and Windows 11 ARM64 with Visual
-Studio 2026. The labels are centralized in `src/contract/runners.ts` and follow
+Studio 2026. The labels are centralized in `packages/domain/src/runners.ts` and follow
 the [official runner image list](https://github.com/actions/runner-images#available-images).
 
 `targets` defaults to all six platforms. Setup generates a `begin` job and one

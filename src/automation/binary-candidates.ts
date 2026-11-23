@@ -1,10 +1,10 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
-import type { Inventory, Package, Snapshot } from '@/automation/inventory';
 import { object } from '@/automation/managers/helpers';
-import { packageId } from '@/automation/package-identity';
-import type { BinaryCandidate } from '@/contract/binary-platforms';
-import { supportedTargets } from '@/contract/binary-platforms';
+import type { BinaryCandidate } from '@/domain/binary-platforms.ts';
+import { supportedTargets } from '@/domain/binary-platforms.ts';
+import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
 import { parentDirectory, walkRelative } from '@/kernel/path/relative-path.ts';
 
 const unixCrates = new Set(['nix', 'uzers', 'users', 'termios', 'daemonize', 'fork', 'pty-process']);

@@ -19,9 +19,6 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Fiber, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import { parseRepositoryConfiguration } from '@/automation/configuration';
-import type { Inventory, Package } from '@/automation/inventory';
-import { excluded, registry } from '@/automation/package-publication';
 import type { PackageTagRow } from '@/automation/package-tags';
 import {
 	packageTagBase,
@@ -36,6 +33,9 @@ import {
 import type { PackageTagView } from '@/contract/views';
 import { packageTagPage as pageSchema } from '@/contract/views';
 import { configurationDrift, configurationSchema } from '@/domain/configuration';
+import type { Inventory, Package } from '@/domain/inventory.ts';
+import { excluded, registry } from '@/domain/package-publication.ts';
+import { parseRepositoryConfiguration } from '@/domain/repository-configuration.ts';
 import { validateAgainst } from '@/domain/validate';
 import { decodeSync } from '@/kernel/schema/structs.ts';
 import { storedConfiguration } from '@/persistence/codecs/configuration';

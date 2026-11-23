@@ -10,9 +10,9 @@ import {
 	unconfirmed,
 	unpublished,
 } from '@/automation/managers/verification';
-import { identityOf, parseExtension } from '@/automation/package-identity';
-import { excluded, registry } from '@/automation/package-publication';
 import type { Publication } from '@/automation/types';
+import { identityOf, parseExtension } from '@/domain/package-identity.ts';
+import { excluded, registry } from '@/domain/package-publication.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { responseJson } from '@/kernel/http/body.ts';
 import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';

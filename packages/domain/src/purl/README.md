@@ -30,7 +30,7 @@ not executable expressions. In particular, a version-comparison algorithm such a
 ALPM vercmp is not a license to rewrite a package version.
 
 There are no release adapters or versionless selection rules in this module.
-Those belong to `src/automation/package-identity.ts`.
+Those belong to `packages/domain/src/package-identity.ts`.
 
 Regenerate deterministically without network access:
 

@@ -1,8 +1,4 @@
 import { Effect, Result, Schema } from 'effect';
-import { legacyConfiguration } from '@/automation/configuration-names';
-import { inputSchema, outputSchema, platformSchema } from '@/automation/outputs';
-import { parseReleaseIdentity } from '@/automation/package-identity';
-import { parsePresetReference } from '@/automation/preset';
 import {
 	defaultWinGetTagPrefix,
 	jobKeyPattern,
@@ -13,19 +9,7 @@ import {
 	winGetConfigPattern,
 	winGetTagPrefixPattern,
 	workflowFilePattern,
-} from '@/contract/catalog';
-import { releaseStarts, versionBumps } from '@/contract/release-start';
-import {
-	approvalOfPublishWhen,
-	bumpOfVersionLands,
-	publishWhens,
-	versioningOfVersionScope,
-	versionLandings,
-	versionPrMerges,
-	versionScopes,
-} from '@/contract/setup-terms';
-import { versionFileSchema } from '@/contract/version-files';
-import { actionsRevisionPattern, workflowSetup } from '@/contract/workflow-setup';
+} from '@/domain/catalog.ts';
 import type { Configuration, Stream, WorkflowBinding } from '@/domain/configuration';
 import {
 	configurationDrift,
@@ -34,7 +18,23 @@ import {
 	parseUtcCron,
 	utcCronMessage,
 } from '@/domain/configuration';
+import { legacyConfiguration } from '@/domain/configuration-names.ts';
 import { subscriptionIssue } from '@/domain/configuration-value';
+import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
+import { parseReleaseIdentity } from '@/domain/package-identity.ts';
+import { parsePresetReference } from '@/domain/preset.ts';
+import { releaseStarts, versionBumps } from '@/domain/release-start.ts';
+import {
+	approvalOfPublishWhen,
+	bumpOfVersionLands,
+	publishWhens,
+	versioningOfVersionScope,
+	versionLandings,
+	versionPrMerges,
+	versionScopes,
+} from '@/domain/setup-terms.ts';
+import { versionFileSchema } from '@/domain/version-files.ts';
+import { actionsRevisionPattern, workflowSetup } from '@/domain/workflow-setup.ts';
 import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';

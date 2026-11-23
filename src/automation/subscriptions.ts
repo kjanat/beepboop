@@ -1,5 +1,5 @@
-import { matchesPublication } from '@/automation/package-identity';
 import type { AutomationEvent, Subscription } from '@/automation/types';
+import { matchesPublication } from '@/domain/package-identity.ts';
 
 export function matchesSubscription(subscription: Subscription, event: AutomationEvent): boolean {
 	return subscription.source === event.source && subscription.event === event.event

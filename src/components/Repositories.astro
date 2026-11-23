@@ -1,7 +1,4 @@
 ---
-import { winget } from '@/automation/destinations';
-import type { RepositoryRecord } from '@/automation/inventory';
-import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { streamReleases } from '@/automation/release-capability';
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
@@ -9,7 +6,10 @@ import Commit from '@/components/Commit.astro';
 import Field from '@/components/Field.astro';
 import Time from '@/components/Time.astro';
 import { githubHref } from '@/contract/links';
+import { winget } from '@/domain/destinations.ts';
+import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { packageLabel } from '@/domain/package-label';
+import { exclusionLabel, publishable } from '@/domain/package-publication.ts';
 import { readiness } from '@/domain/repository';
 import type { ViewOf } from '@/server/loaders.ts';
 import { packageDisplayName } from '@/server/package-name';

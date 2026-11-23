@@ -47,7 +47,6 @@ import { classifyJob, classifyRun, jobProgressState } from '@/automation/github-
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
-import type { Edit, Package } from '@/automation/inventory';
 import type { RunJob, WorkflowJobs } from '@/automation/job-gate';
 import { gateState, resolvable, workflowJobs } from '@/automation/job-gate';
 import type { Ledger, LedgerRecord } from '@/automation/ledger';
@@ -77,20 +76,7 @@ import {
 	verifyPublication,
 	verifySecondaryPublications,
 } from '@/automation/managers';
-import { tagPrefix } from '@/automation/managers/tags';
-import {
-	identityPackageName,
-	matchesPackage,
-	matchesPublication,
-	packageId,
-	parseIdentity,
-	parseReleaseIdentity,
-	publicationIdentity,
-	publishablePackages,
-	selectorKey,
-} from '@/automation/package-identity';
 import { metadataProblems } from '@/automation/package-metadata';
-import { publishable } from '@/automation/package-publication';
 import type { PackageTagResult, PackageTagRow, Release } from '@/automation/package-tags';
 import {
 	frozenPackageTagRows,
@@ -100,21 +86,7 @@ import {
 	packageTagRows,
 	taggedReleases,
 } from '@/automation/package-tags';
-import { matchesRef } from '@/automation/policy';
 import type { PublishBudget } from '@/automation/publish-budget';
-import type { RefChange, RefPlan, RefState, TagSigner } from '@/automation/refs';
-import {
-	conflictMessage,
-	planRefs,
-	refsLanded,
-	streamModuleTagPrefixes,
-	tagConflict,
-	tagObject,
-	tagObjectId,
-	tagPayload,
-	tagPrefixes,
-	versionTagged,
-} from '@/automation/refs';
 import { ReleaseHistory } from '@/automation/release-history';
 import { releaseNotes } from '@/automation/release-notes';
 import { compileReleaseSet } from '@/automation/release-set';
@@ -138,13 +110,41 @@ import type {
 	ReleaseStarted,
 } from '@/automation/types';
 import { parseGrant, runtimeGrant } from '@/automation/vault';
-import { identifiedManagers, isManagerName, managerSpec } from '@/contract/catalog';
 import type { ClaimStep, LedgerManager, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
-import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/contract/version';
 import type { BinaryProgress, PackageTagPage } from '@/contract/views';
+import { identifiedManagers, isManagerName, managerSpec } from '@/domain/catalog.ts';
+import type { Edit, Package } from '@/domain/inventory.ts';
+import {
+	identityPackageName,
+	matchesPackage,
+	matchesPublication,
+	packageId,
+	parseIdentity,
+	parseReleaseIdentity,
+	publicationIdentity,
+	publishablePackages,
+	selectorKey,
+} from '@/domain/package-identity.ts';
+import { publishable } from '@/domain/package-publication.ts';
+import { matchesRef } from '@/domain/ref-policy.ts';
+import type { RefChange, RefPlan, RefState, TagSigner } from '@/domain/refs.ts';
+import {
+	conflictMessage,
+	planRefs,
+	refsLanded,
+	streamModuleTagPrefixes,
+	tagConflict,
+	tagObject,
+	tagObjectId,
+	tagPayload,
+	tagPrefixes,
+	versionTagged,
+} from '@/domain/refs.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
+import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/domain/version.ts';
+import { tagPrefix } from '@/domain/version-tags.ts';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/kernel/errors/classify.ts';
 import { decodeError, isDecodingFailure } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

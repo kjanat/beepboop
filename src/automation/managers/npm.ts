@@ -1,13 +1,13 @@
 import { Effect } from 'effect';
 import { applyEdits, modify, parseTree } from 'jsonc-parser';
-import type { Package } from '@/automation/inventory';
 import { jsonIndent, object } from '@/automation/managers/helpers';
 import { discoverNpmTargets } from '@/automation/managers/npm-targets';
 import { packageManifests } from '@/automation/managers/package-json';
 import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, verifyRegistry } from '@/automation/managers/verification';
-import { excluded, publishable, registry } from '@/automation/package-publication';
+import type { Package } from '@/domain/inventory.ts';
+import { excluded, publishable, registry } from '@/domain/package-publication.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -101,7 +101,7 @@ export const npmManager: Adapter<'npm'> = {
 
 	discover(snapshot) {
 		const inventory = emptyInventory();
-		const detected = new Set<import('@/contract/catalog').ManagerName>();
+		const detected = new Set<import('@/domain/catalog.ts').ManagerName>();
 		const optional = new Map<string, string[]>();
 		for (const { path, manifest: pkg } of packageManifests(snapshot, inventory.diagnostics)) {
 			if (typeof object(pkg.engines).vscode === 'string') continue;

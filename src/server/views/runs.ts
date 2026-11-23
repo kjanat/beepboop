@@ -1,12 +1,12 @@
 import { runFailedNote } from '@/automation/execution.ts';
-import { matchesPublication } from '@/automation/package-identity.ts';
 import type { Execution, Publication } from '@/automation/types.ts';
-import { managerSpec } from '@/contract/catalog';
 import { githubHref, registryHref } from '@/contract/links';
-import { versionPrMergeSentences } from '@/contract/setup-terms';
-import { defaultTagPolicy, semVer, tagFor } from '@/contract/version';
 import type { Status, Tone } from '@/contract/views';
+import { managerSpec } from '@/domain/catalog.ts';
+import { matchesPublication } from '@/domain/package-identity.ts';
 import { packageLabel } from '@/domain/package-label';
+import { versionPrMergeSentences } from '@/domain/setup-terms.ts';
+import { defaultTagPolicy, semVer, tagFor } from '@/domain/version.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import { formatTime } from '@/kernel/time.ts';
 import { packageDisplayName } from '@/server/package-name.ts';

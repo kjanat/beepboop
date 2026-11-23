@@ -1,7 +1,7 @@
 import { Document } from 'yaml';
 import { renderWorkflow } from '@/automation/setup-actions';
 import { expression } from '@/automation/setup-binaries';
-import { hostedRunners } from '@/contract/runners';
+import { hostedRunners } from '@/domain/runners.ts';
 
 export function startWorkflow(streams: readonly string[], actionsRevision: string | undefined): string {
 	const [first = 'main'] = streams;

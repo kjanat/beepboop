@@ -1,11 +1,11 @@
 import { Effect, Schema } from 'effect';
-import { publicationSchema } from '@/automation/package-publication';
 import type { SetupOperation, SetupPlan, SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
-import { binaries, binaryBuild, binaryTargets } from '@/contract/binary-platforms';
-import { startChannel, versionBump } from '@/contract/release-start';
 import { actionRelease } from '@/contract/setup';
-import { versionPrMerge } from '@/contract/setup-terms';
-import { versionFileSchema } from '@/contract/version-files';
+import { binaries, binaryBuild, binaryTargets } from '@/domain/binary-platforms.ts';
+import { publicationSchema } from '@/domain/package-publication.ts';
+import { startChannel, versionBump } from '@/domain/release-start.ts';
+import { versionPrMerge } from '@/domain/setup-terms.ts';
+import { versionFileSchema } from '@/domain/version-files.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { stringsSchema as strings } from '@/kernel/schema/result.ts';

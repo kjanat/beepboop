@@ -1,4 +1,4 @@
-import type { RepositoryRecord } from '@/automation/inventory';
+import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { readiness } from '@/domain/repository';
 
 export function workflowChoices(stored: RepositoryRecord) {

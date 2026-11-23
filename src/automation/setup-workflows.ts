@@ -2,10 +2,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { Result } from 'effect';
 import type { Alias, Document, Node } from 'yaml';
 import { isAlias, isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
-import type { Package, Snapshot } from '@/automation/inventory';
 import { jobNeeds } from '@/automation/job-gate';
 import { object } from '@/automation/managers/helpers';
-import { packageId } from '@/automation/package-identity';
 import { workflowEvents } from '@/automation/release-graph/calls';
 import { annotatePins, matchEnding, pinned, renderWorkflow } from '@/automation/setup-actions';
 import {
@@ -24,7 +22,9 @@ import {
 import { crateOutcome, ledgerCommand, plainCrateNames } from '@/automation/setup-defaults';
 import type { SetupWorkflow, WorkflowEvidence } from '@/automation/setup-types';
 import { ledgerManagers, publishWaitMinutes } from '@/contract/ledger';
-import { hostedRunners } from '@/contract/runners';
+import type { Package, Snapshot } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
+import { hostedRunners } from '@/domain/runners.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

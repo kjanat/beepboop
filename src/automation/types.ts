@@ -1,13 +1,13 @@
 import type { ResolvedInput } from '@/automation/execution-outputs';
-import type { Edit, Package } from '@/automation/inventory';
 import type { FrozenPackageTag } from '@/automation/package-tags';
-import type { ModuleTag, RefPlan, RefState } from '@/automation/refs';
-import type { ManagerName } from '@/contract/catalog';
 import type { GitHubRunState } from '@/contract/github';
-import type { StartChannel } from '@/contract/release-start';
-import type { AutoMergeMethod, VersionPrMerge } from '@/contract/setup-terms';
 import type { ExecutionStateView } from '@/contract/views';
+import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration';
+import type { Edit, Package } from '@/domain/inventory.ts';
+import type { ModuleTag, RefPlan, RefState } from '@/domain/refs.ts';
+import type { StartChannel } from '@/domain/release-start.ts';
+import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
 import type { PackageIdentity } from '@/package-url';
 
 export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration';

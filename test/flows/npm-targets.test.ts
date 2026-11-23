@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
 import { Effect } from 'effect';
-import type { Snapshot } from '@/automation/inventory';
 import { discover, planRelease } from '@/automation/managers';
 import { npmManager } from '@/automation/managers/npm';
 import { buildSnapshot } from '@/automation/snapshot';
+import type { Snapshot } from '@/domain/inventory.ts';
 
 function snapshot(versionSource?: unknown): Snapshot {
 	const files = {

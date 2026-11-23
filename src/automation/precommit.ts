@@ -1,9 +1,9 @@
 import { Effect, Result } from 'effect';
 import type { Scalar } from 'yaml';
 import { isMap, isScalar, isSeq } from 'yaml';
-import type { Edit, HookReference, Snapshot } from '@/automation/inventory';
 import type { ReleaseReference } from '@/automation/types';
-import { hookConfig } from '@/contract/catalog';
+import { hookConfig } from '@/domain/catalog.ts';
+import type { Edit, HookReference, Snapshot } from '@/domain/inventory.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { validYaml } from '@/kernel/parse/yaml.ts';

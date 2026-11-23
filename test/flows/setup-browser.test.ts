@@ -17,7 +17,7 @@ import {
 	startFromEffect,
 	versionPrMergeSentences,
 	versionPrMerges,
-} from '@/contract/setup-terms';
+} from '@/domain/setup-terms.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

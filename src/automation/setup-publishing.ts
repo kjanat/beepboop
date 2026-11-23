@@ -1,15 +1,15 @@
 import { Effect, Result } from 'effect';
-import type { Inventory, Snapshot } from '@/automation/inventory';
 import { cargoManager } from '@/automation/managers/cargo';
 import { object } from '@/automation/managers/helpers';
 import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { registryRequest } from '@/automation/managers/verification';
-import { packageId } from '@/automation/package-identity';
 import { disabled, expandStep } from '@/automation/release-graph/bindings';
 import { localAction } from '@/automation/release-graph/calls';
 import { cargoJobPackages } from '@/automation/release-graph/graph';
 import { publishingJobs } from '@/automation/setup-publishing-jobs';
 import type { PublishingCheck, SetupChoices } from '@/automation/setup-types';
+import type { Inventory, Snapshot } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseJson } from '@/kernel/http/body.ts';

@@ -7,7 +7,7 @@ import {
 	versioningOfVersionScope,
 	versionLandsNames,
 	versionScopeNames,
-} from '@/contract/setup-terms';
+} from '@/domain/setup-terms.ts';
 
 interface Rename {
 	from: string;

@@ -1,6 +1,6 @@
 import { parse } from 'yaml';
-import { readableConfiguration } from '@/automation/configuration-names';
-import type { Edit, Snapshot } from '@/automation/inventory';
+import { readableConfiguration } from '@/domain/configuration-names.ts';
+import type { Edit, Snapshot } from '@/domain/inventory.ts';
 import {
 	approvalOfPublishWhen,
 	bumpOfVersionLands,
@@ -9,7 +9,7 @@ import {
 	versionLandsSentences,
 	versionPrMergeSentences,
 	versionPrMerges,
-} from '@/contract/setup-terms';
+} from '@/domain/setup-terms.ts';
 import { listed } from '@/kernel/text/listing.ts';
 
 export const onboardingBranch = 'automation/onboarding';

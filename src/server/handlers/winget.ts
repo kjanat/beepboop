@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
-import type { RepositoryRecord } from '@/automation/inventory';
 import type { AutomationService } from '@/automation/service';
 import { routes } from '@/contract/routes';
+import type { RepositoryRecord } from '@/domain/inventory.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { admin, storedRepository } from '@/server/handlers/kit';
 

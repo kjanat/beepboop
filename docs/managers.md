@@ -53,7 +53,7 @@ executions have no workflow binding and cannot register or report through the
 workflow OIDC endpoints. Both single-version and independent-version plans can
 use managed preparation when no generated lockfiles need refreshing.
 
-`src/contract/catalog.ts` declares every manager name and its purl type,
+`packages/domain/src/catalog.ts` declares every manager name and its purl type,
 manifest patterns, marker patterns, lockfile names, destinations and version
 policy. Snapshots fetch the content of manifest paths and record marker and
 lockfile paths with empty content. Setup adds `uv lock` to the preparation
@@ -66,7 +66,7 @@ capability the adapter provides.
 
 ## Destinations
 
-`src/contract/catalog.ts` lists where packages are published. Beepboop
+`packages/domain/src/catalog.ts` lists where packages are published. Beepboop
 reads the latest version from a registry destination; the repository's own
 workflows publish there. Each inspection records one result per destination:
 `published`, `missing`, `failed`, or `unchecked`.

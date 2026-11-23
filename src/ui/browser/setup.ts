@@ -1,12 +1,12 @@
 import { Effect, Result } from 'effect';
-import { publishable } from '@/automation/package-publication';
 import { parseSetupPlan } from '@/automation/setup-plan';
 import type { SetupChoices, SetupPlan, Versioning } from '@/automation/setup-types';
-import { approvalPolicies, configurableStarts, versionBumps } from '@/contract/release-start';
 import { routes } from '@/contract/routes';
 import { setupStream } from '@/contract/setup';
 import type { ChoicesField, Editors, StreamField } from '@/contract/setup-fields';
 import { jsonFields, streamFields } from '@/contract/setup-fields';
+import { publishable } from '@/domain/package-publication.ts';
+import { approvalPolicies, configurableStarts, versionBumps } from '@/domain/release-start.ts';
 import {
 	alwaysStarted,
 	companionModulesSentence,
@@ -24,7 +24,7 @@ import {
 	versionScopeNames,
 	versionScopeQuestion,
 	versionScopeSentences,
-} from '@/contract/setup-terms';
+} from '@/domain/setup-terms.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import { api } from '@/ui/browser/api';
 import { feedbackFor, find, Refused, refuse, show } from '@/ui/browser/dom';

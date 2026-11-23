@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SigningIdentity, TagSigner } from '@/automation/refs';
+import type { SigningIdentity, TagSigner } from '@/domain/refs.ts';
 
 function gpg(home: string, args: string[], input?: string): string {
 	const result = spawnSync('gpg', ['--batch', '--no-tty', ...args], {

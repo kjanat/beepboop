@@ -12,17 +12,17 @@ import { app } from '@/cli/cli';
 import { Client } from '@/cli/client';
 import { describedSetupFlags, setupFlagRecord } from '@/cli/setup-flag-builders';
 import { choicesFlagKinds, setupFlagPaths, streamFlagKinds, workflowFlagKinds } from '@/cli/setup-flags';
-import { binaryTargets } from '@/contract/binary-platforms';
-import { configurableStarts } from '@/contract/release-start';
 import { setupChoicesSchema } from '@/contract/setup';
 import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
+import { binaryTargets } from '@/domain/binary-platforms.ts';
+import { configurableStarts } from '@/domain/release-start.ts';
 import {
 	existingTriggerChoices,
 	publishWhens,
 	versionLandings,
 	versionPrMerges,
 	versionScopes,
-} from '@/contract/setup-terms';
+} from '@/domain/setup-terms.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,

@@ -1,8 +1,8 @@
-import type { PackagePublication } from '@/automation/package-publication';
-import type { BinaryBuild, BinaryCandidate, BinaryTarget } from '@/contract/binary-platforms';
-import type { ConfigurableStart, VersionBump } from '@/contract/release-start';
 import type { SetupChoices } from '@/contract/setup';
-import type { VersionPrMerge } from '@/contract/setup-terms';
+import type { BinaryBuild, BinaryCandidate, BinaryTarget } from '@/domain/binary-platforms.ts';
+import type { PackagePublication } from '@/domain/package-publication.ts';
+import type { ConfigurableStart, VersionBump } from '@/domain/release-start.ts';
+import type { VersionPrMerge } from '@/domain/setup-terms.ts';
 
 export type { SetupChoices } from '@/contract/setup';
 
