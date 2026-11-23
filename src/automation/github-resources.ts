@@ -20,6 +20,7 @@ export const repositorySchema = mutableStruct({
 	full_name: Schema.String,
 	owner: identified,
 	default_branch: textSchema,
+	private: Schema.Boolean,
 });
 export const commitSchema = mutableStruct({ sha: shaSchema, commit: mutableStruct({ verification }) });
 export const gitObjectSchema = mutableStruct({ sha: shaSchema, type: Schema.String });
