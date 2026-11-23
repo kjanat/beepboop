@@ -33,14 +33,16 @@ const tokenMargin = 5 * 60_000;
 
 class TokenKey implements Equal.Equal {
 	readonly canonical: string;
+	readonly permissions: Permissions;
 	constructor(
 		readonly installation: number,
 		readonly name: string,
 		readonly id: number | undefined,
-		readonly permissions: Permissions,
-		readonly jwt: string,
+		permissions: Permissions,
 	) {
-		const granted = Object.entries(permissions).map(([scope, level]) => `${scope}:${level}`).sort();
+		const entries = Object.entries(permissions).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+		this.permissions = Object.freeze(Object.fromEntries(entries));
+		const granted = entries.map(([scope, level]) => `${scope}:${level}`);
 		this.canonical = JSON.stringify([installation, name, id ?? null, granted]);
 	}
 	[Equal.symbol](that: Equal.Equal): boolean {
@@ -71,23 +73,28 @@ export class GitHubApp extends Context.Service<GitHubApp, {
 		id: number | undefined,
 		permissions: Permissions,
 	) => Effect.Effect<string, DomainError, GitHubTransport>;
+	readonly rejected: (token: string) => Effect.Effect<void>;
 }>()('beepboopbot/github/GitHubApp') {}
 
 // Workers keep module state for the lifetime of the isolate.
-const isolateApps = new WeakMap<Fetcher, Map<string, GitHubApp['Service']>>();
+interface IsolateApp {
+	readonly privateKey: string;
+	readonly app: GitHubApp['Service'];
+}
+const isolateApps = new WeakMap<Fetcher, Map<string, IsolateApp>>();
 
 export function isolateGitHubApp(
 	transport: Fetcher,
 	credentials: AppCredentials,
 	ownerId: number,
 ): GitHubApp['Service'] {
-	const apps = isolateApps.get(transport) ?? new Map<string, GitHubApp['Service']>();
+	const apps = isolateApps.get(transport) ?? new Map<string, IsolateApp>();
 	isolateApps.set(transport, apps);
 	const key = `${ownerId}:${credentials.GITHUB_APP_ID}`;
 	const known = apps.get(key);
-	if (known) return known;
+	if (known && known.privateKey === credentials.GITHUB_APP_PRIVATE_KEY) return known.app;
 	const app = Effect.runSync(makeGitHubApp(credentials, ownerId));
-	apps.set(key, app);
+	apps.set(key, { privateKey: credentials.GITHUB_APP_PRIVATE_KEY, app });
 	return app;
 }
 
@@ -166,7 +173,7 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 					);
 				}
 			}
-			return { jwt, installation: installation.id, suspended: Boolean(installation.suspended_at) };
+			return { installation: installation.id, suspended: Boolean(installation.suspended_at) };
 		});
 
 	const issue = (key: TokenKey) =>
@@ -175,7 +182,7 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 			const issued = yield* read(
 				accessTokenSchema,
 				`/app/installations/${key.installation}/access_tokens`,
-				key.jwt,
+				yield* appToken,
 				'POST',
 				{
 					...(id === undefined ? { repositories: [name.split('/')[1]] } : { repository_ids: [id] }),
@@ -202,8 +209,8 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 
 	const token = (name: string, id: number | undefined, permissions: Permissions, reuse: boolean) =>
 		authorize(name, permissions).pipe(
-			Effect.flatMap(({ jwt, installation, suspended }) => {
-				const key = new TokenKey(installation, name, id, permissions, jwt);
+			Effect.flatMap(({ installation, suspended }) => {
+				const key = new TokenKey(installation, name, id, permissions);
 				return reuse && !suspended ? remembered(tokens, key, issue(key)) : issue(key);
 			}),
 			Effect.map(issued => issued.token),
@@ -214,6 +221,17 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 		requireServicesAt: 'lookup',
 		timeToLive: exit => Exit.isSuccess(exit) ? exit.value.lifetime : Duration.zero,
 	});
+
+	const rejected = (token: string) =>
+		Cache.entries(tokens).pipe(
+			Effect.flatMap(entries =>
+				Effect.forEach(
+					Array.from(entries).filter(([, issued]) => issued.token === token),
+					([key]) => Cache.invalidate(tokens, key),
+					{ discard: true },
+				)
+			),
+		);
 
 	const ownerLogin = Effect.gen(function*() {
 		return (yield* ownerInstallation(yield* appToken)).account.login;
@@ -266,5 +284,6 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 			}),
 		installationToken: (name, id, permissions) => token(name, id, permissions, true),
 		mintToken: (name, id, permissions) => token(name, id, permissions, false),
+		rejected,
 	});
 });

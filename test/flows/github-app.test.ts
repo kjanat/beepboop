@@ -6,6 +6,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { Automation } from '@/automation/service';
+import { isolateGitHubApp } from '@/github/app.ts';
 
 let world: World;
 let repository: Repository;
@@ -119,4 +120,54 @@ test('tokens minted for a workflow run are never reused', async () => {
 		);
 	expect(await mint()).not.toBe(await mint());
 	expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(2);
+});
+
+test('a cached token that GitHub rejects is replaced by the next request', async () => {
+	const first = await token();
+	world.network.serve('api.github.com', request =>
+		request.headers.get('authorization') === `Bearer ${first}`
+			? Response.json({ message: 'Bad credentials' }, { status: 401 })
+			: world.github.handle(request));
+	const refused = await world.run(
+		Automation.use(service => service.gateway.call(`/repos/${repository.name}`, first)).pipe(Effect.flip),
+	);
+	expect(refused.message).toContain('HTTP 401');
+	const mark = world.network.mark();
+	const renewed = await token();
+	expect(renewed).not.toBe(first);
+	expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(1);
+	expect(await token()).toBe(renewed);
+});
+
+test('permission order does not split the token cache', async () => {
+	const mark = world.network.mark();
+	const issue = (permissions: Record<string, 'read' | 'write'>) =>
+		world.run(Automation.use(service => service.gateway.token(repository.name, repository.id, permissions)));
+	const first = await issue({ contents: 'read', actions: 'read' });
+	expect(await issue({ actions: 'read', contents: 'read' })).toBe(first);
+	expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(1);
+});
+
+test('a failed mint is not cached', async () => {
+	let refuse = true;
+	world.network.serve('api.github.com', request => {
+		if (refuse && request.method === 'POST' && new URL(request.url).pathname.endsWith('/access_tokens')) {
+			refuse = false;
+			return Response.json({ message: 'Server Error' }, { status: 422 });
+		}
+		return world.github.handle(request);
+	});
+	await expect(token()).rejects.toThrow();
+	expect(await token()).toStartWith('ghs_');
+});
+
+test('replacing the private key replaces the isolate app', () => {
+	const fetcher = world.network.fetch;
+	const credentials = {
+		GITHUB_APP_ID: world.env.GITHUB_APP_ID,
+		GITHUB_APP_PRIVATE_KEY: world.env.GITHUB_APP_PRIVATE_KEY,
+	};
+	const first = isolateGitHubApp(fetcher, credentials, ownerId);
+	expect(isolateGitHubApp(fetcher, { ...credentials }, ownerId)).toBe(first);
+	expect(isolateGitHubApp(fetcher, { ...credentials, GITHUB_APP_PRIVATE_KEY: 'replacement' }, ownerId)).not.toBe(first);
 });

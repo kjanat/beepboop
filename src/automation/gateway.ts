@@ -12,7 +12,7 @@ import { contains, defaultRevision, repositoryId } from '@/github/repositories.t
 import type { GitObject } from '@/github/resources.ts';
 import type { TagRequest } from '@/github/tags.ts';
 import { createTag, peelTag, tagRefs } from '@/github/tags.ts';
-import { GitHubTransport, gitHubRequest } from '@/github/transport.ts';
+import { GitHubRejection, GitHubTransport, gitHubRequest } from '@/github/transport.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
@@ -46,9 +46,14 @@ export class RepositoryGateway {
 		body?: unknown,
 		readOnlyGraphql = false,
 	): Effect.Effect<unknown, DomainError> {
-		return this.api
+		const sent = this.api
 			? this.api.call(path, token, method, body, readOnlyGraphql)
 			: gitHubRequest(this.transport, path, token, method, body, readOnlyGraphql);
+		return sent.pipe(
+			Effect.tapError(error =>
+				error instanceof GitHubRejection && error.status === 401 ? this.app.rejected(token) : Effect.void
+			),
+		);
 	}
 	read<S extends Contract>(
 		schema: S,
