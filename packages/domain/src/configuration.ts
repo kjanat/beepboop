@@ -462,7 +462,9 @@ export const configurationSchema = mapped(
 				}
 				ids.add(subscription.id);
 				if ('issue' in subscription) return;
-				const stream = configuration.streams[subscription.stream];
+				const stream = Object.hasOwn(configuration.streams, subscription.stream)
+					? configuration.streams[subscription.stream]
+					: undefined;
 				if (!stream || !Object.hasOwn(stream.workflows, subscription.operation)) {
 					issue(ctx, 'unknown-reference', 'Subscription references an unknown operation', [
 						'subscriptions',

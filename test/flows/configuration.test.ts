@@ -767,6 +767,17 @@ test('distribution refs require signed immutable version publication in every co
 	);
 });
 
+test('a subscription that names an Object.prototype member as its stream is refused', () => {
+	const document = {
+		streams: { main: { workflows: { build: { file: 'build.yml' } } } },
+		subscriptions: [{ id: 's', source: 'octo/tool', event: 'release', stream: 'constructor', operation: 'name' }],
+	};
+	const decoded = safeDecode(configurationSchema, document);
+	expect(decoded.success ? [] : schemaIssues(decoded.error).map(issueMessage)).toEqual([
+		'subscriptions.0.operation: Subscription references an unknown operation',
+	]);
+});
+
 test('the parser and schema agree on job gates', () => {
 	const document = (needsJobs: unknown, mode = 'observe') => ({
 		streams: {
