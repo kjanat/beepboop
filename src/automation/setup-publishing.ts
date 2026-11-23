@@ -1,7 +1,4 @@
 import { Effect, Result } from 'effect';
-import type { VerificationContext } from '@/automation/gateway.ts';
-import { cargoManager } from '@/automation/managers/cargo';
-import { registryRequest } from '@/automation/managers/verification';
 import type { PublishingCheck, SetupChoices } from '@/automation/setup-types';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { cargoJobPackages } from '@/discovery/release-graph/graph.ts';
@@ -14,6 +11,9 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseJson } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
+import { cargoManager } from '@/publication/registries/cargo.ts';
+import type { VerificationContext } from '@/publication/registries/context.ts';
+import { registryRequest } from '@/publication/registries/verification.ts';
 
 export interface PublishingAccess {
 	request: Fetcher;

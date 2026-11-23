@@ -2,10 +2,11 @@
 
 Discovery uses `DiscoveryRegistry` in
 `packages/discovery/src/managers/registry.ts`, and the built-in discoverers are
-registered in `packages/discovery/src/managers/builtins.ts`. The release
-planner uses `ManagerRegistry` in `src/automation/managers/registry.ts`, which
-adds publication verification. Its adapters are registered in
-`src/automation/managers/builtins.ts`.
+registered in `packages/discovery/src/managers/builtins.ts`. Publication
+verification uses `ManagerRegistry` in
+`packages/publication/src/registries/registry.ts`, which adds verification to
+discovery. Its adapters are registered in
+`packages/publication/src/registries/builtins.ts`.
 
 A manager implements discovery and can supply these capabilities:
 
@@ -23,7 +24,7 @@ checks, and recovery of unknown outcomes. Successful publication reports from
 authenticated producers are recorded directly.
 
 Each ecosystem's discoverer in `packages/discovery/src/managers` owns discovery
-and version editing. Its adapter in `src/automation/managers` adds
+and version editing. Its adapter in `packages/publication/src/registries` adds
 verification. OCI supplies publication verification. Workflow discovery identifies release and
 container capabilities; GoReleaser, manifest, and pre-commit adapters provide
 discovery. GitHub release publication uses the successful write response. Manifest

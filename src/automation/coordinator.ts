@@ -30,13 +30,7 @@ import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/i
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
 import { preparationBody } from '@/automation/managed';
-import {
-	canVerifyPublication,
-	observedVersion,
-	placeholderVersion,
-	verifyPublication,
-	verifySecondaryPublications,
-} from '@/automation/managers';
+import { observedVersion, placeholderVersion } from '@/automation/managers';
 import type { PackageTagResult, PackageTagRow, Release } from '@/automation/package-tags';
 import {
 	frozenPackageTagRows,
@@ -185,6 +179,11 @@ import {
 	view,
 } from '@/publication/ledger.ts';
 import type { PublishKind } from '@/publication/publish-pace.ts';
+import {
+	canVerifyPublication,
+	verifyPublication,
+	verifySecondaryPublications,
+} from '@/publication/registries/verify.ts';
 
 export interface CoordinatorBindings extends AutomationBindings {
 	DB: SqlDatabase;

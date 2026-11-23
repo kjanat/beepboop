@@ -1,5 +1,4 @@
 import { Effect, Result, Schema } from 'effect';
-import { canVerifyPublication } from '@/automation/managers';
 import { newVersionStartRefusal } from '@/automation/release-capability';
 import { adoptionChoices, startCommand } from '@/automation/release-graph/adoption';
 import { actionReleaseOffer } from '@/automation/setup-action';
@@ -84,6 +83,7 @@ import { sha256Hex } from '@/kernel/schema/ids.ts';
 import { mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
 import { formatJson, json } from '@/kernel/text/json.ts';
 import { listed } from '@/kernel/text/listing.ts';
+import { canVerifyPublication } from '@/publication/registries/verify.ts';
 
 function requirablePackage(pkg: Package | undefined): boolean {
 	return !!pkg && publishable(pkg) && !(tagPrefix(pkg.versionSource) !== undefined && pkg.version === undefined);

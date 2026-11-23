@@ -4,9 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnvironment } from '@root/test/support/process.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { verifyPublication } from '@/automation/managers';
-import { managerRegistry } from '@/automation/managers/builtins';
-import { cargoManager, crateIndexUrl } from '@/automation/managers/cargo';
 import type { Publication } from '@/automation/types';
 import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
 import { generateCask } from '@/distribution/homebrew/generate';
@@ -29,6 +26,9 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { managerRegistry } from '@/publication/registries/builtins.ts';
+import { cargoManager, crateIndexUrl } from '@/publication/registries/cargo.ts';
+import { verifyPublication } from '@/publication/registries/verify.ts';
 import { ToolFailure } from '@/tooling/runtime';
 
 const digest = (character: string) => character.repeat(64);

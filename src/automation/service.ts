@@ -11,9 +11,7 @@ import type { Credentials } from '@/automation/gateway.ts';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEvent } from '@/automation/inbox';
-import { planRelease, resolvePublished } from '@/automation/managers';
-import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
-import { registryLayer } from '@/automation/managers/registry';
+import { planRelease } from '@/automation/managers';
 import { preparationMerge } from '@/automation/preparation-pull-requests';
 import {
 	hasTagPromotion,
@@ -88,6 +86,9 @@ import { Database, databaseLayer, sql } from '@/persistence/d1/database';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
 import { executionId } from '@/persistence/identity-keys';
+import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/publication/registries/jsr.ts';
+import { registryLayer } from '@/publication/registries/registry.ts';
+import { resolvePublished } from '@/publication/registries/verify.ts';
 import { readBody } from '@/webhook';
 
 const webhookInstallation = mutableStruct({ account: mutableStruct({ id: looseSchema }) });

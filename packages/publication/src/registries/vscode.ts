@@ -1,17 +1,17 @@
 import { Effect, Result, Schema } from 'effect';
-import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
+import type { Publication } from '@/automation/types';
+import { vscodeDiscoverer } from '@/discovery/managers/vscode.ts';
+import { parseExtension } from '@/domain/package-identity.ts';
+import { responseJson } from '@/kernel/http/body.ts';
+import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
+import type { Adapter, RegistryVersion } from '@/publication/registries/registry.ts';
 import {
 	latestVersion,
 	publicationResult,
 	registryRequest,
 	unconfirmed,
 	unpublished,
-} from '@/automation/managers/verification';
-import type { Publication } from '@/automation/types';
-import { vscodeDiscoverer } from '@/discovery/managers/vscode.ts';
-import { parseExtension } from '@/domain/package-identity.ts';
-import { responseJson } from '@/kernel/http/body.ts';
-import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
+} from '@/publication/registries/verification.ts';
 
 const marketplaceQuery = mutableStruct({
 	results: mutableArray(mutableStruct({

@@ -4,20 +4,20 @@ import { Deferred, Effect, Exit, Fiber, Result } from 'effect';
 import { TestClock } from 'effect/testing';
 import { exportPKCS8, generateKeyPair } from 'jose';
 import { RepositoryGateway } from '@/automation/gateway.ts';
-import { goManager } from '@/automation/managers/go';
-import { jsrManager, setUpJsrPackage } from '@/automation/managers/jsr';
-import { npmLatest } from '@/automation/managers/npm';
-import { pypiManager } from '@/automation/managers/pypi';
-import type { Manager } from '@/automation/managers/registry';
-import { registryLayer } from '@/automation/managers/registry';
-import { verifyRegistry } from '@/automation/managers/verification';
-import { vscodeManager } from '@/automation/managers/vscode';
 import type { Publication } from '@/automation/types';
 import { gitHubRequest } from '@/github/transport.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseJson, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import { goManager } from '@/publication/registries/go.ts';
+import { jsrManager, setUpJsrPackage } from '@/publication/registries/jsr.ts';
+import { npmLatest } from '@/publication/registries/npm.ts';
+import { pypiManager } from '@/publication/registries/pypi.ts';
+import type { Manager } from '@/publication/registries/registry.ts';
+import { registryLayer } from '@/publication/registries/registry.ts';
+import { verifyRegistry } from '@/publication/registries/verification.ts';
+import { vscodeManager } from '@/publication/registries/vscode.ts';
 
 function openResponse(status: number, cancel: () => void) {
 	return new Response(new ReadableStream<Uint8Array>({ cancel }), { status });

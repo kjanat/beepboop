@@ -1,13 +1,11 @@
 import { Effect } from 'effect';
 import { alreadyPrepared, fileEdits } from '@/automation/editors';
-import type { VerificationContext } from '@/automation/gateway.ts';
-import { managerRegistry } from '@/automation/managers/builtins';
-import type { ManagerRegistry } from '@/automation/managers/registry';
 import { resolvePackageVersion } from '@/automation/release-version';
-import type { Publication, ReleasePlan } from '@/automation/types';
+import type { ReleasePlan } from '@/automation/types';
 import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
-import type { ManagerName } from '@/domain/catalog.ts';
-import { isLockfile, managerSpec } from '@/domain/catalog.ts';
+import { discoveryRegistry } from '@/discovery/managers/builtins.ts';
+import type { DiscoveryRegistry } from '@/discovery/managers/registry.ts';
+import { isLockfile } from '@/domain/catalog.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, packageId, publishablePackages } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
@@ -16,8 +14,6 @@ import { parseVersionRequest } from '@/domain/version-request.ts';
 import { tagPrefix } from '@/domain/version-tags.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
-import type { Fetcher } from '@/kernel/http/fetcher.ts';
-import { platformFetch } from '@/kernel/http/fetcher.ts';
 
 export { publicationOrder } from '@/domain/publication-order.ts';
 
@@ -44,7 +40,7 @@ export function planRelease(
 	inventory: Inventory,
 	target: unknown,
 	selected?: string[],
-	registry: ManagerRegistry = managerRegistry,
+	registry: DiscoveryRegistry = discoveryRegistry,
 	versionFiles: VersionFile[] = [],
 ): Effect.Effect<ReleasePlan, DomainError> {
 	return Effect.gen(function*() {
@@ -99,29 +95,6 @@ export function planRelease(
 	});
 }
 
-export function canVerifyPublication(manager: ManagerName): boolean {
-	return managerSpec(manager).verifiable;
-}
-export function verifyPublication(
-	publication: Publication,
-	request: Fetcher = platformFetch,
-	context?: VerificationContext,
-): Effect.Effect<Publication> {
-	return managerRegistry.verifyPublication(publication, request, context);
-}
-export function verifySecondaryPublications(
-	publication: Publication,
-	request: Fetcher = platformFetch,
-): Effect.Effect<Publication[]> {
-	return managerRegistry.verifySecondaryPublications(publication, request);
-}
-export function resolvePublished(
-	inventory: Inventory,
-	request: Fetcher = platformFetch,
-	context?: VerificationContext,
-): Effect.Effect<Inventory> {
-	return managerRegistry.resolvePublished(inventory, request, context);
-}
 export function placeholderVersion(version: string | undefined): boolean {
 	return version === '0.0.0';
 }
