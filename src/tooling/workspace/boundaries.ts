@@ -21,6 +21,7 @@ const platformModules = /^(?:node:|bun:|cloudflare:|astro:|virtual:)|^bun$/;
 const builtins = new Set(builtinModules);
 const rootAssets = ['schemas/', 'presets/'];
 const effectManifests = new Bun.Glob('**/node_modules/effect/package.json');
+const agentWorktrees = '.claude/worktrees/';
 export const baselinePath = 'packages/tooling/boundaries-baseline.json';
 const baselineSchema = Schema.Array(Schema.Struct({ file: Schema.String, specifier: Schema.String }));
 
@@ -140,7 +141,7 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 	const installed = yield* attemptPromise(() =>
 		Array.fromAsync(effectManifests.scan({ cwd: root, dot: true, followSymlinks: false }))
 	);
-	for (const path of installed.sort()) {
+	for (const path of installed.filter(path => !path.startsWith(agentWorktrees)).sort()) {
 		if (path !== 'node_modules/effect/package.json') violations.push({ _tag: 'DuplicateEffect', path });
 	}
 	return { files: checked.length, packages: packages.size, baselined: seen.size, violations };

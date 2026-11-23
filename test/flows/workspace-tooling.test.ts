@@ -792,6 +792,7 @@ describe('boundaries', () => {
 		write('packages/domain/node_modules/effect/package.json', '{}');
 		write('node_modules/effect/package.json', '{}');
 		write('node_modules/dep/node_modules/effect/package.json', '{}');
+		write('.claude/worktrees/agent/node_modules/effect/package.json', '{}');
 		const report = await Effect.runPromise(checkBoundaries(root));
 
 		expect(report.violations.map(describeViolation)).toEqual([
