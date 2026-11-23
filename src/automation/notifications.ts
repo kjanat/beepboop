@@ -1,5 +1,6 @@
 import { Clock, Effect, Result, Schema } from 'effect';
 import type { Fetcher } from '@/automation/managers/registry';
+import { platformFetch } from '@/automation/managers/registry';
 import type { Store } from '@/automation/store';
 import type { Vault } from '@/automation/vault';
 import { watchedPackageHref } from '@/contract/links';
@@ -173,7 +174,7 @@ export class Notifications {
 	constructor(
 		private store: Store,
 		private vault: () => Pick<Vault, 'reveal'>,
-		private request: Fetcher = fetch,
+		private request: Fetcher = platformFetch,
 	) {
 		this.sql = sql(store.db);
 		this.deliveries = new NotificationDeliveries(this.sql);

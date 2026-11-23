@@ -14,7 +14,7 @@ import { inboxEvent } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import type { Fetcher } from '@/automation/managers/registry';
-import { registryLayer } from '@/automation/managers/registry';
+import { platformFetch, registryLayer } from '@/automation/managers/registry';
 import { Notifications } from '@/automation/notifications';
 import { metadataProblems } from '@/automation/package-metadata';
 import { pollPackages } from '@/automation/package-watch';
@@ -1234,7 +1234,7 @@ export const authenticationLayer = Layer.effect(
 export function applicationLayer(
 	env: AutomationBindings,
 	defer?: (work: Promise<void>) => void,
-	transport: Fetcher = fetch,
+	transport: Fetcher = platformFetch,
 ) {
 	const base = Layer.mergeAll(
 		Layer.succeed(ApplicationConfiguration, { env, defer }),
