@@ -1,9 +1,10 @@
 import { Clock, Effect, Option } from 'effect';
+import type { Package } from '@/automation/inventory';
 import { canVerifyPublication } from '@/automation/managers';
 import { matchesPackage, packageId, publicationIdentity } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
 import type { RefState } from '@/automation/refs';
-import type { Package, Publication } from '@/automation/types';
+import type { Publication } from '@/automation/types';
 import { parseTag } from '@/contract/version';
 import type { PackageTagPage, PackageTagView } from '@/contract/views';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

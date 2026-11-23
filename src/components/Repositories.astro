@@ -1,8 +1,8 @@
 ---
-import { winget, wingetOutcome } from '@/automation/destinations';
+import { winget } from '@/automation/destinations';
+import type { RepositoryRecord } from '@/automation/inventory';
 import { exclusionLabel, publishable } from '@/automation/package-publication';
 import { streamReleases } from '@/automation/release-capability';
-import type { RepositoryRecord } from '@/automation/types';
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Commit from '@/components/Commit.astro';
@@ -19,6 +19,7 @@ import {
 	manifestEntry,
 	packageDestinations,
 	repositoryChannels,
+	wingetOutcome,
 } from '@/ui/destinations';
 
 interface Props {

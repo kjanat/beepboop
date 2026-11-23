@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import type { RepositoryRecord } from '@/automation/types';
+import type { RepositoryRecord } from '@/automation/inventory';
 import type { Access } from '@/domain/repository';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';

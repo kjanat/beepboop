@@ -1,11 +1,12 @@
 import { Effect } from 'effect';
+import type { Package } from '@/automation/inventory';
 import { object } from '@/automation/managers/helpers';
 import type { Adapter, Fetcher } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestTag, majorSuffix, tagSource } from '@/automation/managers/tags';
 import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
 import { excluded, registry } from '@/automation/package-publication';
-import type { Package, Publication } from '@/automation/types';
+import type { Publication } from '@/automation/types';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { responseJson } from '@/kernel/http/body.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';

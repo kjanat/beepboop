@@ -5,11 +5,11 @@ import { join } from 'node:path';
 import { publishRefs } from '@root/actions/runtime/refs.ts';
 import { commitAll, gitOutput, materialize } from '@root/test/support/actions.ts';
 import { Effect, Exit, Schema } from 'effect';
+import type { Package } from '@/automation/inventory';
 import { packageId } from '@/automation/package-identity';
 import { registry } from '@/automation/package-publication';
 import type { RefPolicy } from '@/automation/refs';
 import { moduleTagPrefixes, planRefs, versionTagged } from '@/automation/refs';
-import type { Package } from '@/automation/types';
 import { semVer } from '@/contract/version';
 
 const commit = 'a'.repeat(40), other = 'b'.repeat(40), oid = 'c'.repeat(40);

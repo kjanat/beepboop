@@ -1,9 +1,9 @@
 import { Clock, Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
 import { createdSchema, gitCommitSchema, gitRefSchema, repositorySchema } from '@/automation/github-resources';
+import type { Edit } from '@/automation/inventory';
 import type { DistributionEvidence, TagSigner } from '@/automation/refs';
 import { repositoryNamePattern } from '@/automation/repository-name';
-import type { Edit } from '@/automation/types';
 import { semVer } from '@/contract/version';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

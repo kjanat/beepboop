@@ -1,6 +1,6 @@
 import { Effect, Schema } from 'effect';
+import type { Package } from '@/automation/inventory';
 import { matchesPackage, packageId } from '@/automation/package-identity';
-import type { Package } from '@/automation/types';
 import type { SemVer } from '@/contract/version';
 import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/contract/version';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';

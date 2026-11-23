@@ -43,6 +43,7 @@ import { classifyJob, classifyRun, githubFailureReason, jobProgressState } from 
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import type { InboxEvent } from '@/automation/inbox';
 import { inboxEntry } from '@/automation/inbox';
+import type { Edit, Package } from '@/automation/inventory';
 import type { RunJob, WorkflowJobs } from '@/automation/job-gate';
 import { gateState, resolvable, workflowJobs } from '@/automation/job-gate';
 import type { Ledger, LedgerRecord } from '@/automation/ledger';
@@ -125,9 +126,7 @@ import type { SetupEdit } from '@/automation/setup-types';
 import type {
 	Artifact,
 	AutomationEvent,
-	Edit,
 	Execution,
-	Package,
 	PreparationResult,
 	PreparedRelease,
 	Publication,

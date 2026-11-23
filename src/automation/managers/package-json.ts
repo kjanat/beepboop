@@ -1,6 +1,6 @@
 import { Result } from 'effect';
+import type { Snapshot } from '@/automation/inventory';
 import { object } from '@/automation/managers/helpers';
-import type { Snapshot } from '@/automation/types';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 

@@ -1,3 +1,4 @@
+import type { Inventory, Snapshot } from '@/automation/inventory';
 import { latestTag } from '@/automation/managers/tags';
 import { packageId } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
@@ -7,7 +8,6 @@ import { code } from '@/automation/release-graph/graph';
 import type { Destination } from '@/automation/release-graph/workflows';
 import { literalPrefix } from '@/automation/release-graph/workflows';
 import type { SetupChoices } from '@/automation/setup-types';
-import type { Inventory, Snapshot } from '@/automation/types';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';

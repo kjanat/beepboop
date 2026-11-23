@@ -12,6 +12,7 @@ import { GitHub, gitHubLayer, RepositoryGateway } from '@/automation/github';
 import { workflowRunsSchema } from '@/automation/github-resources';
 import type { InboxEvent, SetupPullEdit, SetupPullMerge } from '@/automation/inbox';
 import { inboxEvent } from '@/automation/inbox';
+import type { Package, RepositoryRecord, Snapshot } from '@/automation/inventory';
 import { discover, planRelease, resolvePublished, versionsInFiles } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
 import type { Fetcher } from '@/automation/managers/registry';
@@ -38,16 +39,7 @@ import type { PublishingAccess } from '@/automation/setup-publishing';
 import { workflowCredentials } from '@/automation/setup-workflows';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
-import type {
-	AutomationEvent,
-	Execution,
-	Package,
-	ReleaseStarted,
-	RepositoryRecord,
-	Snapshot,
-	Stream,
-	SubscriptionDelivery,
-} from '@/automation/types';
+import type { AutomationEvent, Execution, ReleaseStarted, Stream, SubscriptionDelivery } from '@/automation/types';
 import type { Grant } from '@/automation/vault';
 import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
 import type { WinGetBindings } from '@/automation/winget';

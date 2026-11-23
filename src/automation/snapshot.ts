@@ -1,4 +1,5 @@
 import { Effect, Result } from 'effect';
+import type { Snapshot } from '@/automation/inventory';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object } from '@/automation/managers/helpers';
 import { tagQueries } from '@/automation/managers/tags';
@@ -14,7 +15,6 @@ import {
 } from '@/automation/release-graph/calls';
 import { directoryFlagPattern, selectorFlagPattern } from '@/automation/release-graph/package-managers';
 import { literalPrefix } from '@/automation/release-graph/workflows';
-import type { Snapshot } from '@/automation/types';
 import { isLockfile, managerNames, managerSpec } from '@/contract/catalog';
 import { safeVersionPath } from '@/contract/version-files';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

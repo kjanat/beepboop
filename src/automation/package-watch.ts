@@ -1,11 +1,12 @@
 import { Clock, Effect, Schema } from 'effect';
+import type { RepositoryRecord } from '@/automation/inventory';
 import { jsrLatest } from '@/automation/managers/jsr';
 import { npmLatest } from '@/automation/managers/npm';
 import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
 import type { Notifications } from '@/automation/notifications';
 import { versionChanged } from '@/automation/notifications';
 import type { Store } from '@/automation/store';
-import type { AutomationEvent, RepositoryRecord } from '@/automation/types';
+import type { AutomationEvent } from '@/automation/types';
 import type { WatchedPackage } from '@/automation/watchlist';
 import { watchlist } from '@/automation/watchlist';
 import type { WatchedRegistry } from '@/contract/catalog';

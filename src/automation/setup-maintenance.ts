@@ -1,6 +1,7 @@
 import { Effect, Schema } from 'effect';
 import { resolveConfiguration } from '@/automation/configuration';
 import type { RepositoryGateway } from '@/automation/github';
+import type { Edit, Inventory, Snapshot } from '@/automation/inventory';
 import { discover } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { packageId, selectorKey } from '@/automation/package-identity';
@@ -12,7 +13,6 @@ import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import type { SetupChoices } from '@/automation/setup-types';
 import type { Store } from '@/automation/store';
-import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import { setupChoicesSchema } from '@/contract/setup';
 import { packageMarkdown } from '@/domain/package-label';
 import { fromJson, fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';

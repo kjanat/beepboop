@@ -1,11 +1,11 @@
 import { expect, test } from 'bun:test';
 import { Validator } from '@cfworker/json-schema';
 import { Effect, Schema, Struct } from 'effect';
+import type { Snapshot } from '@/automation/inventory';
 import { npmManager } from '@/automation/managers/npm';
 import { discoverNpmTargets } from '@/automation/managers/npm-targets';
 import { emptyInventory } from '@/automation/managers/registry';
 import { assetName, binaryJobs } from '@/automation/setup-binaries';
-import type { Snapshot } from '@/automation/types';
 import { binaries, defaultBinaryTargets } from '@/contract/binary-platforms';
 import { targetsSchema } from '@/contract/targets';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';

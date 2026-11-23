@@ -1,8 +1,8 @@
 import { Effect } from 'effect';
 import type { WorkflowIdentity } from '@/automation/auth';
 import { administrator, workflowIdentity } from '@/automation/auth';
+import type { RepositoryRecord } from '@/automation/inventory';
 import type { AutomationBindings, AutomationService } from '@/automation/service';
-import type { RepositoryRecord } from '@/automation/types';
 import type { AnyRoute, Known, Route } from '@/contract/routes';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';

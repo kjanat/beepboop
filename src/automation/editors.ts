@@ -1,7 +1,8 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml, TomlError } from 'smol-toml';
 import { isScalar } from 'yaml';
-import type { Edit, ReleasePlan, Snapshot } from '@/automation/types';
+import type { Edit, Snapshot } from '@/automation/inventory';
+import type { ReleasePlan } from '@/automation/types';
 import { isLockfile } from '@/contract/catalog';
 import { semver } from '@/contract/semver';
 import type { VersionFile } from '@/contract/version-files';

@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
-import type { Configuration, RepositoryRecord } from '@/automation/types';
+import type { RepositoryRecord } from '@/automation/inventory';
+import type { Configuration } from '@/domain/configuration';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { blocking } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';

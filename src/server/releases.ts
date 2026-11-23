@@ -1,7 +1,8 @@
 import { listOrder, unfinishedStates } from '@/automation/execution-order.ts';
 import { githubRunLabel } from '@/automation/github-state';
+import type { RepositoryRecord } from '@/automation/inventory';
 import { matchesPackage, matchesPublication, selectorKey } from '@/automation/package-identity';
-import type { Execution, Publication, RepositoryRecord } from '@/automation/types.ts';
+import type { Execution, Publication } from '@/automation/types.ts';
 import { compare, semVer } from '@/contract/version';
 import { operations } from '@/domain/configuration';
 import { safeDecode } from '@/kernel/schema/structs.ts';

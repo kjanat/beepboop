@@ -1,4 +1,3 @@
-import type { WinGetSubmission } from '@/automation/winget';
 import type { ManagerDestinationId, RegistryDestinationId } from '@/contract/catalog';
 import { channelDestinationIds, destinationLabels } from '@/contract/catalog';
 
@@ -41,18 +40,4 @@ export type ChannelOutcome = Channel & (RegistryState | { state: 'tracking' });
 export type RegistryOutcome = ({ destination: ManagerDestinationId } & RegistryState) | ChannelOutcome;
 export function isChannelOutcome(outcome: RegistryOutcome): outcome is ChannelOutcome {
 	return channelDestinationIds.some(id => id === outcome.destination);
-}
-export type ManifestOutcome =
-	| { destination: ManifestDestinationId; state: 'unsubmitted' }
-	| { destination: ManifestDestinationId; state: WinGetSubmission['state']; version: string; url?: string };
-export type DestinationOutcome = RegistryOutcome | ManifestOutcome;
-
-export function wingetOutcome(submission: WinGetSubmission | undefined): ManifestOutcome {
-	if (!submission) return { destination: 'winget', state: 'unsubmitted' };
-	return {
-		destination: 'winget',
-		state: submission.state,
-		version: submission.plan.version,
-		...(submission.url ? { url: submission.url } : {}),
-	};
 }

@@ -1,7 +1,8 @@
 import { Result } from 'effect';
+import type { Inventory, Snapshot } from '@/automation/inventory';
 import { matchesPackage, parseReleaseIdentity, publishablePackages } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import type { Configuration, Inventory, Snapshot, Stream } from '@/automation/types';
+import type { Configuration, Stream } from '@/automation/types';
 import { operations as operationsOf } from '@/domain/configuration';
 import type { Diagnostic, DiagnosticSubject } from '@/kernel/errors/diagnostics.ts';
 

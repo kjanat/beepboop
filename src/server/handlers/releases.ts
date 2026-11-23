@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import { planVersionFiles } from '@/automation/editors';
 import { createExecution } from '@/automation/execution';
+import type { Inventory, Snapshot } from '@/automation/inventory';
 import { createReleasePreparation } from '@/automation/managed';
 import { planRelease, selectedReleasePackages, versionsInFiles } from '@/automation/managers';
 import { latestTag, tagPrefix } from '@/automation/managers/tags';
@@ -11,7 +12,7 @@ import { conflictMessage } from '@/automation/refs';
 import { capabilitySentence, releasable, releaseCapability, startRefusal } from '@/automation/release-capability';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
-import type { Execution, Inventory, ReleasePlan, ReleaseStarted, Snapshot, Stream } from '@/automation/types';
+import type { Execution, ReleasePlan, ReleaseStarted, Stream } from '@/automation/types';
 import { nextVersion, parseVersionRequest } from '@/automation/version';
 import type { StartChannel } from '@/contract/release-start';
 import { routes } from '@/contract/routes';

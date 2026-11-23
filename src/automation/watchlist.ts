@@ -1,5 +1,5 @@
+import type { RepositoryRecord } from '@/automation/inventory';
 import { publishable } from '@/automation/package-publication';
-import type { RepositoryRecord } from '@/automation/types';
 import type { WatchedRegistry } from '@/contract/catalog';
 import { watchedRegistries } from '@/contract/catalog';
 import { readiness } from '@/domain/repository';

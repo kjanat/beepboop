@@ -1,4 +1,5 @@
 import { Result } from 'effect';
+import type { Inventory, Snapshot } from '@/automation/inventory';
 import { cargoManager } from '@/automation/managers/cargo';
 import { goManager } from '@/automation/managers/go';
 import { goreleaserManager } from '@/automation/managers/goreleaser';
@@ -11,7 +12,6 @@ import { vscodeManager } from '@/automation/managers/vscode';
 import { workflowManager } from '@/automation/managers/workflow';
 import { verifyImage } from '@/automation/oci';
 import { discoverHooks } from '@/automation/precommit';
-import type { Inventory, Snapshot } from '@/automation/types';
 import type { ManagerName } from '@/contract/catalog';
 import { managerSpec } from '@/contract/catalog';
 

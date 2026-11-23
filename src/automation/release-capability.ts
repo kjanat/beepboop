@@ -1,7 +1,8 @@
+import type { Inventory, RepositoryRecord } from '@/automation/inventory';
 import { versionsInFiles } from '@/automation/managers';
 import { publishablePackages } from '@/automation/package-identity';
 import { hasTagPromotion } from '@/automation/release-version';
-import type { Inventory, ReleasePlan, RepositoryRecord, Stream, WorkflowBinding } from '@/automation/types';
+import type { ReleasePlan, Stream, WorkflowBinding } from '@/automation/types';
 import type { StreamRelease } from '@/contract/views';
 import { operations } from '@/domain/configuration';
 

@@ -1,10 +1,10 @@
 import { Effect, Result, Schema } from 'effect';
 import { applyVersionFiles, fileEdits } from '@/automation/editors';
+import type { Edit, Inventory, Snapshot } from '@/automation/inventory';
 import { planRelease, publicationOrder } from '@/automation/managers';
 import { inputSchema, nameSchema, outputSchema, platformSchema } from '@/automation/outputs';
 import { matchesPackage, selectorKey } from '@/automation/package-identity';
 import { publishable } from '@/automation/package-publication';
-import type { Edit, Inventory, Snapshot } from '@/automation/types';
 import { parseVersionRequest } from '@/automation/version';
 import { isLockfile } from '@/contract/catalog';
 import type { VersionFile } from '@/contract/version-files';

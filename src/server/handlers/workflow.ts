@@ -1,8 +1,9 @@
 import { Effect, Schema } from 'effect';
 import { createExecution } from '@/automation/execution';
+import type { Edit } from '@/automation/inventory';
 import { matchesRef } from '@/automation/policy';
 import { issueWorkflowToken } from '@/automation/token';
-import type { Artifact, Edit, Execution, Publication } from '@/automation/types';
+import type { Artifact, Execution, Publication } from '@/automation/types';
 import { isLockfile, reportableManagerNames } from '@/contract/catalog';
 import type { ClaimStep, NextStep, ReportStep } from '@/contract/ledger';
 import { startsFrom } from '@/contract/release-start';

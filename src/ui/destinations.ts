@@ -1,15 +1,29 @@
 import type {
 	Channel,
 	ChannelOutcome,
-	ManifestOutcome,
+	ManifestDestinationId,
 	RegistryOutcome,
 	RegistryState,
 } from '@/automation/destinations';
 import { channelKey, isChannelOutcome, registryDestination, winget } from '@/automation/destinations';
-import type { Inventory, Package } from '@/automation/types';
+import type { Inventory, Package } from '@/automation/inventory';
 import type { WinGetSubmission } from '@/automation/winget';
 import { managerSpec } from '@/contract/catalog';
 import { githubHref, registryHref } from '@/contract/links';
+
+export type ManifestOutcome =
+	| { destination: ManifestDestinationId; state: 'unsubmitted' }
+	| { destination: ManifestDestinationId; state: WinGetSubmission['state']; version: string; url?: string };
+
+export function wingetOutcome(submission: WinGetSubmission | undefined): ManifestOutcome {
+	if (!submission) return { destination: 'winget', state: 'unsubmitted' };
+	return {
+		destination: 'winget',
+		state: submission.state,
+		version: submission.plan.version,
+		...(submission.url ? { url: submission.url } : {}),
+	};
+}
 
 function channelHref(channel: Channel): string {
 	if (channel.destination === 'aur') return `https://aur.archlinux.org/packages/${encodeURIComponent(channel.name)}`;
