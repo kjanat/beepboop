@@ -1,9 +1,9 @@
 import type { ResolvedInput } from '@/automation/execution-outputs';
 import type { FrozenPackageTag } from '@/automation/package-tags';
-import type { GitHubRunState } from '@/contract/github';
 import type { ExecutionStateView } from '@/contract/views';
 import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration/schema.ts';
+import type { GitHubRunState } from '@/domain/github-run-state.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
 import type { ModuleTag, RefPlan, RefState } from '@/domain/refs.ts';
 import type { StartChannel } from '@/domain/release-start.ts';

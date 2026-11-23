@@ -149,10 +149,6 @@
 	},
 	{
 		"file": "packages/persistence/src/codecs/v1.ts",
-		"specifier": "@/contract/github"
-	},
-	{
-		"file": "packages/persistence/src/codecs/v1.ts",
 		"specifier": "@/contract/setup"
 	},
 	{

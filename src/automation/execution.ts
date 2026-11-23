@@ -1,6 +1,5 @@
 import { Clock, Effect } from 'effect';
 import { outputsComplete } from '@/automation/execution-outputs';
-import type { GitHubRunResult } from '@/automation/github-state';
 import { freezePackageTags, packageTagGroups } from '@/automation/package-tags';
 import { githubFailureReason, githubRunLabel } from '@/automation/run-labels';
 import type { Configuration, Execution, Publication, ReleaseReference, WorkflowBinding } from '@/automation/types';
@@ -9,6 +8,7 @@ import type { DiscoveredWorkflow, Package, RepositoryRecord } from '@/domain/inv
 import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/domain/package-identity.ts';
 import { streamModuleTags } from '@/domain/refs.ts';
 import type { ReadyRepository } from '@/domain/repository';
+import type { GitHubRunResult } from '@/github/run-state.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

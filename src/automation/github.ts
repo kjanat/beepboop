@@ -2,7 +2,12 @@ import { Clock, Effect, Exit, Option, Schema } from 'effect';
 import { signJwt } from 'micro509/jose';
 import { importPkcs8Pem } from 'micro509/keys';
 import { rawFile, rawPreset } from '@/automation/github-raw';
-import type { GitObject } from '@/automation/github-resources';
+import type { BotIdentity } from '@/automation/token';
+import type { Snapshot } from '@/domain/inventory.ts';
+import { parsePresetReference } from '@/domain/preset.ts';
+import type { RefState } from '@/domain/refs.ts';
+import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import type { GitObject } from '@/github/resources.ts';
 import {
 	accessTokenSchema,
 	appSchema,
@@ -18,12 +23,7 @@ import {
 	treeSchema,
 	userSchema,
 	workflowRunSchema,
-} from '@/automation/github-resources';
-import type { BotIdentity } from '@/automation/token';
-import type { Snapshot } from '@/domain/inventory.ts';
-import { parsePresetReference } from '@/domain/preset.ts';
-import type { RefState } from '@/domain/refs.ts';
-import { repositoryNamePattern } from '@/domain/repository-name.ts';
+} from '@/github/resources.ts';
 import type { GitHubTransport } from '@/github/transport.ts';
 import { GitHubRejection, gitHubRequest, githubApiVersion, rateLimited } from '@/github/transport.ts';
 import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.ts';

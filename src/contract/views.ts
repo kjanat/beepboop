@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { githubJobKinds } from '@/contract/github';
+import { githubJobKinds } from '@/domain/github-run-state.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 

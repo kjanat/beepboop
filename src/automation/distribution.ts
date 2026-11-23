@@ -1,10 +1,10 @@
 import { Clock, Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
-import { createdSchema, gitCommitSchema, gitRefSchema, repositorySchema } from '@/automation/github-resources';
 import type { Edit } from '@/domain/inventory.ts';
 import type { DistributionEvidence, TagSigner } from '@/domain/refs.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
 import { semVer } from '@/domain/version.ts';
+import { createdSchema, gitCommitSchema, gitRefSchema, repositorySchema } from '@/github/resources.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

@@ -1,5 +1,14 @@
-import type { RunJob } from '@/automation/job-gate';
-import type { GitHubJobKind, GitHubRunState } from '@/contract/github';
+import type { GitHubJobKind, GitHubRunState } from '@/domain/github-run-state.ts';
+
+export interface RunJob {
+	name: string;
+	status: string;
+	conclusion: string | null;
+	started_at?: string | null | undefined;
+	completed_at?: string | null | undefined;
+	runner_id?: number | null | undefined;
+	steps?: readonly unknown[] | null | undefined;
+}
 
 const conclusions = {
 	success: 'succeeded',

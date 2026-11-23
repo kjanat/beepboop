@@ -12,11 +12,11 @@ import type {
 	ReleaseReference,
 	SubscriptionDelivery,
 } from '@/automation/types';
-import { githubRunState } from '@/contract/github';
 import { setupChoicesSchema } from '@/contract/setup';
 import { executionStates } from '@/contract/views';
 import { managerDestinationIds, managerNames } from '@/domain/catalog.ts';
 import type { ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
+import { githubRunState } from '@/domain/github-run-state.ts';
 import type { DiscoveredWorkflow, Edit, Package, RepositoryRecord } from '@/domain/inventory.ts';
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { publicationSchema } from '@/domain/package-publication.ts';
