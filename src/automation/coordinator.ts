@@ -101,10 +101,10 @@ import type {
 	ReleaseStarted,
 } from '@/automation/types';
 import { unchangedSince } from '@/automation/unchanged-paths';
-import { parseGrant, runtimeGrant } from '@/automation/vault';
 import type { ClaimStep, LedgerManager, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
 import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
+import { parseGrant, runtimeGrant } from '@/credentials/grant.ts';
 import { identifiedManagers, isManagerName, managerSpec } from '@/domain/catalog.ts';
 import type { Edit, Package } from '@/domain/inventory.ts';
 import {

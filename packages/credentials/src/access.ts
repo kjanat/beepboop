@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
-import type { Grant } from '@/automation/vault.ts';
-import { requestGrant } from '@/automation/vault.ts';
+import type { Grant } from '@/credentials/grant.ts';
+import { requestGrant } from '@/credentials/grant.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';

@@ -1,6 +1,5 @@
 import { CronExpressionParser } from 'cron-parser';
 import { Clock, Context, Effect, Layer, Result, Schema } from 'effect';
-import { configuredGrant } from '@/automation/access';
 import type { AuthBindings, AuthenticationDependencies } from '@/automation/auth';
 import { Authentication, authentication } from '@/automation/auth';
 import type { AutomationCoordinator } from '@/automation/coordinator';
@@ -34,11 +33,13 @@ import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, ReleaseStarted, Stream, SubscriptionDelivery } from '@/automation/types';
 import { unchangedSince } from '@/automation/unchanged-paths';
-import type { Grant } from '@/automation/vault';
-import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
+import { Secrets, secretsLayer, Vault } from '@/automation/vault';
 import type { WinGetBindings } from '@/automation/winget';
 import { WinGetService } from '@/automation/winget';
 import { setupChoicesSchema } from '@/contract/setup';
+import { configuredGrant } from '@/credentials/access.ts';
+import type { Grant } from '@/credentials/grant.ts';
+import { isRuntimeGrant, parseGrant } from '@/credentials/grant.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics, configurationProblem } from '@/domain/configuration/schema.ts';
 import type { Package, RepositoryRecord, Snapshot } from '@/domain/inventory.ts';
@@ -223,8 +224,9 @@ export class AutomationService {
 				const documents = yield* this.credentials.grantDocuments({ repositoryId: repository.id });
 				const grants = yield* Effect.forEach(documents, parseGrant);
 				const aliases = [...new Set([
-					...grants.filter(grant => grant.workflow === file && grant.secretName && secrets.includes(grant.secretName))
-						.map(grant => grant.alias),
+					...grants.filter(grant =>
+						!isRuntimeGrant(grant) && grant.workflow === file && secrets.includes(grant.secretName)
+					).map(grant => grant.alias),
 					'crates-io',
 				])];
 				for (const alias of aliases) {
@@ -983,7 +985,7 @@ export class AutomationService {
 					if (
 						[...existing, ...granted].some(other =>
 							other.alias === grant.alias && other.operation === grant.operation
-							&& other.workflow === grant.workflow && other.ref === grant.ref && other.delivery === 'runtime'
+							&& other.workflow === grant.workflow && other.ref === grant.ref && isRuntimeGrant(other)
 							&& other.environment === grant.environment
 						)
 					) continue;
