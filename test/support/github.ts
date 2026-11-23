@@ -784,6 +784,29 @@ export class FakeGitHub {
 		if (request.method !== 'GET' || content === undefined) return new Response('404: Not Found', { status: 404 });
 		return new Response(new Uint8Array(content), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
 	}
+	async lsRefs(request: Request): Promise<Response> {
+		const [, owner, name] = /^\/([^/]+)\/([^/]+)\.git\/git-upload-pack$/.exec(new URL(request.url).pathname) ?? [];
+		const repository = this.repositories.get(`${owner}/${name}`);
+		if (
+			request.method !== 'POST' || request.headers.get('git-protocol') !== 'version=2' || !repository
+			|| repository.private
+		) {
+			return new Response('Repository not found.', { status: 401 });
+		}
+		const prefixes = [...(await request.text()).matchAll(/ref-prefix (\S+)\n/g)].flatMap(match => match[1] ?? []);
+		const head = repository.refs.get(`heads/${repository.defaultBranch}`);
+		const advertised = [
+			...(head ? [`${head} HEAD symref-target:refs/heads/${repository.defaultBranch}`] : []),
+			...[...repository.refs].map(([ref, oid]) => {
+				const tag = repository.tagObjects.get(oid);
+				return `${oid} refs/${ref}${tag ? ` peeled:${tag.commit}` : ''}`;
+			}),
+		].filter(line => prefixes.some(prefix => (line.split(' ')[1] ?? '').startsWith(prefix)));
+		const packet = (line: string) => `${(line.length + 5).toString(16).padStart(4, '0')}${line}\n`;
+		return new Response(`${advertised.map(packet).join('')}0000`, {
+			headers: { 'content-type': 'application/x-git-upload-pack-result' },
+		});
+	}
 	suspend(): void {
 		this.suspendedAt = new Date().toISOString();
 	}
@@ -922,8 +945,9 @@ export class FakeGitHub {
 	resolve(repository: Repository, reference: string): Commit {
 		const sha = /^[0-9a-f]{40}$/.test(reference)
 			? reference
-			: repository.refs.get(`heads/${reference.replace(/^refs\/heads\//, '')}`)
-				?? repository.refs.get(`tags/${reference.replace(/^refs\/tags\//, '')}`);
+			: repository.refs.get(reference.replace(/^refs\//, ''))
+				?? repository.refs.get(`heads/${reference}`)
+				?? repository.refs.get(`tags/${reference}`);
 		const commit = sha === undefined ? undefined : repository.commits.get(sha);
 		if (!commit) throw new HttpError(404, 'No commit found');
 		return commit;

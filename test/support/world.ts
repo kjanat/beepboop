@@ -98,6 +98,7 @@ export class World {
 		);
 		this.network.serve('api.github.com', request => this.github.handle(request));
 		this.network.serve('raw.githubusercontent.com', request => this.github.raw(request));
+		this.network.serve('github.com', request => this.github.lsRefs(request));
 		this.network.serve('registry.npmjs.org', request => this.npm.handle(request));
 		this.network.serve(
 			'token.actions.githubusercontent.com',
