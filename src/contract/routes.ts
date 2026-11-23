@@ -17,11 +17,11 @@ import {
 	executionView,
 	packageTagPage,
 	planReview,
-	repositoryView,
 	securityChallenge,
 	securityProof,
 	streamGates,
 } from '@/contract/views';
+import { repositoryView } from '@/discovery/contract.ts';
 import { checkChoices, releaseGate } from '@/domain/release-gates.ts';
 import { versionPrMerge } from '@/domain/setup-terms.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
