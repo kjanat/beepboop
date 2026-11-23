@@ -238,5 +238,29 @@
 	{
 		"file": "packages/setup/src/draft.ts",
 		"specifier": "@/automation/release-capability"
+	},
+	{
+		"file": "packages/setup/src/server/maintenance.ts",
+		"specifier": "@/automation/gateway.ts"
+	},
+	{
+		"file": "packages/setup/src/server/maintenance.ts",
+		"specifier": "@/automation/preparation-pull-requests"
+	},
+	{
+		"file": "packages/setup/src/server/maintenance.ts",
+		"specifier": "@/automation/snapshot"
+	},
+	{
+		"file": "packages/setup/src/server/maintenance.ts",
+		"specifier": "@/automation/store"
+	},
+	{
+		"file": "packages/setup/src/server/pull-requests.ts",
+		"specifier": "@/automation/gateway.ts"
+	},
+	{
+		"file": "packages/setup/src/server/pull-requests.ts",
+		"specifier": "@/automation/preparation-pull-requests"
 	}
 ]

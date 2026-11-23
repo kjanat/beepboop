@@ -20,8 +20,6 @@ import {
 	releasePaths,
 	unreleasedManifestVersion,
 } from '@/automation/release-version';
-import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/automation/setup-maintenance';
-import { openSetupPull, setupMerge, setupStatus } from '@/automation/setup-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { Store } from '@/automation/store';
 import type { AutomationEvent, Execution, ReleaseStarted, Stream } from '@/automation/types';
@@ -90,6 +88,8 @@ import { setupChoicesSchema } from '@/setup/contract.ts';
 import { inferredConfiguration } from '@/setup/draft.ts';
 import { bodyChoices } from '@/setup/options.ts';
 import type { PublishingAccess } from '@/setup/publishing.ts';
+import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/setup/server/maintenance.ts';
+import { openSetupPull, setupMerge, setupStatus } from '@/setup/server/pull-requests.ts';
 import { workflowCredentials } from '@/setup/workflows/integrate.ts';
 import { readBody } from '@/webhook';
 

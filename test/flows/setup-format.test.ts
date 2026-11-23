@@ -7,12 +7,12 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Schema } from 'effect';
 import { Automation } from '@/automation/service';
-import { setupAutoMerge } from '@/automation/setup-pull-requests';
 import { canonicalConfiguration } from '@/domain/configuration/canonical.ts';
 import { legacyConfiguration } from '@/domain/configuration/names.ts';
 import type { Package } from '@/domain/inventory.ts';
 import { registry } from '@/domain/package-publication.ts';
 import { decodeSync, looseStruct, mutableStruct } from '@/kernel/schema/structs.ts';
+import { setupAutoMerge } from '@/setup/server/pull-requests.ts';
 
 let world: World;
 eachWorld(created => {

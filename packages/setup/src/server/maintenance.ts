@@ -1,15 +1,6 @@
 import { Effect, Result, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { pullRequest } from '@/automation/preparation-pull-requests';
-import {
-	autoMergeSetup,
-	generatedFiles,
-	openSetupPull,
-	proposalScope,
-	revokeAutoMerge,
-	setupHead,
-	setupStatus,
-} from '@/automation/setup-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
 import { discover } from '@/discovery/discover.ts';
@@ -39,6 +30,15 @@ import { setupChoicesSchema } from '@/setup/contract.ts';
 import { previewSetup } from '@/setup/draft.ts';
 import { setupOptions } from '@/setup/options.ts';
 import type { PublishingAccess } from '@/setup/publishing.ts';
+import {
+	autoMergeSetup,
+	generatedFiles,
+	openSetupPull,
+	proposalScope,
+	revokeAutoMerge,
+	setupHead,
+	setupStatus,
+} from '@/setup/server/pull-requests.ts';
 import { withRegistryStatus } from '@/setup/suggest.ts';
 import type { SetupChoices } from '@/setup/types.ts';
 
