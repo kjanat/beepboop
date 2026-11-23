@@ -3039,9 +3039,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return run.status === 'completed' || !deploys(String(run.name), deploying.get(path) ?? []);
 			});
 			if (!runs.length) pending.push('No checks have run on this commit');
-			else if (runs.every(run => releaseFiles.has(pathOf(run) ?? ''))) {
-				pending.push('Only release workflows have run on this commit');
-			}
+			else if (!gating.length) pending.push('No verification check has run on this commit');
 			for (const run of gating) {
 				if (run.status !== 'completed') pending.push(`${String(run.name)} is still running`);
 				else if (!passingConclusions.includes(String(run.conclusion))) {
