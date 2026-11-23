@@ -25,23 +25,42 @@ jobs:
     steps:
       - name: Authenticate as Beepboop
         id: bot
+        continue-on-error: true
         uses: kjanat/beepboop/actions/token@v1
         with:
           purpose: publish-actions
           permission-contents: write
           permission-workflows: write
+      - name: Stop when superseded
+        if: steps.bot.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/${GITHUB_REPOSITORY}/branches/${GITHUB_REF_NAME}" --jq .commit.sha)
+          changed=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${head}" --paginate --jq '.files[].filename')
+          if grep --quiet '^\.github/' <<< "${changed}"; then
+            echo "Superseded: \`.github/\` changed at \`${head}\`." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          echo "::error::Authentication failed although .github/ at ${GITHUB_SHA} matches ${GITHUB_REF_NAME}"
+          exit 1
       - name: Checkout source
+        if: steps.bot.outcome == 'success'
         uses: actions/checkout@v7
         with: { ref: "${{ github.sha }}", fetch-depth: 0, token: "${{ steps.bot.outputs.token }}" }
-      - uses: jdx/mise-action@v5
-      - run: runner i -f
+      - if: steps.bot.outcome == 'success'
+        uses: jdx/mise-action@v5
+      - if: steps.bot.outcome == 'success'
+        run: runner i -f
       - name: Publish distribution commit
         id: publish
+        if: steps.bot.outcome == 'success'
         env:
-          "${{ insert }}": ${{ fromJSON(steps.bot.outputs.gitId) }}
+          "${{ insert }}": ${{ fromJSON(steps.bot.outputs.gitId || '{}') }}
         run: bun src/tooling/actions/distribute.ts
       - name: Tag Actions release
+        if: steps.bot.outcome == 'success'
         env:
           DISTRIBUTION_COMMIT: ${{ steps.publish.outputs.commit }}
-          "${{ insert }}": ${{ fromJSON(steps.bot.outputs.gitId) }}
+          "${{ insert }}": ${{ fromJSON(steps.bot.outputs.gitId || '{}') }}
         run: bun src/tooling/actions/release.ts

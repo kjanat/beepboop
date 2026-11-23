@@ -81,6 +81,13 @@ distribution commit, it publishes the source snapshot with the bundles to the
 `actions` branch. An unchanged `actions/` tree publishes no new commit. Other
 Actions and their shared runtime keep their paths.
 
+Publication runs one at a time, and a newer push replaces the run waiting for
+its turn. Beepboop issues the publication token to a run whose revision is
+behind `master` when the publish workflow and the local actions and reusable
+workflows it uses are identical, with the same file modes, at the head of
+`master`. A run whose token request fails ends as superseded when `.github/`
+changed after its revision, and fails otherwise.
+
 A push whose head commit message contains `Actions-Release: skip` publishes
 and tags nothing. The next push without it publishes the complete snapshot,
 including the skipped changes.

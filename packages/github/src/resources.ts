@@ -49,6 +49,10 @@ export const treeSchema = mutableStruct({
 	truncated: looseSchema,
 	tree: mutableArray(mutableStruct({ path: textSchema, type: textSchema, mode: textSchema })),
 });
+export const blobTreeSchema = mutableStruct({
+	truncated: looseSchema,
+	tree: mutableArray(mutableStruct({ path: textSchema, type: textSchema, mode: textSchema, sha: textSchema })),
+});
 export const contentSchema = mutableStruct({ encoding: looseSchema, content: looseSchema, size: looseSchema });
 export const namedSchema = mutableStruct({ name: textSchema });
 export const matchingRefSchema = mutableStruct({ ref: textSchema });

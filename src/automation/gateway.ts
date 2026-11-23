@@ -4,8 +4,8 @@ import { workflowRun } from '@/github/actions.ts';
 import type { BotIdentity, GitHubApp, InstallationState } from '@/github/app.ts';
 import { makeGitHubApp, missingInstallationPermissions } from '@/github/app.ts';
 import { downloadWorkflowArtifact } from '@/github/artifacts.ts';
-import type { SnapshotSource } from '@/github/contents.ts';
-import { loadPreset, readFile, snapshotSource } from '@/github/contents.ts';
+import type { RevisionFiles, SnapshotSource } from '@/github/contents.ts';
+import { loadPreset, readFile, revisionFiles, snapshotSource } from '@/github/contents.ts';
 import { ensureIssue, mergeCommit } from '@/github/issues.ts';
 import { copyReleaseAsset } from '@/github/releases.ts';
 import { contains, defaultRevision, repositoryId } from '@/github/repositories.ts';
@@ -96,6 +96,11 @@ export class RepositoryGateway {
 	);
 	defaultRevision(name: string, id: number): Effect.Effect<{ ref: string; sha: string }, DomainError> {
 		return this.token(name, id, { contents: 'read' }).pipe(Effect.flatMap(token => defaultRevision(this, name, token)));
+	}
+	revisionFiles(name: string, id: number, sha: string): Effect.Effect<RevisionFiles, DomainError> {
+		return this.token(name, id, { contents: 'read' }).pipe(
+			Effect.flatMap(token => revisionFiles(this, name, sha, token)),
+		);
 	}
 	workflowRun(name: string, id: number, runId: number): Effect.Effect<{ title: string; path: string }, DomainError> {
 		return this.token(name, id, { actions: 'read' }).pipe(

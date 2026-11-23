@@ -2,7 +2,14 @@ import { Effect, Option, Schema } from 'effect';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { parsePresetReference } from '@/domain/preset.ts';
 import { rawFile, rawPreset } from '@/github/raw.ts';
-import { commitSchema, contentSchema, matchingRefSchema, repositorySchema, treeSchema } from '@/github/resources.ts';
+import {
+	blobTreeSchema,
+	commitSchema,
+	contentSchema,
+	matchingRefSchema,
+	repositorySchema,
+	treeSchema,
+} from '@/github/resources.ts';
 import type { GitHubRequests } from '@/github/transport.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -49,6 +56,29 @@ export function readFile(
 				Uint8Array.from(atob(content.replace(/\s/g, '')), (c) => c.charCodeAt(0)),
 			)
 		);
+	});
+}
+
+export interface RevisionFiles {
+	readonly entries: ReadonlyMap<string, string>;
+	read(path: string): Effect.Effect<string | null, DomainError>;
+}
+
+export function revisionFiles(
+	github: GitHubRequests,
+	name: string,
+	commitSha: string,
+	token: string,
+): Effect.Effect<RevisionFiles, DomainError> {
+	return Effect.gen(function*() {
+		const tree = yield* github.read(blobTreeSchema, `/repos/${name}/git/trees/${commitSha}?recursive=1`, token);
+		if (tree.truncated) return yield* precondition('Repository tree truncated');
+		return {
+			entries: new Map(
+				tree.tree.flatMap(entry => entry.type === 'tree' ? [] : [[entry.path, `${entry.mode} ${entry.sha}`] as const]),
+			),
+			read: path => readFile(github, name, path, commitSha, token),
+		};
 	});
 }
 
