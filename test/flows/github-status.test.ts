@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import type { StatusSummary } from '@/server/github-status.ts';
-import { outageFrom, outageLine } from '@/server/github-status.ts';
+import type { StatusSummary } from '@/github/status.ts';
+import { outageFrom, outageLine } from '@/github/status.ts';
 
 const component = (name: string, status = 'operational') => ({ name, status, group: false });
 function summary(
