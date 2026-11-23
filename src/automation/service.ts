@@ -30,8 +30,7 @@ import { openSetupPull, setupMerge, setupStatus } from '@/automation/setup-pull-
 import { workflowCredentials } from '@/automation/setup-workflows';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { Store } from '@/automation/store';
-import { matchesSubscription } from '@/automation/subscriptions';
-import type { AutomationEvent, Execution, ReleaseStarted, Stream, SubscriptionDelivery } from '@/automation/types';
+import type { AutomationEvent, Execution, ReleaseStarted, Stream } from '@/automation/types';
 import { unchangedSince } from '@/automation/unchanged-paths';
 import type { WinGetBindings } from '@/automation/winget';
 import { WinGetService } from '@/automation/winget';
@@ -80,11 +79,14 @@ import {
 	mutableStruct,
 	safeDecode,
 } from '@/kernel/schema/structs.ts';
+import { ReleaseEvents } from '@/notifications/adapters/d1/events.ts';
 import { Notifications } from '@/notifications/delivery.ts';
+import type { EventDelivery } from '@/notifications/event-delivery.ts';
+import { deliverEvent, deliverPending } from '@/notifications/event-delivery.ts';
 import { pollPackages } from '@/notifications/package-watch.ts';
 import { AuditStore } from '@/persistence/d1/audit';
 import { ChangeLog } from '@/persistence/d1/changes';
-import { Database, databaseLayer } from '@/persistence/d1/database';
+import { Database, databaseLayer, sql } from '@/persistence/d1/database';
 import { OnboardingStore } from '@/persistence/d1/onboarding';
 import { ScheduleStore } from '@/persistence/d1/schedules';
 import { executionId } from '@/persistence/identity-keys';
@@ -1031,89 +1033,28 @@ export class AutomationService {
 			}
 		});
 	}
+	releaseEvents() {
+		return new ReleaseEvents(sql(this.store.db));
+	}
+	private eventDelivery(): EventDelivery {
+		return {
+			events: this.releaseEvents(),
+			repositories: this.store.readableRepositories(),
+			repository: id => this.store.repository(id),
+			packagePublished: (repositoryId, registry, name, version) =>
+				fromPromise(() => this.coordinator(repositoryId).packagePublished(registry, name, version)),
+			openIssue: (ready, deliveryId, issue) =>
+				fromPromise(() => this.coordinator(ready.id).openSubscriptionIssue(ready.name, ready.id, deliveryId, issue)),
+			enqueue: (ready, execution) => this.enqueue(ready, execution),
+		};
+	}
 	event(event: AutomationEvent): Effect.Effect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (
-				event.event === 'release'
-				&& (!event.release || event.release.repository.name !== event.source
-					|| event.release.version !== event.version)
-			) {
-				return yield* precondition('Release event requires its upstream identity');
-			}
-			const deliveries: SubscriptionDelivery[] = [];
-			const separator = event.source.indexOf(':');
-			const published = event.event === 'package.version.changed' && event.version && separator > 0
-				? {
-					registry: event.source.slice(0, separator),
-					name: event.source.slice(separator + 1),
-					version: event.version,
-				}
-				: undefined;
-			for (const stored of yield* this.store.readableRepositories()) {
-				const state = readiness(stored);
-				if (state.kind !== 'ready') continue;
-				const repository = state.repository;
-				if (
-					published
-					&& repository.inventory.packages.some(pkg =>
-						pkg.manager === published.registry && pkg.name === published.name
-					)
-				) {
-					yield* fromPromise(() =>
-						this.coordinator(repository.id).packagePublished(published.registry, published.name, published.version)
-					);
-				}
-				for (const subscription of repository.configuration.subscriptions) {
-					if (!matchesSubscription(subscription, event)) continue;
-					if ('issue' in subscription) {
-						if (!event.version) continue;
-						const id = yield* executionId(repository.id, subscription.id, 'issue', `package:${event.id}`);
-						deliveries.push({
-							id,
-							eventId: event.id,
-							repositoryId: repository.id,
-							issue: {
-								title: subscription.issue.title.replaceAll('{version}', event.version),
-								body: subscription.issue.body.replaceAll('{version}', event.version),
-							},
-						});
-						continue;
-					}
-					const execution = yield* (
-						createExecution(repository, {
-							stream: subscription.stream,
-							operation: subscription.operation,
-							eventId: `${subscription.id}:${event.id}`,
-							sourceSha: repository.sha,
-							version: event.version,
-							upstreamRelease: event.release,
-						})
-					);
-					deliveries.push({ id: execution.id, eventId: event.id, repositoryId: repository.id, execution });
-				}
-			}
-			yield* this.store.queueEvent(event, deliveries);
-			yield* this.deliverEvents;
-		}).pipe(
+		return deliverEvent(this.eventDelivery(), event).pipe(
 			Effect.withSpan('release.event', { attributes: { eventId: event.id } }),
 			Effect.annotateLogs({ eventId: event.id }),
 		);
 	}
-	private deliverEvents: Effect.Effect<void, DomainError> = Effect.gen({ self: this }, function*() {
-		for (const delivery of yield* this.store.pendingDeliveries()) {
-			const delivered = yield* Effect.gen({ self: this }, function*() {
-				const repository = yield* this.store.repository(delivery.repositoryId);
-				if (!repository) return yield* precondition('Destination unavailable');
-				const ready = yield* requireReady(repository);
-				if ('issue' in delivery) {
-					yield* fromPromise(() =>
-						this.coordinator(ready.id).openSubscriptionIssue(ready.name, ready.id, delivery.id, delivery.issue)
-					);
-				} else yield* this.enqueue(ready, delivery.execution);
-			}).pipe(Effect.as(true), Effect.orElseSucceed(() => false));
-			yield* this.store.deliveryResult(delivery.id, delivered);
-		}
-	});
+	private deliverEvents: Effect.Effect<void, DomainError> = Effect.suspend(() => deliverPending(this.eventDelivery()));
 	private scheduleStreams(ready: ReadyRepository, now: number): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			for (const [streamName, stream] of Object.entries(ready.configuration.streams)) {

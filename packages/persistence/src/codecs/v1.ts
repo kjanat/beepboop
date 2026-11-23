@@ -10,7 +10,6 @@ import type {
 	Publication,
 	ReleasePlan,
 	ReleaseReference,
-	SubscriptionDelivery,
 } from '@/automation/types';
 import { setupChoicesSchema } from '@/contract/setup';
 import { executionStates } from '@/contract/views';
@@ -274,7 +273,7 @@ const pullResult = mutableStruct({
 		mutableStruct({ method: autoMergeMethod, state: Schema.Literal('refused'), note: Schema.String }),
 	])),
 });
-const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
+export const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	prepared: Schema.optional(
 		mutableStruct({
 			edits: mutableArray(edit),
@@ -368,15 +367,6 @@ const automationEventSchema: Schema.Codec<AutomationEvent, unknown> = mutableStr
 	workflow: Schema.optional(Schema.String),
 	release: Schema.optional(releaseReference),
 });
-const deliveryFields = {
-	id: Schema.String,
-	eventId: Schema.String,
-	repositoryId: Schema.Finite,
-};
-const deliverySchema: Schema.Codec<SubscriptionDelivery, unknown> = Schema.Union([
-	mutableStruct({ ...deliveryFields, execution: executionSchema }),
-	mutableStruct({ ...deliveryFields, issue: mutableStruct({ title: Schema.String, body: Schema.String }) }),
-]);
 const setupEditSchema: Schema.Codec<SetupEdit, unknown> = mutableStruct({
 	repositoryId: Schema.Finite,
 	number: Schema.Finite,
@@ -389,7 +379,7 @@ const setupEditSchema: Schema.Codec<SetupEdit, unknown> = mutableStruct({
 export function decodeRepositoryV1(value: unknown): RepositoryRecord {
 	return identifyRepository(decodeSync(repositorySchema, value));
 }
-function currentState(execution: Execution): Execution {
+export function currentState(execution: Execution): Execution {
 	const actor = execution.reason?.match(/^Cancelled by (.+)$/)?.[1];
 	if (execution.state === 'cancelled' && execution.cancelledBy === undefined && actor !== undefined) {
 		return { ...execution, cancelledBy: actor };
@@ -408,12 +398,6 @@ export function decodeExecutionV1(value: unknown): Execution {
 }
 export function decodeEventV1(value: unknown): AutomationEvent {
 	return decodeSync(automationEventSchema, value);
-}
-export function decodeDeliveryV1(value: unknown): SubscriptionDelivery {
-	const delivery = decodeSync(deliverySchema, value);
-	return 'execution' in delivery
-		? { ...delivery, execution: currentState(identifyExecution(delivery.execution)) }
-		: delivery;
 }
 export function decodeSetupEditV1(value: unknown): SetupEdit {
 	return decodeSync(setupEditSchema, value);

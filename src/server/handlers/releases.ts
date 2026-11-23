@@ -341,7 +341,7 @@ export const releaseEndpoints = {
 			if (!repository.configuration.managers.includes('pre-commit')) {
 				return yield* precondition('Hook manager is not enabled');
 			}
-			const event = yield* service.store.event(input.releaseEventId);
+			const event = yield* service.releaseEvents().event(input.releaseEventId);
 			if (event?.event !== 'release' || !event.release) {
 				return yield* notFound('release-event', 'Verified upstream release event required', input.releaseEventId);
 			}
