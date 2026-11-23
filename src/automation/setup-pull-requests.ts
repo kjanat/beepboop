@@ -12,7 +12,7 @@ import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { decode, textSchema } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
-import { marked, placeBlock, setupBlock, withStatus } from '@/setup/body.ts';
+import { marked, placeBlock, setupBlock, withStatus } from '@/setup/blocks.ts';
 
 const contentEditsSchema = mutableStruct({
 	data: mutableStruct({

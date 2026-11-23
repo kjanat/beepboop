@@ -2,15 +2,6 @@ import { Effect, Result, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { pullRequest } from '@/automation/preparation-pull-requests';
 import {
-	previewSetup,
-	releaseAfterMerge,
-	releaseAfterMergeBox,
-	setupBody,
-	setupOptions,
-	withRegistryStatus,
-} from '@/automation/setup';
-import type { PublishingAccess } from '@/automation/setup-publishing';
-import {
 	autoMergeSetup,
 	generatedFiles,
 	openSetupPull,
@@ -41,9 +32,14 @@ import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/sc
 import { formatJson, json } from '@/kernel/text/json.ts';
 import { parse, replaceDocument, sql } from '@/persistence/d1/database';
 import { documentRow } from '@/persistence/d1/document-row';
-import { marked } from '@/setup/body.ts';
+import { marked } from '@/setup/blocks.ts';
+import { releaseAfterMerge, releaseAfterMergeBox, setupBody } from '@/setup/body.ts';
 import { changeDetails, setupBranch, setupTitle } from '@/setup/changes.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
+import { previewSetup } from '@/setup/draft.ts';
+import { setupOptions } from '@/setup/options.ts';
+import type { PublishingAccess } from '@/setup/publishing.ts';
+import { withRegistryStatus } from '@/setup/suggest.ts';
 import type { SetupChoices } from '@/setup/types.ts';
 
 const editsSchema = mutableArray(mutableStruct({ path: Schema.String, before: Schema.String, after: Schema.String }));

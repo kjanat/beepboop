@@ -242,5 +242,9 @@
 	{
 		"file": "packages/publication/src/registries/vscode.ts",
 		"specifier": "@/automation/types"
+	},
+	{
+		"file": "packages/setup/src/draft.ts",
+		"specifier": "@/automation/release-capability"
 	}
 ]
