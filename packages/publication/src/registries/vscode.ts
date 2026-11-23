@@ -1,9 +1,9 @@
 import { Effect, Result, Schema } from 'effect';
-import type { Publication } from '@/automation/types';
 import { vscodeDiscoverer } from '@/discovery/managers/vscode.ts';
 import { parseExtension } from '@/domain/package-identity.ts';
 import { responseJson } from '@/kernel/http/body.ts';
 import { mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
+import type { Publication } from '@/publication/publication.ts';
 import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';
 import {

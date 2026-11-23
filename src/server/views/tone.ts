@@ -1,9 +1,10 @@
-import type { ExecutionState, Publication } from '@/automation/types.ts';
+import type { ExecutionState } from '@/automation/types.ts';
 import type { Status, Tone } from '@/contract/views';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import type { Readiness } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import type { DeliveryState, NotificationDelivery } from '@/notifications/notification.ts';
+import type { Publication } from '@/publication/publication.ts';
 import type { WinGetSubmission } from '@/publication/winget/submission.ts';
 import type { ReleaseSetState, releaseSummaries } from '@/server/releases.ts';
 import { activeStates, checksPolicy, publishesAutomatically, runStateLabel } from '@/server/releases.ts';

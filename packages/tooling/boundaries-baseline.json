@@ -188,42 +188,6 @@
 		"specifier": "@/automation/types"
 	},
 	{
-		"file": "packages/publication/src/ledger.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/publication/src/registries/cargo.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/publication/src/registries/go.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/publication/src/registries/goreleaser.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/publication/src/registries/oci.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/publication/src/registries/registry.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/publication/src/registries/verification.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/publication/src/registries/verify.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/publication/src/registries/vscode.ts",
-		"specifier": "@/automation/types"
-	},
-	{
 		"file": "packages/publication/src/winget/service.ts",
 		"specifier": "@/automation/gateway.ts"
 	},
@@ -249,10 +213,6 @@
 	},
 	{
 		"file": "packages/release/src/domain/managed.ts",
-		"specifier": "@/automation/types"
-	},
-	{
-		"file": "packages/release/src/domain/package-tags.ts",
 		"specifier": "@/automation/types"
 	},
 	{

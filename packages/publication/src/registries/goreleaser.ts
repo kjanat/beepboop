@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
-import type { Publication } from '@/automation/types';
 import { goreleaserDiscoverer } from '@/discovery/managers/goreleaser.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
+import type { Publication } from '@/publication/publication.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
 import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';

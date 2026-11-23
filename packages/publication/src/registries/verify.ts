@@ -1,10 +1,10 @@
 import type { Effect } from 'effect';
-import type { Publication } from '@/automation/types';
 import type { ManagerName } from '@/domain/catalog.ts';
 import { managerSpec } from '@/domain/catalog.ts';
 import type { Inventory } from '@/domain/inventory.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
+import type { Publication } from '@/publication/publication.ts';
 import { managerRegistry } from '@/publication/registries/builtins.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
 

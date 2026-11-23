@@ -49,7 +49,6 @@ import type {
 	Execution,
 	PreparationResult,
 	PreparedRelease,
-	Publication,
 	ReleaseReference,
 	ReleaseStarted,
 } from '@/automation/types';
@@ -152,6 +151,7 @@ import {
 	view,
 } from '@/publication/ledger.ts';
 import { dependencyBlocker, planLedger, publicationDeadlock } from '@/publication/ledger-plan.ts';
+import type { Publication } from '@/publication/publication.ts';
 import type { PublishKind } from '@/publication/publish-pace.ts';
 import {
 	canVerifyPublication,

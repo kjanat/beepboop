@@ -2,7 +2,7 @@ import { Effect, Schema } from 'effect';
 import { issueWorkflowToken } from '@/auth/workflow-token.ts';
 import { createExecution, dispatchedExecution } from '@/automation/execution';
 import { repositorySnapshot } from '@/automation/snapshot';
-import type { Artifact, Execution, Publication } from '@/automation/types';
+import type { Artifact, Execution } from '@/automation/types';
 import { routes } from '@/contract/routes';
 import { deliverCredentials } from '@/credentials/http/credentials.ts';
 import { isLockfile, reportableManagerNames } from '@/domain/catalog.ts';
@@ -17,6 +17,7 @@ import { conflict, decodeRequest, forbidden, precondition } from '@/kernel/error
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { mutableStruct } from '@/kernel/schema/structs.ts';
 import type { ClaimStep, NextStep, ReportStep } from '@/publication/contract.ts';
+import type { Publication } from '@/publication/publication.ts';
 import type { EnrolledContext } from '@/server/handlers/kit';
 import { workflow, workflowToken } from '@/server/handlers/kit';
 import { beginRelease, releasePlan } from '@/server/handlers/releases';
