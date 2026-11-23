@@ -106,7 +106,7 @@ test('a release event without its upstream identity and a changed event body are
 test('a delivery for a missing repository stays pending', async () => {
 	const { delivery, enqueued, accept } = await follower();
 	accept();
-	await world.run(deliverEvent({ ...delivery, repository: () => Effect.succeed(undefined) }, release));
+	await world.run(deliverEvent({ ...delivery, repository: () => Effect.undefined }, release));
 	expect(enqueued).toEqual([]);
 	expect(await deliveryRows()).toMatchObject([{ state: 'pending', error: 'Delivery awaiting retry' }]);
 });
