@@ -27,7 +27,7 @@ export const generatedJsr = Effect.fnUntraced(
 );
 
 const workspaceSpecifier = /^(?:@\/|@beepboop(?:bot)?\/)/;
-const requireHelper = /\b__require\(\s*"([^"]*)"\s*\)/g;
+const requireHelper = /\b(?:__require|require\.resolve)\(\s*"([^"]*)"\s*[,)]/g;
 const transpiler = new Bun.Transpiler({ loader: 'js' });
 
 export function leakedSpecifiers(bundle: string): string[] {

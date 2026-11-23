@@ -13,7 +13,7 @@ test('the CLI bundle check finds workspace specifiers in every import form', () 
 		"import '@/contract/views';",
 		'import x from"@/a";export{y}from"@/b";',
 		'import(/* keep */ "@/c"); import /* keep */ "@/d";',
-		"var __require = createRequire(import.meta.url); __require('@/e');",
+		"var __require = createRequire(import.meta.url); __require('@/e'); require.resolve('@/f', { paths: [] });",
 		"import { cli } from '@kjanat/dreamcli';",
 	].join('\n');
 	expect(leakedSpecifiers(bundle)).toEqual([
@@ -27,6 +27,7 @@ test('the CLI bundle check finds workspace specifiers in every import form', () 
 		'@/c',
 		'@/d',
 		'@/e',
+		'@/f',
 	]);
 });
 
