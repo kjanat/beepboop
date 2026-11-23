@@ -16,6 +16,8 @@ CodeRabbit limits free reviews. A rate-limited PR may get no post-merge review
 at all.
 
 Work in `/home/kjanat/projects/beepboop`. Bun is `/home/kjanat/.bun/bin/bun`.
+The commands below read the reviewed PR number from the shell variable `pr`.
+Set it first, for example `pr=255`.
 
 ## 1. Find merged PRs
 
@@ -25,15 +27,18 @@ Take the PR numbers from the caller, or list recent merges:
 gh pr list --repo kjanat/beepboop --state merged --limit 20 --json number,title,mergedAt,mergeCommit
 ```
 
-An open PR waits until `gh pr view <n> --repo kjanat/beepboop --json state`
-shows `MERGED`.
+An open PR waits until this command prints `MERGED`:
+
+```sh
+gh pr view "$pr" --repo kjanat/beepboop --json state --jq .state
+```
 
 ## 2. Wait for the review
 
 Run in the background and wait for its notification:
 
 ```sh
-.claude/skills/beepboop-post-merge/wait.sh <n>
+.claude/skills/beepboop-post-merge/wait.sh "$pr"
 ```
 
 It sleeps until 15 minutes after the merge, then polls the PR comments until a
@@ -50,7 +55,7 @@ A reply from `kjanat` that starts with the note below and was created after the
 review comment means the review is already handled:
 
 ```sh
-gh api --paginate repos/kjanat/beepboop/issues/ --jq '.[] | select(.user.login == "kjanat" and (.body | test("^> \\[!NOTE\\]\n> 🤖 \\*\\*.+ responding on behalf of kjanat\\*\\*"))) | {created_at, html_url}' <n >/comments
+gh api --paginate "repos/kjanat/beepboop/issues/$pr/comments" --jq '.[] | select(.user.login == "kjanat" and (.body | test("^> \\[!NOTE\\]\n> 🤖 \\*\\*.+ responding on behalf of kjanat\\*\\*"))) | {created_at, html_url}'
 ```
 
 Compare each `created_at` with the review's `created_at`. The same note also
@@ -75,13 +80,14 @@ the cited lines. A finding is a defect until evidence proves it wrong:
 
 Fix every real finding from one review in one PR, shipped with
 `.claude/skills/beepboop-ship/SKILL.md`. The PR title names the fix. The body
-names the reviewed PR as `#<n>` without a closing keyword, and its `Proof:` line
-names the test that fails without each fix.
+names the reviewed PR by number without a closing keyword, and its `Proof:`
+line names the test that fails without each fix.
 
 ## 6. Reply on the reviewed PR
 
 After the fixing PR merges, post one issue comment on the reviewed PR. Write
-the body to a scratch file:
+the body to a scratch file whose name starts with your branch name, and set
+`reply` to its path:
 
 ```markdown
 > [!NOTE]
@@ -96,7 +102,7 @@ commit. A rejected finding names the line or the test that disproves it. Post it
 with:
 
 ```sh
-gh api repos/kjanat/beepboop/issues/<n>/comments --field body=@<file>
+gh api "repos/kjanat/beepboop/issues/$pr/comments" --field "body=@$reply"
 ```
 
 Post no reply for a PR without a review.
