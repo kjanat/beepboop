@@ -1382,6 +1382,11 @@ const releaseMarker = '<!-- beepboop:release-after-merge -->';
 export function releaseAfterMerge(body: string): boolean {
 	return /^[ \t]*[-*+] \[[xX]\] <!-- beepboop:release-after-merge -->/m.test(body);
 }
+export function releaseAfterMergeBox(release: boolean): string {
+	return `Tick this box to release the current version when this PR merges.\n\n- [${
+		release ? 'x' : ' '
+	}] ${releaseMarker} Release after merge`;
+}
 function mentionFree(text: string): string {
 	return text.replace(/(^|[\s(])(@[\w.-]+\/[\w.-]+)/g, '$1`$2`');
 }
@@ -1539,9 +1544,7 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 		streams,
 		...(triggers.length ? [`${existingTriggersQuestion}:\n\n${triggers.map(line => `- ${line}`).join('\n')}`] : []),
 		'Change `versionScope`, workflows and `existingTriggers` in Beepboop under Repositories, Edit release setup.',
-		`Tick this box to release the current version when this PR merges.\n\n- [${
-			release ? 'x' : ' '
-		}] ${releaseMarker} Release after merge`,
+		releaseAfterMergeBox(release),
 		...(plan.adoption?.length ? [mentionFree(plan.adoption.join('\n').trimEnd())] : []),
 		...(notes.length ? [notes.map(note => `- ${noteMarkdown(plan, note)}`).join('\n')] : []),
 		...(update && plan.edits.length ? [changeDetails(plan.edits)] : []),

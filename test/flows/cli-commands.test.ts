@@ -302,12 +302,12 @@ async function independent() {
 			managers: ['npm', 'workflow'],
 			streams: {
 				main: {
-					versioning: 'independent',
+					versionScope: 'per-package',
 					packages: ['pkg:npm/widget', 'pkg:npm/gadget'],
-					required: ['pkg:npm/widget', 'pkg:npm/gadget'],
+					mustPublish: ['pkg:npm/widget', 'pkg:npm/gadget'],
 					prepare: { strategy: 'managed' },
 					promote: {
-						approval: 'required',
+						publishWhen: 'approved-in-beepboop',
 						workflow: { file: 'publish.yml', publications: ['pkg:npm/widget', 'pkg:npm/gadget'] },
 					},
 				},

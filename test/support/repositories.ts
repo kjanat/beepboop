@@ -1,5 +1,6 @@
 import type { FakeGitHub, Repository } from '@root/test/support/github.ts';
 import { Effect, Schema, Struct } from 'effect';
+import { publishWhenNames } from '@/domain/setup-terms.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -103,11 +104,11 @@ export function widgetConfiguration(approval: 'required' | 'merge' | 'push' = 'r
 		streams: {
 			main: {
 				packages: ['pkg:npm/widget'],
-				required: ['pkg:npm/widget'],
+				mustPublish: ['pkg:npm/widget'],
 				credentials: ['npm-token'],
 				prepare: { strategy: 'managed' },
 				promote: {
-					approval,
+					publishWhen: publishWhenNames[approval],
 					workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] },
 				},
 			},

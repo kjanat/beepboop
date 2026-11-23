@@ -16,6 +16,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Schema } from 'effect';
 import type { Execution } from '@/automation/types';
+import { publishWhenNames } from '@/domain/setup-terms.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 type Approval = 'required' | 'merge' | 'push';
@@ -31,10 +32,10 @@ function taggedConfiguration(approval: Approval, lint = false) {
 	configuration.streams.main = {
 		...main,
 		credentials: [],
-		prepare: { strategy: 'managed', bump: 'pr' },
+		prepare: { strategy: 'managed', versionLands: 'via-version-pr' },
 		promote: {
 			...main.promote,
-			approval,
+			publishWhen: publishWhenNames[approval],
 			workflow: {
 				...main.promote.workflow,
 				refs: { phase: 'version', prefix: 'v' },

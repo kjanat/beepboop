@@ -16,7 +16,8 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import type { Execution } from '@/automation/types';
-import type { ReleaseStart, VersionBump } from '@/domain/release-start.ts';
+import type { ApprovalPolicy, ReleaseStart, VersionBump } from '@/domain/release-start.ts';
+import { publishWhenNames, versionLandsNames, versionScopeNames } from '@/domain/setup-terms.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -44,7 +45,7 @@ const execution = looseStruct({ id: Schema.String, operation: Schema.String, sta
 async function configured(
 	start: ReleaseStart[],
 	bump?: VersionBump,
-	approval = 'required',
+	approval: ApprovalPolicy = 'required',
 	versioning: 'workspace' | 'independent' = 'workspace',
 ) {
 	const repository = widget(world.github);
@@ -53,10 +54,10 @@ async function configured(
 	configuration.streams.main = {
 		...configuration.streams.main,
 		credentials: [],
-		start,
-		versioning,
-		prepare: { strategy: 'managed', ...(bump ? { bump } : {}) },
-		promote: { ...configuration.streams.main.promote, approval },
+		startFrom: start.filter(entry => entry.via === 'action'),
+		versionScope: versionScopeNames[versioning],
+		prepare: { strategy: 'managed', ...(bump ? { versionLands: versionLandsNames[bump] } : {}) },
+		promote: { ...configuration.streams.main.promote, publishWhen: publishWhenNames[approval] },
 	};
 	const head = world.github.push(
 		repository,
@@ -737,7 +738,7 @@ test('a tag-based dashboard start promotes the reviewed version after its versio
 	configuration.managers = ['workflow'];
 	const stream = configuration.streams.main;
 	stream.packages = [];
-	stream.required = [];
+	stream.mustPublish = [];
 	stream.versionSource = { kind: 'tags', prefix: 'v' };
 	stream.versionFiles = [{ path: 'package.json', format: 'json', key: ['version'] }];
 	stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
@@ -771,13 +772,13 @@ test('a tag-based dashboard start promotes the reviewed version after its versio
 	]);
 });
 
-async function taggedWithPolicy(approval: string, bump: VersionBump) {
+async function taggedWithPolicy(approval: ApprovalPolicy, bump: VersionBump) {
 	const { repository, api } = await configured([], bump, approval);
 	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
 	configuration.managers = ['workflow'];
 	const stream = configuration.streams.main;
 	stream.packages = [];
-	stream.required = [];
+	stream.mustPublish = [];
 	stream.versionSource = { kind: 'tags', prefix: 'v' };
 	stream.versionFiles = [{ path: 'package.json', format: 'json', key: ['version'] }];
 	stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };
@@ -1013,7 +1014,6 @@ test.each(['tag-based', 'manifest'])(
 		const { repository, api } = await configured([{ via: 'cli' }]);
 		const configuration = editableConfiguration();
 		const stream = configuration.streams.main;
-		stream.start = [{ via: 'cli' }];
 		if (kind === 'tag-based') {
 			stream.versionSource = { kind: 'tags', prefix: 'v' };
 			stream.promote.workflow.refs = { phase: 'version', prefix: 'v' };

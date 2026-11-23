@@ -19,6 +19,7 @@ eachWorld(created => {
 });
 
 const configurationPath = '.github/beepboop.json';
+const releaseBox = '<!-- beepboop:release-after-merge --> Release after merge';
 const updateBranch = 'automation/setup-update';
 
 async function managed(): Promise<{ repository: Repository; canonical: string }> {
@@ -211,6 +212,127 @@ test('a refreshed format PR that is closed is not reopened', async () => {
 	repository.refs.delete(`heads/${updateBranch}`);
 	await tick();
 	expect(setupPulls(repository).map(entry => entry.state)).toEqual(['closed']);
+});
+
+async function handConfigured(): Promise<{ repository: Repository; canonical: string }> {
+	const configured = await managed();
+	await world.db.prepare('DELETE FROM onboarding WHERE repository_id=?').bind(configured.repository.id).run();
+	return configured;
+}
+const savedDocument = looseStruct({
+	choices: Schema.optional(Schema.Unknown),
+	formatOnly: Schema.optional(Schema.Boolean),
+});
+async function onboarding(repository: Repository) {
+	const row = decodeSync(
+		mutableStruct({ document: Schema.String }),
+		await world.db.prepare('SELECT document FROM onboarding WHERE repository_id=?').bind(repository.id).first(),
+	);
+	return decodeSync(savedDocument, JSON.parse(row.document));
+}
+test('an outdated configuration without saved choices gets one format PR with auto-merge', async () => {
+	const { repository, canonical } = await handConfigured();
+	repository.allowAutoMerge = true;
+	const workflow = world.github.file(repository, '.github/workflows/release.yml');
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	await tick();
+	const pulls = setupPulls(repository);
+	expect(pulls.map(pull => [pull.state, pull.autoMerge, pull.comments])).toEqual([
+		['open', 'SQUASH', [setupAutoMerge.enabled('squash')]],
+	]);
+	expect(world.github.file(repository, configurationPath, updateBranch)).toBe(canonical);
+	expect(world.github.file(repository, '.github/workflows/release.yml', updateBranch)).toBe(workflow);
+	const saved = await onboarding(repository);
+	expect([saved.choices, saved.formatOnly]).toEqual([undefined, true]);
+});
+
+test('an onboarding record without choices gets a format PR', async () => {
+	const { repository, canonical } = await managed();
+	repository.allowAutoMerge = true;
+	await world.db.prepare('UPDATE onboarding SET document=? WHERE repository_id=?').bind(
+		JSON.stringify({ url: `https://github.com/${repository.name}/pull/1`, content: canonical }),
+		repository.id,
+	).run();
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	expect(setupPulls(repository).map(pull => [pull.state, pull.autoMerge])).toEqual([['open', 'SQUASH']]);
+	expect(world.github.file(repository, configurationPath, updateBranch)).toBe(canonical);
+});
+
+test('a canonical configuration without saved choices gets no setup PR', async () => {
+	const { repository } = await handConfigured();
+	repository.allowAutoMerge = true;
+	await tick();
+	expect(setupPulls(repository)).toEqual([]);
+});
+
+test('a closed format PR without saved choices is not reopened', async () => {
+	const { repository } = await handConfigured();
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	const [pull] = setupPulls(repository);
+	if (!pull) throw new Error('Missing format PR');
+	pull.state = 'closed';
+	repository.refs.delete(`heads/${updateBranch}`);
+	await tick();
+	expect(setupPulls(repository).map(entry => entry.state)).toEqual(['closed']);
+});
+
+test('an open setup PR without an onboarding record gets no second PR', async () => {
+	const { repository } = await handConfigured();
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	const [pull] = setupPulls(repository);
+	if (!pull) throw new Error('Missing format PR');
+	await world.db.prepare('DELETE FROM onboarding WHERE repository_id=?').bind(repository.id).run();
+	await tick();
+	expect(setupPulls(repository).map(entry => [entry.number, entry.head.sha])).toEqual([
+		[pull.number, pull.head.sha],
+	]);
+	const failed = await world.db.prepare("SELECT action FROM audit WHERE action='repository.setup.failed'").all();
+	expect(failed.results).toEqual([]);
+});
+
+test('an unparsable configuration without saved choices gets no setup PR and no failure', async () => {
+	const { repository } = await handConfigured();
+	world.github.push(repository, { [configurationPath]: '{ "streams": ' }, 'Broken configuration');
+	await tick();
+	expect(setupPulls(repository)).toEqual([]);
+	const failed = await world.db.prepare("SELECT action FROM audit WHERE action='repository.setup.failed'").all();
+	expect(failed.results).toEqual([]);
+});
+
+test('an open format PR without saved choices follows a later change to the file', async () => {
+	const { repository } = await handConfigured();
+	repository.allowAutoMerge = true;
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	const [pull] = setupPulls(repository);
+	if (!pull) throw new Error('Missing format PR');
+	expect(pull.body).toContain(`- [ ] ${releaseBox}`);
+	pull.body = pull.body.replace(`- [ ] ${releaseBox}`, `- [x] ${releaseBox}`);
+	rewrite(repository, configuration => {
+		const parsed = decodeSync(streamStarts, configuration);
+		return { ...configuration, streams: { main: { ...parsed.streams.main, startFrom: [{ via: 'dashboard' }] } } };
+	});
+	await tick();
+	expect(setupPulls(repository).map(entry => [entry.state, entry.autoMerge])).toEqual([['open', 'SQUASH']]);
+	expect(pull.body).toContain(`- [x] ${releaseBox}`);
+	const proposed = world.github.file(repository, configurationPath, updateBranch) ?? '{}';
+	expect(decodeSync(streamStarts, JSON.parse(proposed)).streams.main.startFrom).toEqual([]);
+	expect(proposed).not.toContain('"versioning"');
+});
+
+test('a format PR for a repository with saved choices carries the setup proposal', async () => {
+	const { repository } = await managed();
+	rewrite(repository, legacyConfiguration);
+	await tick();
+	const [pull] = setupPulls(repository);
+	expect(pull?.body).toContain('<!-- beepboop:choice:');
+	const saved = await onboarding(repository);
+	expect(saved.formatOnly).toBeUndefined();
+	expect(saved.choices).toBeDefined();
 });
 
 function rateLimitAutoMerge(times: number): void {

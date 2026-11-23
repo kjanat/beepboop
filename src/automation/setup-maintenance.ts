@@ -1,11 +1,18 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
 import { discover } from '@/automation/managers';
 import { object } from '@/automation/managers/helpers';
 import { pullRequest } from '@/automation/preparation-pull-requests';
-import { previewSetup, releaseAfterMerge, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
+import {
+	previewSetup,
+	releaseAfterMerge,
+	releaseAfterMergeBox,
+	setupBody,
+	setupOptions,
+	withRegistryStatus,
+} from '@/automation/setup';
 import { marked } from '@/automation/setup-body';
-import { setupBranch, setupTitle } from '@/automation/setup-changes';
+import { changeDetails, setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import {
 	autoMergeSetup,
@@ -35,6 +42,7 @@ import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
 import { record } from '@/kernel/schema/result.ts';
 import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
+import { formatJson, json } from '@/kernel/text/json.ts';
 import { parse, replaceDocument, sql } from '@/persistence/d1/database';
 import { documentRow } from '@/persistence/d1/document-row';
 
@@ -120,11 +128,14 @@ export function maintainSetup(
 			Schema.NullOr(documentRow),
 			yield* db.first('SELECT document FROM onboarding WHERE repository_id=?', id),
 		);
-		if (!row) return;
+		if (!row) return yield* formatSetup(store, gateway, snapshot, {}, undefined);
 		const saved = yield* Effect.fromResult(record(yield* fromJson(row.document)));
 		const pull = yield* openSetupPull(gateway, name, id);
 		if (!pull && !requested) return yield* migrateSetup(store, gateway, snapshot, saved, row.document, publishing);
 		if (!pull || (requested && pull.number !== requested.number)) return;
+		if (!requested && saved.formatOnly === true && !savedSetup(saved).saved) {
+			return yield* formatSetup(store, gateway, snapshot, saved, row.document, pull);
+		}
 		const generated = yield* generatedFiles(gateway, name, id, pull.head);
 		if (!generated && saved.head !== pull.head) return;
 		const previous = generated ?? (yield* fromSync(() => setupEdits(saved)));
@@ -299,7 +310,8 @@ function migrateSetup(
 		const { name, id } = snapshot.repository;
 		const source = snapshot.files['.github/beepboop.json'];
 		const choices = savedSetup(saved).saved;
-		if (source === undefined || !choices) return;
+		if (source === undefined) return;
+		if (!choices) return yield* formatSetup(store, gateway, snapshot, saved, document);
 		const raw = yield* fromSync((): unknown => JSON.parse(source));
 		const stored = yield* store.repository(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
@@ -355,6 +367,71 @@ function migrateSetup(
 		);
 	});
 }
+const formatSetup = Effect.fn('formatSetup')(function*(
+	store: Store,
+	gateway: RepositoryGateway,
+	snapshot: Snapshot,
+	saved: Record<string, unknown>,
+	document: string | undefined,
+	pull?: { number: number; head: string; branch: string; body: string },
+): Effect.fn.Return<void, DomainError> {
+	const { name, id } = snapshot.repository;
+	const source = snapshot.files['.github/beepboop.json'];
+	if (source === undefined) return;
+	const parsed = Result.try((): unknown => JSON.parse(source));
+	if (Result.isFailure(parsed)) return;
+	const raw = parsed.success;
+	const stored = yield* store.repository(id);
+	const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
+	if (!outdatedConfiguration(raw, inventory.packages)) return;
+	const canonical = canonicalConfiguration(raw, inventory.packages);
+	const format = yield* fromPromise(() => sha256Hex(JSON.stringify(canonical)));
+	if (saved.formatMigration === format) return;
+	if (!pull && document === undefined && (yield* openSetupPull(gateway, name, id))) return;
+	const after = formatJson(yield* Effect.fromResult(json(canonical)));
+	const edits = [{ path: '.github/beepboop.json', before: source, after }];
+	const branch = pull?.branch ?? setupBranch(snapshot);
+	const head = pull ? pull.head : yield* setupHead(gateway, name, id, branch);
+	const result = yield* pullRequest(gateway, {
+		snapshot,
+		branch,
+		title: setupTitle(branch, edits),
+		body: `Beepboop rewrites \`.github/beepboop.json\` in the current configuration format.\n\n${
+			releaseAfterMergeBox(pull ? releaseAfterMerge(pull.body) : false)
+		}\n\n${changeDetails(edits)}\n`,
+		edits,
+		expectedHead: head ?? undefined,
+		setupEdits: pull ? setupEdits(saved) : [],
+		existingPull: pull?.number,
+		coAuthored: true,
+	});
+	const next = {
+		...saved,
+		...result,
+		sourceSha: snapshot.sha,
+		content: after,
+		edits,
+		formatMigration: format,
+		formatOnly: true,
+	};
+	const db = sql(store.db);
+	yield* document === undefined
+		? db.run(
+			'INSERT INTO onboarding(repository_id,document) VALUES(?,?) ON CONFLICT(repository_id) DO NOTHING',
+			id,
+			JSON.stringify(next),
+		)
+		: replaceDocument(db, 'onboarding', 'repository_id', id, document, next);
+	if (pull) {
+		yield* store.audit('beepboop', 'repository.setup.refreshed', `${name} ${snapshot.sha} ${result.url}`);
+		return;
+	}
+	yield* store.audit('beepboop', 'repository.setup.migrated', `${name} ${snapshot.sha} ${result.url}`);
+	yield* autoMergeSetup(gateway, name, id, result.url, edits, canonical).pipe(
+		retryTransient<DomainError>({ attempts: 3, delay: 1000, while: error => error.problem.code === 'upstream' }),
+		logRecovered('setup.auto-merge-failed', { repository: name, url: result.url }),
+	);
+});
 export function currentOptions(
 	store: Store,
 	gateway: RepositoryGateway,

@@ -13,7 +13,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { behaviourChanges } from '@/automation/setup-changes';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
-import { versionPrMergeSentences } from '@/domain/setup-terms.ts';
+import { versionPrMergeSentences, versionScopeNames } from '@/domain/setup-terms.ts';
 import { runCard } from '@/server/views/runs';
 
 let world: World;
@@ -47,7 +47,7 @@ async function requested(
 	configuration.streams.main = {
 		...configuration.streams.main,
 		credentials: [],
-		versioning,
+		versionScope: versionScopeNames[versioning],
 		prepare: { ...prepare, versionPrMerge: merge },
 	};
 	const head = world.github.push(repository, {
@@ -66,7 +66,12 @@ async function requested(
 }
 
 async function managed(merge: VersionPrMerge, allowAutoMerge = true, override?: VersionPrMerge) {
-	const opened = await versionPr(merge, allowAutoMerge, { strategy: 'managed', bump: 'pr' }, override);
+	const opened = await versionPr(
+		merge,
+		allowAutoMerge,
+		{ strategy: 'managed', versionLands: 'via-version-pr' },
+		override,
+	);
 	await world.wait(16_000);
 	return opened;
 }
@@ -142,9 +147,9 @@ test('a release leaves its version PR for you although the stream auto-merges', 
 
 for (
 	const [release, prepare, manifest] of [
-		['commits its version', { strategy: 'managed', bump: 'commit' }, '1.0.0'],
+		['commits its version', { strategy: 'managed', versionLands: 'via-direct-commit' }, '1.0.0'],
 		['prepares in its own workflow', { strategy: 'workflow', workflow: { file: 'prepare.yml' } }, '1.0.0'],
-		['already carries its version', { strategy: 'managed', bump: 'pr' }, '1.0.1'],
+		['already carries its version', { strategy: 'managed', versionLands: 'via-version-pr' }, '1.0.1'],
 	] as const
 ) {
 	test(`a release that ${release} refuses a version PR merge and prepares nothing`, async () => {
@@ -158,7 +163,10 @@ for (
 }
 
 test('preparing the same release again refuses another version PR merge and keeps the first', async () => {
-	const { repository, api, prepared } = await requested('manual', true, { strategy: 'managed', bump: 'pr' }, 'manual');
+	const { repository, api, prepared } = await requested('manual', true, {
+		strategy: 'managed',
+		versionLands: 'via-version-pr',
+	}, 'manual');
 	const request = { repositoryId: repository.id, stream: 'main', version: '1.0.1' };
 	const again = await prepareRelease(api, request, { versionPrMerge: 'manual' });
 	expect([again.prepared.status, text(again.prepared.body, 'id')]).toEqual([200, text(prepared.body, 'id')]);
@@ -305,7 +313,7 @@ for (const start of [false, true]) {
 			const { repository, api, prepared } = await requested(
 				'manual',
 				true,
-				{ strategy: 'managed', bump: 'pr' },
+				{ strategy: 'managed', versionLands: 'via-version-pr' },
 				initial,
 				'1.0.0',
 				start ? 'workspace' : 'independent',
