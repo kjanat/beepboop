@@ -6,6 +6,7 @@ import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegis
 import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
 import { generatedFiles, openSetupPull, setupHead } from '@/automation/setup-pull-requests';
+import { repositorySnapshot } from '@/automation/snapshot';
 import { routes } from '@/contract/routes';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
@@ -148,7 +149,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		yield* reference(input.repository);
 		const name = yield* ownerName(context, input.repository);
 		const id = yield* service.gateway.identify(name);
-		const snapshot = yield* service.gateway.snapshot(name, id);
+		const snapshot = yield* repositorySnapshot(service.gateway, name, id);
 		const raw = yield* fromJson(snapshot.files['.github/beepboop.json'] ?? '{}');
 		const resolved = yield* resolveConfiguration(raw, ref => service.gateway.preset(ref)).pipe(
 			Effect.mapError(error =>

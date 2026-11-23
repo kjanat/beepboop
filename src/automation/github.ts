@@ -18,11 +18,6 @@ import {
 	userSchema,
 	workflowRunSchema,
 } from '@/automation/github-resources';
-import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
-import { platformFetch } from '@/automation/managers/registry';
-import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/automation/release-graph/calls';
-import { marked } from '@/automation/setup-body';
-import { buildSnapshot } from '@/automation/snapshot';
 import type { BotIdentity } from '@/automation/token';
 import { githubApiVersion } from '@/contract/http';
 import type { Snapshot } from '@/domain/inventory.ts';
@@ -33,6 +28,8 @@ import { fromPromise, fromSync, toDomainError } from '@/kernel/errors/classify.t
 import { legacyDiagnostic } from '@/kernel/errors/diagnostics.ts';
 import { DomainError, domainError, invalid, precondition, upstream } from '@/kernel/errors/domain-error.ts';
 import { responseBytes, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import { platformFetch } from '@/kernel/http/fetcher.ts';
 import { parseRetryAfter } from '@/kernel/http/http-date.ts';
 import { ioConcurrency, retryTransient } from '@/kernel/http/retry.ts';
 import { decode, sha, textSchema } from '@/kernel/schema/result.ts';
@@ -41,25 +38,24 @@ import { looseStruct, mutableArray, mutableStruct } from '@/kernel/schema/struct
 
 type Permission = Record<string, 'read' | 'write'>;
 const missingInstallationPermissions = 'GitHub App installation lacks required permissions';
-const workflowDirectory = '.github/workflows/';
 const ownerLogins = new Map<number, string>();
 const botIdentities = new Map<string, BotIdentity>();
-const contentEditsSchema = mutableStruct({
-	data: mutableStruct({
-		repository: mutableStruct({
-			pullRequest: mutableStruct({
-				userContentEdits: mutableStruct({
-					nodes: mutableArray(
-						mutableStruct({
-							editor: Schema.NullOr(mutableStruct({ login: Schema.String })),
-							diff: Schema.NullOr(Schema.String),
-						}),
-					),
-				}),
-			}),
-		}),
-	}),
-});
+export interface VerificationContext {
+	repository: string;
+	github(path: string): Effect.Effect<unknown, DomainError>;
+}
+export interface TreeEntry {
+	path: string;
+	type: string;
+	mode: string;
+}
+export interface SnapshotSource {
+	repository: Snapshot['repository'];
+	sha: string;
+	entries: readonly TreeEntry[];
+	read(path: string): Effect.Effect<string | null, DomainError>;
+	tags(prefixes: readonly string[]): Effect.Effect<string[], DomainError>;
+}
 interface TagTarget {
 	__typename: string;
 	oid: string;
@@ -578,12 +574,7 @@ export class RepositoryGateway {
 			);
 		});
 	}
-	snapshot(
-		name: string,
-		id: number,
-		revision?: string,
-		extraPaths: string[] = [],
-	): Effect.Effect<Snapshot, DomainError> {
+	snapshotSource(name: string, id: number, revision?: string): Effect.Effect<SnapshotSource, DomainError> {
 		const self = this;
 		return Effect.gen(function*() {
 			const token = yield* self.token(name, id);
@@ -597,13 +588,14 @@ export class RepositoryGateway {
 			if (tree.truncated) {
 				return yield* precondition('Repository tree truncated; discovery requires complete input');
 			}
-			return yield* buildSnapshot({
+			const source: SnapshotSource = {
 				repository: { id, name, defaultBranch },
 				sha: commitSha,
 				entries: tree.tree,
 				read: path => self.file(name, path, commitSha, token),
 				tags: prefixes => self.tags(name, prefixes, token),
-			}, extraPaths);
+			};
+			return source;
 		});
 	}
 	private tags(name: string, prefixes: readonly string[], token: string): Effect.Effect<string[], DomainError> {
@@ -691,62 +683,6 @@ export class RepositoryGateway {
 			return comparison.status === 'identical' || comparison.status === 'ahead';
 		});
 	}
-	unchangedSince(
-		repository: string,
-		repositoryId: number,
-		commit: string,
-		target: string,
-		paths: ReadonlySet<string>,
-	): Effect.Effect<boolean, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			if (commit === target) return true;
-			const token = yield* self.token(repository, repositoryId, { contents: 'read' });
-			const comparison = yield* self.read(
-				comparisonSchema,
-				`/repos/${repository}/compare/${yield* Effect.fromResult(sha(commit))}...${yield* Effect.fromResult(
-					sha(target),
-				)}`,
-				token,
-			);
-			if (comparison.status !== 'ahead' || comparison.files.length >= 300) return false;
-			const changed = comparison.files.map(file => String(file.filename));
-			if (changed.some(path => paths.has(path))) return false;
-			if (!changed.some(path => path.startsWith(workflowDirectory))) return true;
-			const called = yield* self.calledWorkflows(
-				repository,
-				[...paths].filter(path => path.startsWith(workflowDirectory)),
-				target,
-				token,
-			);
-			return !changed.some(path => called.has(path));
-		});
-	}
-	private calledWorkflows(
-		repository: string,
-		roots: string[],
-		commit: string,
-		token: string,
-	): Effect.Effect<ReadonlySet<string>, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			const seen = new Set<string>();
-			const queue = [...roots];
-			for (let path = queue.shift(); path !== undefined && seen.size < callLimit; path = queue.shift()) {
-				if (seen.has(path)) continue;
-				seen.add(path);
-				const source = yield* self.file(repository, path, commit, token);
-				if (source === null) continue;
-				for (const { document } of workflowDocuments([[path, source]])) {
-					for (const [, job] of liveJobs(document)) {
-						const callee = typeof job.uses === 'string' ? ownWorkflow(job.uses, repository) : undefined;
-						if (callee) queue.push(`${workflowDirectory}${callee.file}`);
-					}
-				}
-			}
-			return seen;
-		});
-	}
 	mergeCommit(
 		repository: string,
 		number: string,
@@ -765,33 +701,6 @@ export class RepositoryGateway {
 				if (events.length < 100) return undefined;
 			}
 			return undefined;
-		});
-	}
-	previousRender(
-		name: string,
-		number: number,
-		current: string,
-		token: string,
-	): Effect.Effect<string, DomainError> {
-		const self = this;
-		return Effect.gen(function*() {
-			if (marked(current) || !current.trim()) return current;
-			const [owner = '', repository = ''] = name.split('/');
-			const { data } = yield* self.read(
-				contentEditsSchema,
-				'/graphql',
-				token,
-				'POST',
-				{
-					query:
-						'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){userContentEdits(first:100){nodes{editor{login} diff}}}}}',
-					variables: { owner, name: repository, number },
-				},
-			);
-			const edits = data.repository.pullRequest.userContentEdits.nodes;
-			const bot = (yield* self.botIdentity).login.replace(/\[bot\]$/, '');
-			const render = edits.find(edit => edit.editor?.login === bot && typeof edit.diff === 'string');
-			return typeof render?.diff === 'string' ? render.diff : current;
 		});
 	}
 }

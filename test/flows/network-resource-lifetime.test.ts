@@ -8,7 +8,7 @@ import { goManager } from '@/automation/managers/go';
 import { jsrManager, setUpJsrPackage } from '@/automation/managers/jsr';
 import { npmLatest } from '@/automation/managers/npm';
 import { pypiManager } from '@/automation/managers/pypi';
-import type { Fetcher, Manager } from '@/automation/managers/registry';
+import type { Manager } from '@/automation/managers/registry';
 import { registryLayer } from '@/automation/managers/registry';
 import { verifyRegistry } from '@/automation/managers/verification';
 import { vscodeManager } from '@/automation/managers/vscode';
@@ -16,6 +16,7 @@ import type { Publication } from '@/automation/types';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseJson, scopedResponse } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 
 function openResponse(status: number, cancel: () => void) {
 	return new Response(new ReadableStream<Uint8Array>({ cancel }), { status });

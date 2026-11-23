@@ -1,9 +1,9 @@
 import { Effect } from 'effect';
-import type { Fetcher } from '@/automation/managers/registry';
-import { platformFetch } from '@/automation/managers/registry';
 import type { Outcome, Publication } from '@/automation/types';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import { responseBytes, responseJson } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import { platformFetch } from '@/kernel/http/fetcher.ts';
 import { sha256DigestPattern, sha256Hex } from '@/kernel/schema/ids.ts';
 import { record } from '@/kernel/schema/result.ts';
 

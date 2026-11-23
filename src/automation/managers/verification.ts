@@ -1,11 +1,12 @@
 import type { Scope } from 'effect';
 import { Effect, Result } from 'effect';
-import type { Fetcher, RegistryVersion } from '@/automation/managers/registry';
+import type { RegistryVersion } from '@/automation/managers/registry';
 import type { Outcome, Publication } from '@/automation/types';
 import { semver } from '@/domain/semver.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { ResponseReadError, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 
 export interface RegistryRequest {
 	method?: 'POST';

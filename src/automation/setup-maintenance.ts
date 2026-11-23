@@ -9,6 +9,7 @@ import { setupBranch, setupTitle } from '@/automation/setup-changes';
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import { generatedFiles, openSetupPull, setupHead, setupStatus } from '@/automation/setup-pull-requests';
 import type { SetupChoices } from '@/automation/setup-types';
+import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
 import { setupChoicesSchema } from '@/contract/setup';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
@@ -332,7 +333,7 @@ export function currentOptions(
 	publishing: PublishingAccess,
 ): Effect.Effect<ReturnType<typeof setupOptions>, DomainError> {
 	return Effect.gen(function*() {
-		const snapshot = yield* gateway.snapshot(repository.name, repository.id);
+		const snapshot = yield* repositorySnapshot(gateway, repository.name, repository.id);
 		const stored = yield* store.repository(repository.id);
 		const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
 		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(

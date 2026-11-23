@@ -1,8 +1,8 @@
 import { Effect } from 'effect';
 import { alreadyPrepared, applyVersionFiles, fileEdits } from '@/automation/editors';
+import type { VerificationContext } from '@/automation/github';
 import { managerRegistry } from '@/automation/managers/builtins';
-import type { Fetcher, ManagerRegistry, VerificationContext } from '@/automation/managers/registry';
-import { platformFetch } from '@/automation/managers/registry';
+import type { ManagerRegistry } from '@/automation/managers/registry';
 import { metadataDiagnostics } from '@/automation/package-metadata';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { Publication, ReleasePlan } from '@/automation/types';
@@ -16,6 +16,8 @@ import { parseVersionRequest } from '@/domain/version-request.ts';
 import { tagPrefix } from '@/domain/version-tags.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import { platformFetch } from '@/kernel/http/fetcher.ts';
 
 export { publicationOrder } from '@/domain/publication-order.ts';
 
@@ -103,7 +105,6 @@ export function planRelease(
 	});
 }
 
-export type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 export function canVerifyPublication(manager: ManagerName): boolean {
 	return managerSpec(manager).verifiable;
 }

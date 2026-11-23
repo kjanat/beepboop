@@ -4,7 +4,7 @@ import { TestClock } from 'effect/testing';
 import { exportJWK, generateKeyPair } from 'jose';
 import type { JwsKeyRequest, JwsKeyResolver } from 'micro509/jose';
 import { remoteKeys } from '@/automation/jwks';
-import type { Fetcher } from '@/automation/managers/registry';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 
 const endpoint = new URL('https://issuer.example/.well-known/jwks');
 let publicKey: JsonWebKey;

@@ -2,9 +2,9 @@ import { afterEach, expect, spyOn, test } from 'bun:test';
 import type { World } from '@root/test/support/world';
 import { eachWorld } from '@root/test/support/world';
 import { Effect } from 'effect';
-import type { Fetcher } from '@/automation/managers/registry';
-import { platformFetch } from '@/automation/managers/registry';
 import { applicationLayer } from '@/automation/service';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import { platformFetch } from '@/kernel/http/fetcher.ts';
 import { githubOutage } from '@/server/github-status.ts';
 
 let world: World;

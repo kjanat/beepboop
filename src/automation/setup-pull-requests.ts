@@ -1,7 +1,7 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/github';
 import { comparisonSchema, gitRefSchema, pullSchema, repositorySchema } from '@/automation/github-resources';
-import { placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
+import { marked, placeBlock, setupBlock, withStatus } from '@/automation/setup-body';
 import { setupBranches } from '@/automation/setup-changes';
 import type { Edit } from '@/domain/inventory.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -9,8 +9,51 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { decode, textSchema } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
-import { mutableArray } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
+const contentEditsSchema = mutableStruct({
+	data: mutableStruct({
+		repository: mutableStruct({
+			pullRequest: mutableStruct({
+				userContentEdits: mutableStruct({
+					nodes: mutableArray(
+						mutableStruct({
+							editor: Schema.NullOr(mutableStruct({ login: Schema.String })),
+							diff: Schema.NullOr(Schema.String),
+						}),
+					),
+				}),
+			}),
+		}),
+	}),
+});
+export function previousRender(
+	gateway: RepositoryGateway,
+	name: string,
+	number: number,
+	current: string,
+	token: string,
+): Effect.Effect<string, DomainError> {
+	return Effect.gen(function*() {
+		if (marked(current) || !current.trim()) return current;
+		const [owner = '', repository = ''] = name.split('/');
+		const { data } = yield* gateway.read(
+			contentEditsSchema,
+			'/graphql',
+			token,
+			'POST',
+			{
+				query:
+					'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){userContentEdits(first:100){nodes{editor{login} diff}}}}}',
+				variables: { owner, name: repository, number },
+			},
+		);
+		const edits = data.repository.pullRequest.userContentEdits.nodes;
+		const bot = (yield* gateway.botIdentity).login.replace(/\[bot\]$/, '');
+		const render = edits.find(edit => edit.editor?.login === bot && typeof edit.diff === 'string');
+		return typeof render?.diff === 'string' ? render.diff : current;
+	});
+}
 function generatedComparison(gateway: RepositoryGateway, name: string, head: string, token: string) {
 	return Effect.gen(function*() {
 		const base = (yield* gateway.read(repositorySchema, `/repos/${name}`, token)).default_branch;
@@ -139,7 +182,7 @@ export function setupStatus(
 			: placeBlock(
 				current,
 				setupBlock(proposal.body, status),
-				yield* gateway.previousRender(name, number, current, token),
+				yield* previousRender(gateway, name, number, current, token),
 			);
 		const title = proposal && proposal.title !== pull.title ? { title: proposal.title } : {};
 		if (body !== current || 'title' in title) {

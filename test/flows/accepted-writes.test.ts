@@ -14,6 +14,7 @@ import { Effect, Schema, Struct } from 'effect';
 import { RepositoryGateway } from '@/automation/github';
 import { pullSchema } from '@/automation/github-resources';
 import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
+import { repositorySnapshot } from '@/automation/snapshot';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -37,7 +38,7 @@ test('PR creation succeeds with a stale response head while all later GitHub rea
 	const repository = widget(world.github);
 	const background: Promise<void>[] = [];
 	const gateway = new RepositoryGateway(world.env, Number(world.env.OWNER_ID), fetch, work => background.push(work));
-	const snapshot = await Effect.runPromise(gateway.snapshot(repository.name, repository.id));
+	const snapshot = await Effect.runPromise(repositorySnapshot(gateway, repository.name, repository.id));
 	let created = false;
 	const after: string[] = [];
 	world.network.serve('api.github.com', async request => {
@@ -245,7 +246,7 @@ for (const when of ['before update', 'during update'] as const) {
 	test(`a preparation PR retargeted ${when} is rejected without metadata updates`, async () => {
 		const repository = widget(world.github);
 		const gateway = new RepositoryGateway(world.env, Number(world.env.OWNER_ID));
-		const snapshot = await Effect.runPromise(gateway.snapshot(repository.name, repository.id));
+		const snapshot = await Effect.runPromise(repositorySnapshot(gateway, repository.name, repository.id));
 		const created = await Effect.runPromise(pullRequest(gateway, {
 			snapshot,
 			branch: 'release/base',

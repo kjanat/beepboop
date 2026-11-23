@@ -1,6 +1,4 @@
 import { Clock, Effect, Result, Schema } from 'effect';
-import type { Fetcher } from '@/automation/managers/registry';
-import { platformFetch } from '@/automation/managers/registry';
 import type { Store } from '@/automation/store';
 import type { Vault } from '@/automation/vault';
 import { watchedPackageHref } from '@/contract/links';
@@ -10,6 +8,8 @@ import { notificationKinds, watchedRegistries } from '@/domain/catalog.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import { platformFetch } from '@/kernel/http/fetcher.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql } from '@/persistence/d1/database';

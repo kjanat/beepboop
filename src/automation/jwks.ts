@@ -2,8 +2,8 @@ import { Clock, Effect, Option } from 'effect';
 import type { Jwks, JwsKeyResolver } from 'micro509/jose';
 import { createJwksKeyResolver, DEFAULT_JWKS_LIMITS, parseJwks } from 'micro509/jose';
 import { failureResult } from 'micro509/result';
-import type { Fetcher } from '@/automation/managers/registry';
 import { cancelStream, scopedResponse } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 
 interface Snapshot {
 	readonly keys: Jwks;

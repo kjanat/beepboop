@@ -11,12 +11,12 @@ import type { JwsKeyResolver, VerifiedJwt, VerifyJwtOptions } from 'micro509/jos
 import { verifyJwt } from 'micro509/jose';
 import { cliAuthRoute, cliSubject } from '@/automation/cli-auth';
 import { remoteKeys } from '@/automation/jwks';
-import type { Fetcher } from '@/automation/managers/registry';
 import { base64, bytes } from '@/kernel/crypto/base64.ts';
 import { errorPage, fromJson, fromPromise, fromSync, recover, toDomainError } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { decodeRequest, forbidden, precondition, unauthenticated, upstream } from '@/kernel/errors/domain-error.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { loginSecretPattern } from '@/kernel/schema/ids.ts';
 import { integer, record, sha, text } from '@/kernel/schema/result.ts';

@@ -1,5 +1,6 @@
 import { Effect, Schema } from 'effect';
 import { createExecution } from '@/automation/execution';
+import { repositorySnapshot } from '@/automation/snapshot';
 import { issueWorkflowToken } from '@/automation/token';
 import type { Artifact, Execution, Publication } from '@/automation/types';
 import type { ClaimStep, NextStep, ReportStep } from '@/contract/ledger';
@@ -219,7 +220,8 @@ export const workflowEndpoints = {
 			const { gateway, store } = context.service;
 			const plan = execution.plan;
 			if (execution.operation !== 'prepare' || !plan) return yield* precondition('Execution has no preparation plan');
-			const source = yield* gateway.snapshot(
+			const source = yield* repositorySnapshot(
+				gateway,
 				execution.repository,
 				execution.repositoryId,
 				execution.sourceSha,

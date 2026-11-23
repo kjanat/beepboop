@@ -1,7 +1,7 @@
 import { Effect, Result } from 'effect';
+import type { VerificationContext } from '@/automation/github';
 import { cargoManager } from '@/automation/managers/cargo';
 import { object } from '@/automation/managers/helpers';
-import type { Fetcher, VerificationContext } from '@/automation/managers/registry';
 import { registryRequest } from '@/automation/managers/verification';
 import { disabled, expandStep } from '@/automation/release-graph/bindings';
 import { localAction } from '@/automation/release-graph/calls';
@@ -13,6 +13,7 @@ import { packageId } from '@/domain/package-identity.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseJson } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 
