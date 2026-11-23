@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
+import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
 import type { CheckJob } from '@/automation/deployment-jobs';
 import { checkJobs, deploys } from '@/automation/deployment-jobs';
 import type { DistributionFile } from '@/automation/distribution';
@@ -1263,12 +1264,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const execution = yield* this.get(id);
-				if (
-					!execution.workflow || execution.managed || execution.operation !== 'prepare' || !execution.plan
-					|| execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
-					|| execution.runId !== identity.runId || execution.runAttempt !== identity.attempt
-					|| execution.workflowSha !== identity.workflowSha
-				) return yield* precondition('Preparation run identity mismatch');
+				if (!execution.workflow || execution.managed || execution.operation !== 'prepare' || !execution.plan) {
+					return yield* precondition('Preparation run identity mismatch');
+				}
+				yield* WorkflowRunGuard.require(execution, identity, {
+					_tag: 'SameRun',
+					mismatch: 'Preparation run identity mismatch',
+				});
 				const ordered = [...edits].sort((a, b) => a.path.localeCompare(b.path));
 				if (execution.prepared && JSON.stringify(execution.prepared.edits) !== JSON.stringify(ordered)) {
 					return yield* precondition('Submitted preparation changed; create a new preparation');
@@ -1480,11 +1482,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const execution = yield* this.get(id);
 				const workflow = execution.workflow;
 				if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
-				if (
-					execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
-					|| execution.repository !== identity.repository || execution.runId !== identity.runId
-					|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
-				) return yield* precondition('Ref operation identity mismatch');
+				yield* WorkflowRunGuard.require(execution, identity, {
+					_tag: 'SameRunAndName',
+					mismatch: 'Ref operation identity mismatch',
+				});
 				const policy = workflow.refs;
 				const version = execution.version;
 				if (!policy || !version) return yield* precondition('No configured ref operation');
@@ -1743,11 +1744,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
 			if (!execution.workflow || execution.managed) return yield* precondition('Operation is not a workflow');
-			if (
-				execution.state !== 'running' || execution.repositoryId !== identity.repositoryId
-				|| execution.repository !== identity.repository || execution.runId !== identity.runId
-				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
-			) return yield* precondition('Release operation identity mismatch');
+			yield* WorkflowRunGuard.require(execution, identity, {
+				_tag: 'SameRunAndName',
+				mismatch: 'Release operation identity mismatch',
+			});
 			if (!publishesGithubRelease(execution)) {
 				return yield* precondition(`Add github-release:${execution.repository} to this operation's publications`);
 			}
@@ -2249,11 +2249,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): CoordinatorEffect<{ execution: Execution; holder: string }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const execution = yield* this.get(id);
-			if (
-				execution.repositoryId !== identity.repositoryId || execution.runId !== identity.runId
-				|| execution.runAttempt !== identity.attempt || execution.workflowSha !== identity.workflowSha
-				|| execution.state !== 'running'
-			) return yield* precondition('Publication identity mismatch');
+			yield* WorkflowRunGuard.require(execution, identity, {
+				_tag: 'SameRun',
+				mismatch: 'Publication identity mismatch',
+			});
 			return { execution, holder: `${identity.runId}:${identity.attempt}` };
 		});
 	}
@@ -2514,15 +2513,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const execution = yield* this.get(id);
 			const workflow = execution.workflow;
 			if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
-			if (
-				execution.repositoryId !== identity.repositoryId
-				|| execution.runId !== identity.runId
-				|| execution.runAttempt !== identity.attempt
-				|| execution.workflowSha !== identity.workflowSha
-				|| execution.state !== 'running'
-			) {
-				return yield* precondition('Report identity mismatch');
-			}
+			yield* WorkflowRunGuard.require(execution, identity, { _tag: 'SameRun', mismatch: 'Report identity mismatch' });
 			for (const artifact of artifacts) {
 				if (artifact.runId !== identity.runId) return yield* precondition('Artifact producer mismatch');
 				if (

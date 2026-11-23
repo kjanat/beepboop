@@ -2,7 +2,7 @@ import { Clock, Effect, Result } from 'effect';
 import type { JwsKeyResolver } from 'micro509/jose';
 import { verified } from '@/auth/jwt.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { forbidden, unauthenticated } from '@/kernel/errors/domain-error.ts';
+import { forbidden, precondition, unauthenticated } from '@/kernel/errors/domain-error.ts';
 import { integer, sha, text } from '@/kernel/schema/result.ts';
 
 export interface RunIdentity {
@@ -68,3 +68,31 @@ export function workflowIdentity(
 		return identity;
 	});
 }
+
+export interface RunBinding {
+	readonly state: string;
+	readonly repositoryId: number;
+	readonly repository: string;
+	readonly runId?: number | undefined;
+	readonly runAttempt?: number | undefined;
+	readonly workflowSha?: string | undefined;
+}
+
+export type RunExpectation =
+	| { readonly _tag: 'SameRun'; readonly mismatch: string }
+	| { readonly _tag: 'SameRunAndName'; readonly mismatch: string };
+
+export const WorkflowRunGuard = {
+	require: Effect.fnUntraced(function*(
+		binding: RunBinding,
+		identity: RunIdentity,
+		expectation: RunExpectation,
+	): Effect.fn.Return<void, DomainError> {
+		if (
+			binding.state !== 'running' || binding.repositoryId !== identity.repositoryId
+			|| (expectation._tag === 'SameRunAndName' && binding.repository !== identity.repository)
+			|| binding.runId !== identity.runId || binding.runAttempt !== identity.attempt
+			|| binding.workflowSha !== identity.workflowSha
+		) return yield* precondition(expectation.mismatch);
+	}),
+};
