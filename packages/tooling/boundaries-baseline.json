@@ -136,10 +136,6 @@
 		"specifier": "@/automation/types"
 	},
 	{
-		"file": "packages/notifications/src/notification.ts",
-		"specifier": "@/contract/links"
-	},
-	{
 		"file": "packages/notifications/src/package-watch.ts",
 		"specifier": "@/automation/types"
 	},
