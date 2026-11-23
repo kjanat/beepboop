@@ -33,7 +33,13 @@ const publishedActions = Effect.fnUntraced(function*(
 	root: string,
 	env: NodeJS.ProcessEnv,
 ): Effect.fn.Return<void, ToolFailure> {
-	const listing = yield* git(root, ['ls-files', '--stage', '--', 'actions/*action.yml', 'actions/*action.yaml'], env);
+	const listing = yield* git(root, [
+		'ls-files',
+		'--stage',
+		'--',
+		':(glob)actions/**/action.yml',
+		':(glob)actions/**/action.yaml',
+	], env);
 	for (const line of listing.split('\n').filter(Boolean)) {
 		const [entry = '', path = ''] = line.split('\t');
 		const [mode = '', blob = ''] = entry.split(' ');
