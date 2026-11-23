@@ -1,33 +1,21 @@
-import { Clock, Effect, Schema } from 'effect';
+import { Clock, Effect } from 'effect';
 import { jsrLatest } from '@/automation/managers/jsr';
 import { npmLatest } from '@/automation/managers/npm';
 import type { RegistryVersion } from '@/automation/managers/registry';
-import type { Store } from '@/automation/store';
 import type { AutomationEvent } from '@/automation/types';
-import type { WatchedPackage } from '@/automation/watchlist';
-import { watchlist } from '@/automation/watchlist';
 import type { WatchedRegistry } from '@/domain/catalog.ts';
-import { watchedRegistries } from '@/domain/catalog.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
-import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import { WatchedPackages } from '@/notifications/adapters/d1/watched-packages.ts';
 import type { Notifications } from '@/notifications/delivery.ts';
 import { versionChanged } from '@/notifications/notification.ts';
-import { parse, sql } from '@/persistence/d1/database';
-
-const watchedRow = mutableStruct({
-	registry: Schema.Literals(watchedRegistries),
-	name: Schema.String,
-	manual: Schema.Finite,
-	version: Schema.NullOr(Schema.String),
-	checked_at: Schema.NullOr(Schema.Finite),
-	changed_at: Schema.NullOr(Schema.Finite),
-	error: Schema.NullOr(Schema.String),
-	awaiting_release: Schema.Finite,
-});
+import type { WatchedPackage } from '@/notifications/watchlist.ts';
+import { watchlist } from '@/notifications/watchlist.ts';
+import type { Sql, SqlDatabase } from '@/persistence/d1/database';
+import { sql } from '@/persistence/d1/database';
 
 export interface PackageWatch extends WatchedPackage {
 	manual: boolean;
@@ -48,15 +36,12 @@ function key(registry: WatchedRegistry, name: string): string {
 }
 
 export function packageWatches(
-	store: Store,
+	db: SqlDatabase | Sql,
 	repositories: RepositoryRecord[],
 ): Effect.Effect<PackageWatch[], DomainError> {
 	return Effect.gen(function*() {
 		const listed = new Map(watchlist(repositories).map(entry => [key(entry.registry, entry.name), entry]));
-		const rows = yield* parse(
-			mutableArray(watchedRow),
-			yield* sql(store.db).all('SELECT * FROM watched_packages ORDER BY registry, name'),
-		);
+		const rows = yield* new WatchedPackages(sql(db)).list();
 		const watches = new Map<string, PackageWatch>();
 		for (const row of rows) {
 			const entry = listed.get(key(row.registry, row.name));
@@ -82,7 +67,7 @@ export function packageWatches(
 }
 
 export function addWatch(
-	store: Store,
+	db: SqlDatabase | Sql,
 	notifications: Notifications,
 	registry: WatchedRegistry,
 	name: string,
@@ -91,29 +76,22 @@ export function addWatch(
 	return Effect.gen(function*() {
 		const clock = yield* Clock.Clock;
 
-		const db = sql(store.db);
-		const inserted = yield* db.run(
-			'INSERT OR IGNORE INTO watched_packages (registry, name, manual, added_at) VALUES (?, ?, ?, ?)',
-			registry,
-			name,
-			Number(manual),
-			clock.currentTimeMillisUnsafe(),
-		);
-		if (inserted.meta.changes > 0) {
+		const watched = new WatchedPackages(sql(db));
+		const inserted = yield* watched.insert(registry, name, manual, clock.currentTimeMillisUnsafe());
+		if (inserted) {
 			yield* notifications.subscribeNew(registry, name);
 		} else if (manual) {
-			yield* db.run('UPDATE watched_packages SET manual = 1 WHERE registry = ? AND name = ?', registry, name);
+			yield* watched.markManual(registry, name);
 		}
 	});
 }
 
 export function removeManualWatch(
-	store: Store,
+	db: SqlDatabase | Sql,
 	registry: WatchedRegistry,
 	name: string,
 ): Effect.Effect<void, DomainError> {
-	return sql(store.db).run('UPDATE watched_packages SET manual = 0 WHERE registry = ? AND name = ?', registry, name)
-		.pipe(Effect.asVoid);
+	return new WatchedPackages(sql(db)).clearManual(registry, name);
 }
 
 export function packageEventId(registry: WatchedRegistry, name: string, version: string): string {
@@ -121,7 +99,7 @@ export function packageEventId(registry: WatchedRegistry, name: string, version:
 }
 
 export function pollPackages(
-	store: Store,
+	db: SqlDatabase | Sql,
 	repositories: RepositoryRecord[],
 	request: Fetcher,
 	emit: (event: AutomationEvent) => Effect.Effect<void, DomainError>,
@@ -130,21 +108,20 @@ export function pollPackages(
 	return Effect.gen(function*() {
 		const clock = yield* Clock.Clock;
 
-		const db = sql(store.db);
+		const watched = new WatchedPackages(sql(db));
 		const now = clock.currentTimeMillisUnsafe();
-		for (const watch of yield* packageWatches(store, repositories)) {
-			yield* addWatch(store, notifications, watch.registry, watch.name, false);
+		for (const watch of yield* packageWatches(db, repositories)) {
+			yield* addWatch(db, notifications, watch.registry, watch.name, false);
 			const latest = yield* lookups[watch.registry](watch.name, request).pipe(
 				recover(error => Effect.succeed<RegistryVersion>({ kind: 'failed', url: '', reason: decodeError(error) })),
 			);
 			if (latest.kind !== 'published') {
-				yield* db.run(
-					'UPDATE watched_packages SET checked_at = ?, error = ?, awaiting_release = CASE WHEN ? AND version IS NULL THEN 1 ELSE awaiting_release END WHERE registry = ? AND name = ?',
-					now,
-					latest.kind === 'missing' ? 'Not published' : latest.reason,
-					Number(latest.kind === 'missing'),
+				yield* watched.unpublished(
 					watch.registry,
 					watch.name,
+					now,
+					latest.kind === 'missing' ? 'Not published' : latest.reason,
+					latest.kind === 'missing',
 				);
 				continue;
 			}
@@ -161,15 +138,7 @@ export function pollPackages(
 					versionChanged(id, watch.registry, watch.name, watch.version ?? null, latest.version),
 				);
 			}
-			yield* db.run(
-				'UPDATE watched_packages SET version = ?, checked_at = ?, error = NULL, awaiting_release = 0, changed_at = CASE WHEN version IS NOT ? THEN ? ELSE changed_at END WHERE registry = ? AND name = ?',
-				latest.version,
-				now,
-				latest.version,
-				now,
-				watch.registry,
-				watch.name,
-			);
+			yield* watched.published(watch.registry, watch.name, latest.version, now);
 		}
 	});
 }

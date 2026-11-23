@@ -144,6 +144,22 @@
 		"specifier": "@/contract/links"
 	},
 	{
+		"file": "packages/notifications/src/package-watch.ts",
+		"specifier": "@/automation/managers/jsr"
+	},
+	{
+		"file": "packages/notifications/src/package-watch.ts",
+		"specifier": "@/automation/managers/npm"
+	},
+	{
+		"file": "packages/notifications/src/package-watch.ts",
+		"specifier": "@/automation/managers/registry"
+	},
+	{
+		"file": "packages/notifications/src/package-watch.ts",
+		"specifier": "@/automation/types"
+	},
+	{
 		"file": "packages/persistence/src/codecs/stored.ts",
 		"specifier": "@/automation/types"
 	},
