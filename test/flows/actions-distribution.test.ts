@@ -7,7 +7,9 @@ import { Effect, Exit } from 'effect';
 import { publishDistribution } from '@/tooling/actions/distribute';
 import { releaseLevel } from '@/tooling/actions/release';
 
-const begin = 'name: Begin\ninputs:\n  stream:\n    default: main\nruns:\n  using: composite\n  steps: []\n';
+const begin =
+	'name: Begin\ninputs:\n  stream:\n    default: main\nruns:\n  using: composite\n  steps:\n    - uses: $/actions/deps/bun\n';
+const moving = (text: string) => text.replace('$/actions/', '$/packages/actions/actions/');
 const bundled = {
 	'client.ts': 'console.log("client");\n',
 	'generate-winget.ts': '#!/usr/bin/env bun\nconsole.log(1);\n',
@@ -37,16 +39,15 @@ test('distribution reproduces the published actions tree from packages/actions a
 
 		mkdirSync(join(dir, 'packages/actions'), { recursive: true });
 		gitOutput(dir, ['mv', 'actions', 'packages/actions/actions']);
+		writeFileSync(join(dir, 'packages/actions/actions/begin/action.yml'), moving(begin));
 		const moved = commitAll(dir, 'Move actions into packages/actions');
 		expect(await Effect.runPromise(publishDistribution(dir, moved, bundles))).toEqual({
 			_tag: 'Unchanged',
 			commit: legacy,
 		});
 
-		writeFileSync(
-			join(dir, 'packages/actions/actions/begin/action.yml'),
-			begin.replace('inputs:\n', 'inputs:\n  version:\n    default: ""\n'),
-		);
+		const versioned = begin.replace('inputs:\n', 'inputs:\n  version:\n    default: ""\n');
+		writeFileSync(join(dir, 'packages/actions/actions/begin/action.yml'), moving(versioned));
 		const changed = commitAll(dir, 'Add a version input');
 		const published = await Effect.runPromise(publishDistribution(dir, changed, bundles));
 		expect(published._tag).toBe('Published');
@@ -63,9 +64,10 @@ test('distribution reproduces the published actions tree from packages/actions a
 			'100755 actions/runtime/generate-winget.ts',
 			'100644 packages/actions/actions/begin/action.yml',
 		]);
-		expect(gitOutput(dir, ['rev-parse', `${published.commit}:actions/begin/action.yml`])).toBe(
-			gitOutput(dir, ['rev-parse', `${changed}:packages/actions/actions/begin/action.yml`]),
+		expect(gitOutput(dir, ['cat-file', '-s', `${published.commit}:actions/begin/action.yml`])).toBe(
+			String(versioned.length),
 		);
+		expect(gitOutput(dir, ['show', `${published.commit}:actions/begin/action.yml`])).toBe(versioned.trimEnd());
 		expect(await Effect.runPromise(releaseLevel(dir, legacy, published.commit))).toBe('minor');
 
 		const stale = await Effect.runPromiseExit(publishDistribution(dir, moved, bundles));

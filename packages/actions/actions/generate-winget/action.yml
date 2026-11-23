@@ -33,7 +33,7 @@ runs:
   steps:
     - name: Setup Bun
       id: bun
-      uses: $/actions/deps/bun
+      uses: $/packages/actions/actions/deps/bun
     - name: Generate manifests
       id: generate
       shell: bash

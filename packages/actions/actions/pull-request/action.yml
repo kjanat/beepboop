@@ -43,10 +43,10 @@ runs:
   steps:
     - name: Setup Bun
       id: bun
-      uses: $/actions/deps/bun
+      uses: $/packages/actions/actions/deps/bun
     - name: Get token
       id: token
-      uses: $/actions/token
+      uses: $/packages/actions/actions/token
       with:
         service: ${{ inputs.service }}
         permission-contents: write
