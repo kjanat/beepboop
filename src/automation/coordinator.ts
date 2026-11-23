@@ -106,6 +106,7 @@ import { Automation, applicationLayer, withAutomation } from '@/automation/servi
 import { binaryLegs } from '@/automation/setup-binaries';
 import { maintainSetup } from '@/automation/setup-maintenance';
 import type { SetupEdit } from '@/automation/setup-types';
+import { repositorySnapshot } from '@/automation/snapshot';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -117,6 +118,7 @@ import type {
 	ReleaseReference,
 	ReleaseStarted,
 } from '@/automation/types';
+import { unchangedSince } from '@/automation/unchanged-paths';
 import { parseGrant, runtimeGrant } from '@/automation/vault';
 import type { ClaimStep, LedgerManager, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/contract/ledger';
 import { ledgerManagers } from '@/contract/ledger';
@@ -1245,7 +1247,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				execution.prepared = prepared;
 				yield* this.put(execution);
 				const gateway = yield* this.gateway;
-				const source = yield* gateway.snapshot(
+				const source = yield* repositorySnapshot(
+					gateway,
 					execution.repository,
 					execution.repositoryId,
 					execution.sourceSha,
@@ -3131,7 +3134,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const gateway = yield* this.gateway;
 			const paths = releasePaths(record.inventory.packages, stream);
 			const kept = (commit: string) =>
-				gateway.unchangedSince(execution.repository, execution.repositoryId, commit, sha, paths);
+				unchangedSince(gateway, execution.repository, execution.repositoryId, commit, sha, paths);
 			const newer = (yield* this.executions()).filter(other =>
 				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
 				&& other.version === execution.version && other.createdAt > execution.createdAt
@@ -3689,7 +3692,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						const previous = yield* this.get(id);
 						if (previous.state === 'succeeded' || (previous.runAttempt ?? 0) >= run.run_attempt) continue;
 					}
-					const snapshot = yield* gateway.snapshot(repository.name, repository.id, run.head_sha);
+					const snapshot = yield* repositorySnapshot(gateway, repository.name, repository.id, run.head_sha);
 					const execution = yield* (
 						createExecution(repository, {
 							stream: streamName,
@@ -3873,7 +3876,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const repository = yield* store.repository(edit.repositoryId);
 				if (repository && readiness(repository).kind !== 'suspended') {
 					const gateway = yield* this.gateway;
-					const snapshot = yield* gateway.snapshot(repository.name, repository.id);
+					const snapshot = yield* repositorySnapshot(gateway, repository.name, repository.id);
 					yield* maintainSetup(store, gateway, snapshot, (yield* Automation).publishingAccess(snapshot.repository), {
 						number: edit.number,
 						choices: edit.choices,
@@ -3930,7 +3933,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return yield* precondition('Managed preparation plan is not executable');
 				}
 				const gateway = yield* this.gateway;
-				const snapshot = yield* gateway.snapshot(
+				const snapshot = yield* repositorySnapshot(
+					gateway,
 					execution.repository,
 					execution.repositoryId,
 					execution.sourceSha,

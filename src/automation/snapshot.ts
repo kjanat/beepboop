@@ -1,4 +1,5 @@
 import { Effect, Result } from 'effect';
+import type { RepositoryGateway, SnapshotSource } from '@/automation/github';
 import { pkgbuildFile } from '@/automation/managers/channels';
 import { object } from '@/automation/managers/helpers';
 import { workspaceMembers } from '@/automation/managers/workspaces';
@@ -23,19 +24,6 @@ import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { escapeRegExp, within } from '@/kernel/text/patterns.ts';
-
-export interface TreeEntry {
-	path: string;
-	type: string;
-	mode: string;
-}
-export interface SnapshotSource {
-	repository: Snapshot['repository'];
-	sha: string;
-	entries: readonly TreeEntry[];
-	read(path: string): Effect.Effect<string | null, DomainError>;
-	tags(prefixes: readonly string[]): Effect.Effect<string[], DomainError>;
-}
 
 const excluded = /(?:^|\/)(?:node_modules|vendor|target|testdata|fixtures|\.git)\//;
 export const releaseEvidence: readonly RegExp[] = [
@@ -322,4 +310,13 @@ export function buildSnapshot(
 			...(tags ? { tags } : {}),
 		};
 	});
+}
+export function repositorySnapshot(
+	gateway: RepositoryGateway,
+	name: string,
+	id: number,
+	revision?: string,
+	extraPaths: string[] = [],
+): Effect.Effect<Snapshot, DomainError> {
+	return gateway.snapshotSource(name, id, revision).pipe(Effect.flatMap(source => buildSnapshot(source, extraPaths)));
 }

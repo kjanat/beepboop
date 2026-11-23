@@ -9,6 +9,7 @@ import { pullRequest } from '@/automation/preparation-pull-requests';
 import { capabilitySentence, releasable, releaseCapability, startRefusal } from '@/automation/release-capability';
 import { resolvePackageVersion } from '@/automation/release-version';
 import type { AutomationService } from '@/automation/service';
+import { repositorySnapshot } from '@/automation/snapshot';
 import type { Execution, ReleasePlan, ReleaseStarted, Stream } from '@/automation/types';
 import { routes } from '@/contract/routes';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
@@ -68,7 +69,8 @@ function current(
 	message: string,
 ): Effect.Effect<Snapshot, DomainError> {
 	return Effect.gen(function*() {
-		const snapshot = yield* service.gateway.snapshot(
+		const snapshot = yield* repositorySnapshot(
+			service.gateway,
 			repository.name,
 			repository.id,
 			undefined,
@@ -344,7 +346,7 @@ export const releaseEndpoints = {
 				return yield* notFound('release-event', 'Verified upstream release event required', input.releaseEventId);
 			}
 			const release = event.release;
-			const snapshot = yield* service.gateway.snapshot(repository.name, repository.id);
+			const snapshot = yield* repositorySnapshot(service.gateway, repository.name, repository.id);
 			const edits = yield* planHookUpdates(snapshot, release);
 			if (input.preview !== false || !edits.length) {
 				return { sourceSha: snapshot.sha, upstreamRelease: release, edits };

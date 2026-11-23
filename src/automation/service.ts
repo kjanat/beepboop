@@ -13,8 +13,7 @@ import type { InboxEvent, SetupPullEdit, SetupPullMerge } from '@/automation/inb
 import { inboxEvent } from '@/automation/inbox';
 import { discover, planRelease, resolvePublished } from '@/automation/managers';
 import { jsrTokenAlias, jsrTokenRefused, setUpJsrPackage } from '@/automation/managers/jsr';
-import type { Fetcher } from '@/automation/managers/registry';
-import { platformFetch, registryLayer } from '@/automation/managers/registry';
+import { registryLayer } from '@/automation/managers/registry';
 import { Notifications } from '@/automation/notifications';
 import { metadataProblems } from '@/automation/package-metadata';
 import { pollPackages } from '@/automation/package-watch';
@@ -31,9 +30,11 @@ import { currentOptions, maintainSetup, rebuildingStatus, setupEdits } from '@/a
 import type { PublishingAccess } from '@/automation/setup-publishing';
 import { openSetupPull, setupMerge, setupStatus } from '@/automation/setup-pull-requests';
 import { workflowCredentials } from '@/automation/setup-workflows';
+import { repositorySnapshot } from '@/automation/snapshot';
 import { Store } from '@/automation/store';
 import { matchesSubscription } from '@/automation/subscriptions';
 import type { AutomationEvent, Execution, ReleaseStarted, Stream, SubscriptionDelivery } from '@/automation/types';
+import { unchangedSince } from '@/automation/unchanged-paths';
 import type { Grant } from '@/automation/vault';
 import { parseGrant, Secrets, secretsLayer, Vault } from '@/automation/vault';
 import type { WinGetBindings } from '@/automation/winget';
@@ -58,6 +59,8 @@ import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import { platformFetch } from '@/kernel/http/fetcher.ts';
 import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
 import type { Parsed } from '@/kernel/schema/result.ts';
 import { countSchema, decode, integer, looseSchema, record } from '@/kernel/schema/result.ts';
@@ -150,7 +153,8 @@ export class AutomationService {
 				&& execution.version
 				&& stream?.prepare.strategy !== 'workflow'
 			) {
-				const snapshot = yield* this.gateway.snapshot(
+				const snapshot = yield* repositorySnapshot(
+					this.gateway,
 					repository.name,
 					repository.id,
 					execution.sourceSha,
@@ -272,7 +276,7 @@ export class AutomationService {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
-			const snapshot = yield* this.gateway.snapshot(name, id);
+			const snapshot = yield* repositorySnapshot(this.gateway, name, id);
 			const discovered: RepositoryDiscovery = {
 				...snapshot.repository,
 				sha: snapshot.sha,
@@ -405,10 +409,11 @@ export class AutomationService {
 	): Effect.Effect<Snapshot | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const paths = releasePaths(repository.inventory.packages, stream);
-			if (!(yield* this.gateway.unchangedSince(repository.name, repository.id, commit, repository.sha, paths))) {
+			if (!(yield* unchangedSince(this.gateway, repository.name, repository.id, commit, repository.sha, paths))) {
 				return undefined;
 			}
-			const snapshot = yield* this.gateway.snapshot(
+			const snapshot = yield* repositorySnapshot(
+				this.gateway,
 				repository.name,
 				repository.id,
 				commit,
@@ -650,7 +655,8 @@ export class AutomationService {
 				? undefined
 				: yield* this.releaseHeld(repository, stream, packages, prepared);
 			const snapshot = held ?? (yield* this.versionCommit(repository, name, stream, promotions, packages))
-				?? (yield* this.gateway.snapshot(
+				?? (yield* repositorySnapshot(
+					this.gateway,
 					repository.name,
 					repository.id,
 					repository.sha,
@@ -725,7 +731,7 @@ export class AutomationService {
 				);
 				if (!dependents.length) continue;
 				tagged ??= discover(
-					yield* this.gateway.snapshot(repository.name, repository.id, tag.commit),
+					yield* repositorySnapshot(this.gateway, repository.name, repository.id, tag.commit),
 					repository.configuration.managers,
 				).packages;
 				const released = tagged.filter(pkg => publishable(pkg) && pkg.version === version);
@@ -913,12 +919,9 @@ export class AutomationService {
 				...workflowPath(stream.promote?.file),
 				...(stream.operations ?? []).flatMap(entry => workflowPath(entry.file)),
 			]);
-			const merged = yield* this.gateway.snapshot(
-				repository.name,
-				repository.id,
-				pull.merge_commit_sha,
-				[...new Set([...generated.map(edit => edit.path), ...workflows])],
-			);
+			const merged = yield* repositorySnapshot(this.gateway, repository.name, repository.id, pull.merge_commit_sha, [
+				...new Set([...generated.map(edit => edit.path), ...workflows]),
+			]);
 			if (!generated.length || generated.some(edit => merged.files[edit.path] !== edit.after)) return;
 			yield* this.refresh(repository.name, repository.id);
 			const current = yield* this.store.repository(repository.id);

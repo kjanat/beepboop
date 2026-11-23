@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { object } from '@/automation/managers/helpers';
-import type { Adapter, Fetcher } from '@/automation/managers/registry';
+import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, publicationResult, registryRequest, unconfirmed } from '@/automation/managers/verification';
 import type { Publication } from '@/automation/types';
@@ -9,6 +9,7 @@ import { excluded, registry } from '@/domain/package-publication.ts';
 import { latestTag, majorSuffix, tagSource } from '@/domain/version-tags.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { responseJson } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { packageIdentity } from '@/package-url';

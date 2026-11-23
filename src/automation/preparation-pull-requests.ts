@@ -12,6 +12,8 @@ import {
 } from '@/automation/github-resources';
 import { placeBlock, setupBlock } from '@/automation/setup-body';
 import { setupBranches } from '@/automation/setup-changes';
+import { previousRender } from '@/automation/setup-pull-requests';
+import { repositorySnapshot } from '@/automation/snapshot';
 import type { AutoMerge, PreparationResult } from '@/automation/types';
 import type { Edit, Snapshot } from '@/domain/inventory.ts';
 import type { AutoMergeMethod } from '@/domain/setup-terms.ts';
@@ -269,7 +271,7 @@ export function preparedSnapshot(
 		if (pull.mergeSha !== (yield* Effect.fromResult(sha(target)))) {
 			return yield* precondition('Target is not the merged preparation revision');
 		}
-		const snapshot = yield* gateway.snapshot(repository, repositoryId, target, extraPaths);
+		const snapshot = yield* repositorySnapshot(gateway, repository, repositoryId, target, extraPaths);
 		if (pull.base !== snapshot.repository.defaultBranch) {
 			return yield* precondition('Preparation was merged into a different branch');
 		}
@@ -473,7 +475,7 @@ function finishPullRequest(
 					? placeBlock(
 						previousBody,
 						setupBlock(body),
-						yield* gateway.previousRender(name, existing.number, previousBody, token),
+						yield* previousRender(gateway, name, existing.number, previousBody, token),
 					)
 					: body,
 			})

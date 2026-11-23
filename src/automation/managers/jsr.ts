@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 import type { ParseError } from 'jsonc-parser';
 import { applyEdits, modify, parse } from 'jsonc-parser';
 import { jsonIndent, object } from '@/automation/managers/helpers';
-import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
+import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory, Registry } from '@/automation/managers/registry';
 import { latestVersion, publicationResult, unconfirmed, unpublished } from '@/automation/managers/verification';
 import { jsrManifest, jsrPackageNamePattern } from '@/domain/catalog.ts';
@@ -13,6 +13,7 @@ import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { domainError, upstream } from '@/kernel/errors/domain-error.ts';
 import { responseBytes, responseJson, responseText, scopedResponse } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
 

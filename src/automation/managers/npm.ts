@@ -3,7 +3,7 @@ import { applyEdits, modify, parseTree } from 'jsonc-parser';
 import { jsonIndent, object } from '@/automation/managers/helpers';
 import { discoverNpmTargets } from '@/automation/managers/npm-targets';
 import { packageManifests } from '@/automation/managers/package-json';
-import type { Adapter, Fetcher, RegistryVersion } from '@/automation/managers/registry';
+import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { latestVersion, unpublished, verifyRegistry } from '@/automation/managers/verification';
 import type { Package } from '@/domain/inventory.ts';
@@ -11,6 +11,7 @@ import { excluded, publishable, registry } from '@/domain/package-publication.ts
 import { fromSync } from '@/kernel/errors/classify.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { packageIdentity } from '@/package-url';
 
 const defaultRegistry = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)(?:[/:?#]|$)/;

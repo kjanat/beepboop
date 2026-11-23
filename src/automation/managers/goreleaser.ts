@@ -1,7 +1,8 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
+import type { VerificationContext } from '@/automation/github';
 import { object } from '@/automation/managers/helpers';
-import type { Adapter, RegistryVersion, VerificationContext } from '@/automation/managers/registry';
+import type { Adapter, RegistryVersion } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import { publicationResult } from '@/automation/managers/verification';
 import type { Publication } from '@/automation/types';

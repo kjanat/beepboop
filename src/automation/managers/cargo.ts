@@ -1,7 +1,7 @@
 import { Effect, Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
 import { editTomlVersion, object } from '@/automation/managers/helpers';
-import type { Adapter, Fetcher } from '@/automation/managers/registry';
+import type { Adapter } from '@/automation/managers/registry';
 import { emptyInventory } from '@/automation/managers/registry';
 import {
 	LookupFailure,
@@ -20,6 +20,7 @@ import { compareVersions, isPrerelease } from '@/domain/semver.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseText } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { packageIdentity } from '@/package-url';
 export function crateIndexUrl(name: string): string {

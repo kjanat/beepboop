@@ -7,6 +7,7 @@ import {
 	gitCommitSchema,
 	gitRefSchema,
 } from '@/automation/github-resources';
+import { repositorySnapshot } from '@/automation/snapshot';
 import type { Store } from '@/automation/store';
 import { generateManifests, renderManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
@@ -200,7 +201,7 @@ export class WinGetService {
 				return yield* precondition('Release tag does not match the configured prefix');
 			}
 			const version = tag.slice(policy.tagPrefix.length);
-			const snapshot = yield* self.gateway.snapshot(repo.name, repo.id, tag, [policy.config]);
+			const snapshot = yield* repositorySnapshot(self.gateway, repo.name, repo.id, tag, [policy.config]);
 			const source = yield* Effect.fromResult(text(snapshot.files[policy.config]));
 			const configuration = yield* Effect.fromResult(
 				decode(wingetConfiguration, yield* fromSync((): unknown => JSON.parse(source))),

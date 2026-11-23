@@ -5,13 +5,13 @@ import { join } from 'node:path';
 import type { Environment, Invalid } from '@root/actions/runtime/protocol.ts';
 import { ActionFailure, attempt, attemptAsync, fail, required } from '@root/actions/runtime/protocol.ts';
 import { Effect } from 'effect';
-import type { Fetcher } from '@/automation/managers/registry.ts';
 import { githubApiVersion } from '@/contract/http.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
 import type { OutputFailure } from '@/host/github-output.ts';
 import { writeOutput } from '@/host/github-output.ts';
 import { runMain } from '@/host/main.ts';
 import { responseJson, responseText } from '@/kernel/http/body.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { shaPattern } from '@/kernel/schema/ids.ts';
 import { array, record, text } from '@/kernel/schema/result.ts';
 

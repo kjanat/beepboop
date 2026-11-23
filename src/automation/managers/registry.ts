@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Result } from 'effect';
+import type { VerificationContext } from '@/automation/github';
 import { checkChannel, pkgbuildChannels } from '@/automation/managers/channels';
 import type { Publication } from '@/automation/types';
 import type { ManagerDestinationId, ManagerName } from '@/domain/catalog.ts';
@@ -14,6 +15,7 @@ import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
 import type { PackageIdentity } from '@/package-url';
 import { invalidPackageUrl, parsePackageIdentity } from '@/package-url';
@@ -41,12 +43,6 @@ export type RegistryLookup = (
 	request: Fetcher,
 	context?: VerificationContext,
 ) => Effect.Effect<RegistryVersion>;
-export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
-export const platformFetch: Fetcher = (input, init) => fetch(input, init);
-export interface VerificationContext {
-	repository: string;
-	github(path: string): Effect.Effect<unknown, DomainError>;
-}
 export type RegistryVersion =
 	& (
 		| { kind: 'published'; version: string }
