@@ -43,6 +43,16 @@ test('the CLI bundle check ignores import-like text in strings and comments', ()
 	expect(leakedSpecifiers(bundle)).toEqual([]);
 });
 
+test('the CLI bundle check ignores helper-call text in template literals and finds helper calls with template arguments', () => {
+	const text = [
+		'const help = `Example __require("@/example") ${name}`;',
+		'const tagged = tag`Example require.resolve("@/example")`;',
+	].join('\n');
+	expect(leakedSpecifiers(text)).toEqual([]);
+	expect(leakedSpecifiers('__require(`@/real`);')).toEqual(['@/real']);
+	expect(leakedSpecifiers('require.resolve(`@/resolved`, { paths: [] });')).toEqual(['@/resolved']);
+});
+
 const npm = { name: '@kjanat/beepboop', version: '0.8.0' };
 
 test('the build writes the package.json version into jsr.json and keeps its layout', async () => {
