@@ -1,12 +1,8 @@
 #!/usr/bin/env bun
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-
-const [before, after, again] = process.argv.slice(2);
-if (!before || !after) {
-	console.error('usage: scripts/storage-trace.ts <before-directory> <after-directory> [<second-before-directory>]');
-	process.exit(2);
-}
+import { Effect } from 'effect';
+import { attempt, main, refuse } from '@/tooling/runtime';
 
 const random = new RegExp(
 	[
@@ -21,53 +17,60 @@ const write = /^(\S+) \S+ ("(?:[^"\\]|\\.)*")/;
 
 type Worlds = Map<string, string[]>;
 
-function worlds(directory: string): Worlds {
-	if (!existsSync(directory)) throw new Error(`${directory} does not exist`);
+const worlds = Effect.fn('worlds')(function*(directory: string) {
+	if (!(yield* attempt(() => existsSync(directory)))) return yield* refuse(`${directory} does not exist`);
 	const found: Worlds = new Map();
-	for (const file of readdirSync(directory)) {
-		for (const block of readFileSync(join(directory, file), 'utf8').split(/^## /m).filter(Boolean)) {
+	for (const file of yield* attempt(() => readdirSync(directory))) {
+		const text = yield* attempt(() => readFileSync(join(directory, file), 'utf8'));
+		for (const block of text.split(/^## /m).filter(Boolean)) {
 			const [title = '', ...lines] = block.split('\n').filter(Boolean);
 			const world = `${file} ${title}`;
-			if (found.has(world)) throw new Error(`${directory} holds ${world} twice; trace into an empty directory`);
+			if (found.has(world)) return yield* refuse(`${directory} holds ${world} twice; trace into an empty directory`);
 			found.set(world, lines);
 		}
 	}
-	if (!found.size) throw new Error(`${directory} holds no traces; set BEEPBOOP_STORAGE_TRACE for the test run`);
+	if (!found.size) return yield* refuse(`${directory} holds no traces; set BEEPBOOP_STORAGE_TRACE for the test run`);
 	return found;
-}
+});
 
-function traces(before: string, after: string): [Worlds, Worlds, Worlds] {
-	try {
-		return [worlds(before), worlds(after), again ? worlds(again) : new Map()];
-	} catch (error) {
-		console.error(error instanceof Error ? error.message : error);
-		process.exit(2);
-	}
-}
-
-function canonical(lines: readonly string[]): string[] {
+function renamer(): (text: string) => string {
 	const names = new Map<string, string>();
-	return lines.map(line =>
-		line.replaceAll(random, token => {
+	return text =>
+		text.replaceAll(random, token => {
 			const name = names.get(token) ?? `<random ${names.size + 1}>`;
 			names.set(token, name);
 			return name;
-		})
-	);
+		});
+}
+
+function canonical(lines: readonly string[]): string[] {
+	return lines.map(renamer());
 }
 
 function same(left: readonly string[], right: readonly string[]): boolean {
 	return left.length === right.length && left.every((line, index) => line === right[index]);
 }
 
-function groupOf(line: string): string {
-	const [, storage, key] = write.exec(line) ?? [];
-	return `${storage} ${key}`;
+function groupsOf(lines: readonly string[]): string[] {
+	const shapes = new Map<string, Map<string, number>>();
+	return lines.map(line => {
+		const [, storage, key = ''] = write.exec(line) ?? [];
+		const shape = `${storage} ${key.replaceAll(random, '<random>')}`;
+		if (shape === `${storage} ${key}`) return shape;
+		const keys = shapes.get(shape) ?? new Map<string, number>();
+		const index = keys.get(key) ?? keys.size + 1;
+		shapes.set(shape, keys.set(key, index));
+		return `${shape} #${index}`;
+	});
 }
 
 function grouped(lines: readonly string[]): Map<string, string[]> {
 	const groups = new Map<string, string[]>();
-	for (const line of lines) groups.set(groupOf(line), [...(groups.get(groupOf(line)) ?? []), line]);
+	const names = groupsOf(lines);
+	lines.forEach((line, index) => {
+		const name = names[index] ?? '';
+		groups.set(name, [...(groups.get(name) ?? []), line]);
+	});
 	return groups;
 }
 
@@ -93,45 +96,55 @@ function diff(left: readonly string[], right: readonly string[]): string[] {
 	return lines;
 }
 
-function changedGroups(left: readonly string[], right: readonly string[]): Set<string> {
+function unstableGroups(left: readonly string[], right: readonly string[]): Set<string> {
 	const old = grouped(left), current = grouped(right);
 	return new Set(
 		[...new Set([...old.keys(), ...current.keys()])].filter(group =>
-			!same(old.get(group) ?? [], current.get(group) ?? [])
+			!same(canonical(old.get(group) ?? []), canonical(current.get(group) ?? []))
 		),
 	);
 }
 
-function changes(world: string, left: readonly string[], right: readonly string[]): string[] {
-	const old = canonical(left), current = canonical(right);
-	const baseline = repeated.get(world);
-	if (!baseline || same(canonical(baseline), old)) return diff(old, current);
-	const unstable = changedGroups(old, canonical(baseline));
-	const kept = (line: string) => !unstable.has(groupOf(line));
-	return diff(old.filter(kept), current.filter(kept));
+function changes(left: readonly string[], right: readonly string[], baseline: readonly string[] | undefined): string[] {
+	if (!baseline || same(canonical(baseline), canonical(left))) return diff(canonical(left), canonical(right));
+	const unstable = unstableGroups(left, baseline);
+	const stable = (lines: readonly string[]) => {
+		const names = groupsOf(lines);
+		return lines.filter((_, index) => !unstable.has(names[index] ?? ''));
+	};
+	return diff(canonical(stable(left)), canonical(stable(right)));
 }
 
-const [old, current, repeated] = traces(before, after);
-let writes = 0, randomized = 0, differences = 0;
-for (const world of [...new Set([...old.keys(), ...current.keys()])].sort()) {
-	const left = old.get(world), right = current.get(world);
-	if (left === undefined || right === undefined) {
-		console.log(`${world}: only in ${left === undefined ? after : before}`);
+await main(Effect.gen(function*() {
+	const [before, after, again] = process.argv.slice(2);
+	if (!before || !after) {
+		return yield* refuse(
+			'usage: scripts/storage-trace.ts <before-directory> <after-directory> [<second-before-directory>]',
+		);
+	}
+	const old = yield* worlds(before), current = yield* worlds(after);
+	const repeated: Worlds = again ? yield* worlds(again) : new Map();
+	let writes = 0, randomized = 0, differences = 0;
+	for (const world of [...new Set([...old.keys(), ...current.keys()])].sort()) {
+		const left = old.get(world), right = current.get(world);
+		if (left === undefined || right === undefined) {
+			console.log(`${world}: only in ${left === undefined ? after : before}`);
+			differences++;
+			continue;
+		}
+		writes += left.length;
+		if (same(left, right)) continue;
+		const lines = changes(left, right, repeated.get(world));
+		if (!lines.length) {
+			randomized++;
+			continue;
+		}
+		console.log(`${world}:`);
+		for (const line of lines) console.log(line);
 		differences++;
-		continue;
 	}
-	writes += left.length;
-	if (same(left, right)) continue;
-	const lines = changes(world, left, right);
-	if (!lines.length) {
-		randomized++;
-		continue;
-	}
-	console.log(`${world}:`);
-	for (const line of lines) console.log(line);
-	differences++;
-}
-console.log(
-	`${old.size} worlds, ${writes} writes compared, ${randomized} equal after renaming random tokens or keys that differ between baseline runs, ${differences} differ`,
-);
-process.exit(differences ? 1 : 0);
+	console.log(
+		`${old.size} worlds, ${writes} writes compared, ${randomized} equal after renaming random tokens or keys that differ between baseline runs, ${differences} differ`,
+	);
+	if (differences) return yield* refuse(`${differences} worlds wrote different storage`);
+}));

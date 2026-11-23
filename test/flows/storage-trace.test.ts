@@ -42,8 +42,10 @@ async function inTemp(work: (temp: string) => Promise<void>): Promise<void> {
 	}
 }
 
-function summary(randomized: number, differ: number): string {
-	return `1 worlds, 4 writes compared, ${randomized} equal after renaming random tokens or keys that differ between baseline runs, ${differ} differ\n`;
+function summary(randomized: number, differ: number, writes = 4): string {
+	const report =
+		`1 worlds, ${writes} writes compared, ${randomized} equal after renaming random tokens or keys that differ between baseline runs, ${differ} differ\n`;
+	return differ ? `${report}${differ} worlds wrote different storage\n` : report;
 }
 
 test('every Durable Object storage write lands in the trace in write order', () =>
@@ -155,7 +157,52 @@ test('storage traces match across random tokens and report changed documents and
 			output: [`${traceFile} world 1:`, '+ AutomationCoordinator:1 put "ledger:y" true', summary(0, 1)].join('\n'),
 		});
 		expect(await compared(directory('before'), directory('missing'))).toEqual({
-			code: 2,
+			code: 1,
 			output: `${directory('missing')} does not exist\n`,
+		});
+	}));
+
+test('a key that differs between baseline runs leaves token names of other keys intact', () =>
+	inTemp(async temp => {
+		const directory = (name: string) => join(temp, name);
+		const run = (quarantine: object, state: string): Writes => async storage => {
+			await storage.put('quarantine:x', quarantine);
+			await storage.put('execution:s', { id: 's', run: crypto.randomUUID(), state });
+		};
+		await traced(directory('before'), run({ error: 'e' }, 'ready'));
+		await traced(directory('again'), run({ error: 'e', trace: crypto.randomUUID() }, 'ready'));
+		await traced(directory('after'), run({ error: 'e' }, 'failed'));
+
+		expect(await compared(directory('before'), directory('after'), directory('again'))).toEqual({
+			code: 1,
+			output: [
+				`${traceFile} world 1:`,
+				'- AutomationCoordinator:1 put "execution:s" {"id":"s","run":"<random 1>","state":"ready"}',
+				'+ AutomationCoordinator:1 put "execution:s" {"id":"s","run":"<random 1>","state":"failed"}',
+				summary(0, 1, 2),
+			].join('\n'),
+		});
+	}));
+
+test('a random key that only the second baseline run writes leaves other random keys comparable', () =>
+	inTemp(async temp => {
+		const directory = (name: string) => join(temp, name);
+		const run = (value: number, extra: boolean): Writes => async storage => {
+			if (extra) await storage.put(`inbox:${crypto.randomUUID()}`, true);
+			await storage.put(`execution:${crypto.randomUUID()}`, { value });
+			await storage.put('quarantine:x', 1);
+		};
+		await traced(directory('before'), run(1, false));
+		await traced(directory('again'), run(1, true));
+		await traced(directory('after'), run(2, false));
+
+		expect(await compared(directory('before'), directory('after'), directory('again'))).toEqual({
+			code: 1,
+			output: [
+				`${traceFile} world 1:`,
+				'- AutomationCoordinator:1 put "execution:<random 1>" {"value":1}',
+				'+ AutomationCoordinator:1 put "execution:<random 1>" {"value":2}',
+				summary(0, 1, 2),
+			].join('\n'),
 		});
 	}));
