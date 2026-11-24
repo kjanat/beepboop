@@ -118,7 +118,7 @@ function shadows(aliases: readonly Alias[], files: readonly string[]): Violation
 			const start = base && head.endsWith('/') ? `${base}/` : base;
 			for (const file of files.filter(file => file.startsWith(start))) {
 				for (const form of specifierForms(file.slice(start.length))) {
-					if (form.endsWith(tail) && form.length > tail.length) rests.add(form.slice(0, form.length - tail.length));
+					if (form.endsWith(tail)) rests.add(form.slice(0, form.length - tail.length));
 				}
 			}
 		}
