@@ -155,6 +155,23 @@ test('Go files outside the main package build do not decide main.version, and al
 			['types.go', '//go:build windows\n\npackage main\n\ntype V struct{}\n'],
 		]),
 	).toBeUndefined();
+	for (
+		const source of [
+			'package main\n\n// #include <stdio.h>\nimport "C"\n\nvar version = 1\n',
+			'package main\n\nimport (\n\t"fmt"\n\t"C"\n)\n\nvar version = 1\n',
+			'package main\n\nimport("C")\n\nvar version = 1\n',
+		]
+	) {
+		expect([source, unsettableVersion([['cgo.go', source], ['main.go', 'package main\n']])]).toEqual([
+			source,
+			undefined,
+		]);
+	}
+	expect(unsettableVersion([['main.go', 'package main\n\nimport "Cfg"\n\nvar version = 1\n']])).toEqual({
+		kind: 'var',
+		type: 'int',
+		file: 'main.go',
+	});
 	for (const file of ['version_windows.go', 'v_linux_arm64.go', 'cmd/x/version_amd64.go']) {
 		expect([file, unsettableVersion([[file, declared]])]).toEqual([file, undefined]);
 	}

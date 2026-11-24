@@ -132,8 +132,10 @@ function constrainedName(file: string): boolean {
 	return knownOS.has(last) || knownArch.has(last);
 }
 
+const cgo = /^import\s*(?:\(\s*(?:[^)]*\n\s*)?)?"C"\s*(?:$|\n|\))/m;
+
 function built(file: string, source: string): string[] | undefined {
-	if (constrainedName(file) || /^\/\/(?:go:build|\s*\+build)\s/m.test(source)) return undefined;
+	if (constrainedName(file) || /^\/\/(?:go:build|\s*\+build)\s/m.test(source) || cgo.test(source)) return undefined;
 	const list = statements(code(source));
 	return list[0] === 'package main' ? list : undefined;
 }
