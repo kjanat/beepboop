@@ -19,6 +19,8 @@ import { PublishBudget } from '@/automation/publish-budget';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import type { Automation, AutomationBindings } from '@/automation/service';
 import { applicationLayer } from '@/automation/service';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import * as fetcher from '@/kernel/http/fetcher.ts';
 import { TransientBackoff } from '@/kernel/http/retry.ts';
 import { cliToken, sha256Hex } from '@/kernel/schema/ids.ts';
 import { serve } from '@/server/endpoint';
@@ -120,6 +122,8 @@ export class World {
 
 	static async create(file = testFile()): Promise<World> {
 		setSystemTime(new Date(epoch));
+		const platformFetch: Fetcher = (input, init) => fetch(input, init);
+		mock.module('@/kernel/http/fetcher.ts', () => ({ ...fetcher, platformFetch }));
 		const [actions, openauth, appKey] = await keys;
 		const world = new World(actions, openauth, appKey, startTrace(file));
 		for (const key of Object.keys(runtimeEnv)) delete runtimeEnv[key];
