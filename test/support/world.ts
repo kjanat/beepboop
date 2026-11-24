@@ -125,10 +125,13 @@ export class World {
 		spyOn(globalThis, 'fetch').mockImplementation(Object.assign(world.network.fetch, { preconnect: fetch.preconnect }));
 		return world;
 	}
-	dispose(): void {
+	async dispose(): Promise<void> {
 		finishTrace();
 		mock.restore();
 		setSystemTime();
+		await Promise.all(
+			[...this.coordinators.instances.values()].map(({ object }) => AutomationCoordinator.dispose(object)),
+		);
 	}
 
 	run<A, E>(work: Effect.Effect<A, E, Automation>): Promise<A> {
@@ -287,7 +290,7 @@ export function eachWorld(bind: (world: World) => void): void {
 		try {
 			await drainBackground();
 		} finally {
-			if (current) current.dispose();
+			if (current) await current.dispose();
 		}
 	});
 }
