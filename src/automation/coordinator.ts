@@ -65,7 +65,7 @@ import type { GitHubRunResult, RunJob } from '@/github/run-state.ts';
 import { classifyJob, classifyRun, jobProgressState } from '@/github/run-state.ts';
 import { GitHubRejection } from '@/github/transport.ts';
 import type { InboxEvent } from '@/github/webhooks.ts';
-import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/kernel/errors/classify.ts';
+import { fromPromise, fromSync, recover, toDomainError } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
@@ -177,6 +177,13 @@ import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
 import { ReconcileHistory } from '@/release/services/coordinator/reconcile-history.ts';
+import {
+	AuditTrail,
+	InboxQueue,
+	ObserveQueue,
+	TrackQueue,
+	trackLater,
+} from '@/release/services/coordinator/retry-queue.ts';
 import { decodeSetupEditV1 } from '@/setup/edit.ts';
 import { maintainSetup } from '@/setup/server/maintenance.ts';
 import type { SetupEdit } from '@/setup/types.ts';
@@ -195,9 +202,6 @@ interface ReleaseOperation {
 	paced: boolean;
 	dependencies: string[];
 }
-const inboxAttempts = 8;
-const observationAttempts = 10;
-const jobPollInterval = 30_000;
 const reconcileInterval = 60_000;
 const settleInterval = 15_000;
 const automaticRetries = 3;
@@ -292,7 +296,7 @@ function referenceProbe(reference: string, version: string): Publication | undef
 		required: true,
 	};
 }
-type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, Infrastructure | CoordinatorServices>;
+type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, Infrastructure | CoordinatorServices | AuditTrail>;
 type GateSubject =
 	& Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>
 	& Partial<Pick<Execution, 'reruns'>>;
@@ -340,6 +344,17 @@ const setupEditSource = Layer.effectDiscard(Effect.gen(function*() {
 	yield* planner.register({ due: () => readSetupEdit(storage).pipe(Effect.map(edit => [edit?.due])) });
 }));
 
+const auditTrail = Layer.effect(
+	AuditTrail,
+	Effect.gen(function*() {
+		const automation = yield* Automation;
+		return AuditTrail.of({
+			record: (action, target, failure) =>
+				automation.store.audit('beepboop', action, target).pipe(logRecovered(failure, { target })),
+		});
+	}),
+);
+
 const projectionSink = Layer.effect(
 	ProjectionSink,
 	Effect.gen(function*() {
@@ -349,7 +364,7 @@ const projectionSink = Layer.effect(
 );
 
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
-	readonly #runtime: ManagedRuntime.ManagedRuntime<Infrastructure | CoordinatorServices, DomainError>;
+	readonly #runtime: ManagedRuntime.ManagedRuntime<Infrastructure | CoordinatorServices | AuditTrail, DomainError>;
 	constructor(
 		ctx: DurableObjectState,
 		env: CoordinatorBindings,
@@ -362,6 +377,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				setupEditSource.pipe(
 					Layer.provideMerge(coordinatorLayer(ctx.storage)),
 					Layer.provide(projectionSink),
+					Layer.provideMerge(auditTrail),
 					Layer.provideMerge(infrastructure ?? applicationLayer(env, work => ctx.waitUntil(work))),
 				),
 			),
@@ -413,17 +429,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private executions(): CoordinatorEffect<Execution[], DomainError> {
 		return this.readJournal().pipe(Effect.map(journal => journal.executions));
 	}
-	private auditQuietly(action: string, target: string, failure: string): CoordinatorEffect<void> {
-		return Effect.gen({ self: this }, function*() {
-			return yield* (yield* this.store).audit('beepboop', action, target).pipe(logRecovered(failure, { target }));
-		});
-	}
 	private quarantine(id: string, error: string): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
 			yield* (yield* DurableStorage).put(Keys.quarantine, id, { error, at: clock.currentTimeMillisUnsafe() });
-			yield* this.auditQuietly('execution.quarantined', `${id}: ${error}`, 'quarantine.audit-failed');
+			yield* (yield* AuditTrail).record('execution.quarantined', `${id}: ${error}`, 'quarantine.audit-failed');
 		});
 	}
 	private isolate(id: string, error: DomainError): CoordinatorEffect<void, DomainError> {
@@ -556,7 +567,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					);
 				}
 			}).pipe(logRecovered('package-tags.failed', { executionId: execution.id }));
-			this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Infrastructure | CoordinatorServices>())(work));
+			this.ctx.waitUntil(
+				Effect.runPromiseWith(yield* Effect.context<Infrastructure | CoordinatorServices | AuditTrail>())(work),
+			);
 		});
 	}
 	packageTags(
@@ -1269,7 +1282,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					previous,
 					next,
 				).pipe(logRecovered('preparation.restate-failed', { executionId: upgraded.id, url: result.url }));
-				this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Infrastructure | CoordinatorServices>())(work));
+				this.ctx.waitUntil(
+					Effect.runPromiseWith(yield* Effect.context<Infrastructure | CoordinatorServices | AuditTrail>())(work),
+				);
 			}
 		});
 	}
@@ -1302,7 +1317,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}))),
 					logRecovered('preparation.auto-merge-failed', { executionId: execution.id, url: result.url }),
 				);
-			this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Infrastructure | CoordinatorServices>())(work));
+			this.ctx.waitUntil(
+				Effect.runPromiseWith(yield* Effect.context<Infrastructure | CoordinatorServices | AuditTrail>())(work),
+			);
 			return result;
 		});
 	}
@@ -3491,49 +3508,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ repositoryId, deliveryId: delivery },
 		);
 	}
-	private drainInbox(now: number): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const storage = yield* DurableStorage;
-			for (const stored of yield* storage.entries(Keys.inbox)) {
-				if (stored.kind === 'unreadable') {
-					yield* storage.remove(Keys.inbox, stored.id);
-					continue;
-				}
-				const entry = stored.value;
-				if (entry.due > now) continue;
-				yield* withAutomation(service =>
-					service.receive(
-						entry.delivery,
-						entry.repositoryId,
-						entry.event,
-					).pipe(
-						Effect.andThen(storage.remove(Keys.inbox, stored.id)),
-						recover(error =>
-							Effect.gen({ self: this }, function*() {
-								const attempts = entry.attempts + 1;
-								const failed = {
-									...entry,
-									attempts,
-									due: now + reconcileInterval * 2 ** entry.attempts,
-									error: decodeError(error),
-								};
-								if (retryable(error) && attempts < inboxAttempts) yield* storage.put(Keys.inbox, stored.id, failed);
-								else {
-									yield* storage.put(Keys.inboxDead, entry.delivery, failed);
-									yield* storage.remove(Keys.inbox, stored.id);
-									yield* this.auditQuietly(
-										'inbox.dead',
-										`${entry.delivery}: ${entry.event.kind} after ${attempts} attempts: ${failed.error}`,
-										'inbox.audit-failed',
-									);
-								}
-							})
-						),
-					)
-				);
-			}
-		});
-	}
 	observeRun(repositoryId: number, runId: number): Promise<void> {
 		return this.run(
 			Effect.gen({ self: this }, function*() {
@@ -3849,54 +3823,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return observedExecutions;
 		});
 	}
-	private drainObservations(
-		now: number,
-		kind: 'track' | 'observe',
-		retryDelay: number,
-		handle: (event: Observation) => CoordinatorEffect<boolean, DomainError>,
-	): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const storage = yield* DurableStorage;
-			const space = kind === 'track' ? Keys.track : Keys.observe;
-			for (const stored of yield* storage.entries(space)) {
-				if (stored.kind === 'unreadable') {
-					yield* storage.remove(space, stored.id);
-					continue;
-				}
-				const event = stored.value;
-				if ((event.due ?? 0) > now) continue;
-				yield* handle(event).pipe(
-					Effect.flatMap(done =>
-						done
-							? storage.remove(space, stored.id)
-							: storage.put(space, stored.id, {
-								repositoryId: event.repositoryId,
-								runId: event.runId,
-								due: now + retryDelay,
-							})
-					),
-					recover(error =>
-						(event.attempts ?? 0) + 1 >= observationAttempts
-							? storage.remove(space, stored.id).pipe(
-								Effect.andThen(
-									this.auditQuietly(
-										`${kind}.dead`,
-										`run ${event.runId} after ${(event.attempts ?? 0) + 1} attempts: ${decodeError(error)}`,
-										`${kind}.audit-failed`,
-									),
-								),
-							)
-							: storage.put(space, stored.id, {
-								...event,
-								due: now + retryDelay,
-								attempts: (event.attempts ?? 0) + 1,
-								error: decodeError(error),
-							})
-					),
-				);
-			}
-		});
-	}
 	private setupEdit(): CoordinatorEffect<SetupEdit | undefined, DomainError> {
 		return DurableStorage.use(readSetupEdit);
 	}
@@ -3947,17 +3873,21 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 
 				const now = clock.currentTimeMillisUnsafe();
 				const lock = yield* CoordinatorLock;
-				yield* this.drainInbox(now);
+				yield* (yield* InboxQueue).drain(
+					now,
+					entry =>
+						withAutomation(service => service.receive(entry.delivery, entry.repositoryId, entry.event)).pipe(
+							Effect.as(undefined),
+						),
+				);
 				yield* Effect.all([
 					lock.serialized(Effect.gen({ self: this }, function*() {
 						yield* this.deliverReleaseEvents(now);
-						yield* this.drainObservations(
+						yield* (yield* ObserveQueue).drain(now, event => Effect.as(this.observe(event), undefined));
+						yield* (yield* TrackQueue).drain(
 							now,
-							'observe',
-							reconcileInterval,
-							event => Effect.as(this.observe(event), true),
+							event => this.track(event).pipe(Effect.map(done => done ? undefined : trackLater(event, now))),
 						);
-						yield* this.drainObservations(now, 'track', jobPollInterval, event => this.track(event));
 						const due = yield* (yield* DurableStorage).peek(Keys.reconcileAt);
 						if (due === undefined || ((yield* (yield* AlarmPlanner).reconcileAt) ?? Number.POSITIVE_INFINITY) <= now) {
 							yield* this.reconcile();
