@@ -4,8 +4,10 @@ import { projectedEntities } from '@/contract/changes';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
-import { decodeSync, looseStruct, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
+import { looseStruct, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import type { Projection } from '@/persistence/d1/projection';
+import type { Singleton, Write } from '@/persistence/durable/keyspace.ts';
+import { Keyspace } from '@/persistence/durable/keyspace.ts';
 
 export interface EntityRef {
 	entity: ProjectedEntity;
@@ -17,27 +19,21 @@ export interface Committed extends EntityRef {
 }
 
 const batch = 64;
-const prefixes = {
-	execution: 'execution:',
-	'release-set': 'release-set:',
-	release: 'release:',
-} as const satisfies Record<ProjectedEntity, string>;
-const counter = Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0));
-const outboxEntry = mutableStruct({
+export const journalSequence = Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0));
+export const outboxEntry = mutableStruct({
 	entity: Schema.Literals(projectedEntities),
 	id: Schema.String,
 	repositoryId: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
 	revision: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
 });
-type OutboxEntry = Decoded<typeof outboxEntry>;
+export type OutboxEntry = Decoded<typeof outboxEntry>;
+export interface JournalLayout {
+	readonly entities: Record<ProjectedEntity, Keyspace<unknown>>;
+	readonly outbox: Keyspace<OutboxEntry>;
+	readonly sequence: Singleton<number>;
+}
 const projectedExecution = looseStruct({ state: Schema.String, updatedAt: Schema.Finite });
 
-export function keyOf(ref: Pick<EntityRef, 'entity' | 'id'>): string {
-	return `${prefixes[ref.entity]}${ref.id}`;
-}
-function outboxKey(revision: number): string {
-	return `outbox:${String(revision).padStart(16, '0')}`;
-}
 export function earliest(times: readonly (number | undefined)[]): number | undefined {
 	const due = times.filter(time => time !== undefined);
 	return due.length ? Math.min(...due) : undefined;
@@ -57,14 +53,23 @@ export class Journal {
 	private revision: number | undefined;
 	private readonly sequence = Semaphore.makeUnsafe(1);
 	private readonly draining = Semaphore.makeUnsafe(1);
-	constructor(private readonly storage: DurableObjectStorage) {}
+	constructor(
+		private readonly storage: DurableObjectStorage,
+		private readonly layout: JournalLayout,
+	) {}
+	private keyOf(ref: Pick<EntityRef, 'entity' | 'id'>): string {
+		return Keyspace.key(this.layout.entities[ref.entity], ref.id);
+	}
+	private outboxKey(revision: number): string {
+		return Keyspace.key(this.layout.outbox, String(revision).padStart(16, '0'));
+	}
 	private next(): Effect.Effect<number, DomainError> {
 		return Semaphore.withPermit(
 			this.sequence,
 			Effect.gen({ self: this }, function*() {
 				const current = this.revision
-					?? (yield* fromPromise(() => this.storage.get('journal:seq')).pipe(
-						Effect.flatMap(value => fromSync(() => decodeSync(counter, value ?? 0))),
+					?? (yield* fromPromise((): Promise<unknown> => this.storage.get(this.layout.sequence.key)).pipe(
+						Effect.flatMap(value => fromSync(() => this.layout.sequence.decode(value ?? 0))),
 					));
 				this.revision = current + 1;
 				return this.revision;
@@ -73,16 +78,19 @@ export class Journal {
 	}
 	commit(
 		entries: readonly [Committed, ...Committed[]],
-		extra: Record<string, unknown> = {},
+		extra: readonly Write[] = [],
 	): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const writes: Record<string, unknown>[] = [];
 			let revision = 0;
 			for (const { value, ...ref } of entries) {
 				revision = yield* this.next();
-				writes.push({ [keyOf(ref)]: value, [outboxKey(revision)]: { ...ref, revision } });
+				writes.push({ [this.keyOf(ref)]: value, [this.outboxKey(revision)]: { ...ref, revision } });
 			}
-			const chunks: Record<string, unknown>[] = [{ ...extra, 'journal:seq': revision }];
+			const chunks: Record<string, unknown>[] = [{
+				...Object.fromEntries(extra.map(write => [write.key, write.value])),
+				[this.layout.sequence.key]: revision,
+			}];
 			for (const write of writes) {
 				const last = chunks.at(-1);
 				if (last && Object.keys(last).length + 2 <= 128) Object.assign(last, write);
@@ -103,13 +111,14 @@ export class Journal {
 		return Effect.gen({ self: this }, function*() {
 			let queued = 0;
 			for (const entity of projectedEntities) {
-				const keys = [...(yield* fromPromise(() => this.storage.list({ prefix: prefixes[entity] }))).keys()];
+				const space = this.layout.entities[entity];
+				const keys = [...(yield* fromPromise(() => this.storage.list({ prefix: space.prefix }))).keys()];
 				for (let i = 0; i < keys.length; i += batch) {
 					const writes: Record<string, unknown> = {};
 					for (const key of keys.slice(i, i + batch)) {
 						const revision = yield* this.next();
-						writes[outboxKey(revision)] = { entity, id: key.slice(prefixes[entity].length), repositoryId, revision };
-						writes['journal:seq'] = revision;
+						writes[this.outboxKey(revision)] = { entity, id: Keyspace.id(space, key), repositoryId, revision };
+						writes[this.layout.sequence.key] = revision;
 					}
 					yield* fromPromise(() => this.storage.put(writes));
 					queued += keys.slice(i, i + batch).length;
@@ -119,7 +128,7 @@ export class Journal {
 		});
 	}
 	pending(): Effect.Effect<boolean, DomainError> {
-		return fromPromise(() => this.storage.list({ prefix: 'outbox:', limit: 1 })).pipe(
+		return fromPromise(() => this.storage.list({ prefix: this.layout.outbox.prefix, limit: 1 })).pipe(
 			Effect.map(entries => entries.size > 0),
 		);
 	}
@@ -131,13 +140,15 @@ export class Journal {
 			const clock = yield* Clock.Clock;
 
 			for (;;) {
-				const entries = yield* fromPromise(() => this.storage.list({ prefix: 'outbox:', limit: batch }));
+				const entries = yield* fromPromise(() =>
+					this.storage.list({ prefix: this.layout.outbox.prefix, limit: batch })
+				);
 				if (!entries.size) return;
 				const latest = new Map<string, OutboxEntry>();
 				for (const value of entries.values()) {
 					const parsed = safeDecode(outboxEntry, value);
 					if (!parsed.success) continue;
-					const key = keyOf(parsed.data);
+					const key = this.keyOf(parsed.data);
 					if ((latest.get(key)?.revision ?? 0) < parsed.data.revision) latest.set(key, parsed.data);
 				}
 				const values = yield* fromPromise(() => this.storage.get([...latest.keys()]));

@@ -57,3 +57,22 @@ export const setupPullMerge = mutableStruct({
 	}),
 });
 export type SetupPullMerge = Decoded<typeof setupPullMerge>;
+
+export const inboxEvent = Schema.Union([
+	mutableStruct({ kind: Schema.Literal('push'), ref: Schema.String }),
+	mutableStruct({ kind: Schema.Literal('release'), action: Schema.String, tag: Schema.optional(Schema.String) }),
+	mutableStruct({
+		kind: Schema.Literal('workflow_run'),
+		action: Schema.String,
+		run: mutableStruct({
+			id: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+			conclusion: Schema.NullOr(Schema.String),
+			event: Schema.String,
+			path: Schema.String,
+			headRepositoryId: Schema.NullOr(Schema.Finite.check(Schema.isInt())),
+		}),
+	}),
+	mutableStruct({ kind: Schema.Literal('pull_request'), edit: setupPullEdit }),
+	mutableStruct({ kind: Schema.Literal('setup_merged'), merge: setupPullMerge }),
+]);
+export type InboxEvent = Decoded<typeof inboxEvent>;

@@ -3,8 +3,6 @@ import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
-import type { InboxEvent } from '@/automation/inbox';
-import { inboxEntry } from '@/automation/inbox';
 import {
 	commitVersion,
 	enableAutoMerge,
@@ -66,8 +64,9 @@ import {
 import type { GitHubRunResult, RunJob } from '@/github/run-state.ts';
 import { classifyJob, classifyRun, jobProgressState } from '@/github/run-state.ts';
 import { GitHubRejection } from '@/github/transport.ts';
+import type { InboxEvent } from '@/github/webhooks.ts';
 import { fromPromise, fromSync, recover, retryable, toDomainError } from '@/kernel/errors/classify.ts';
-import { decodeError, isDecodingFailure } from '@/kernel/errors/decoding.ts';
+import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { parseRetryAfter } from '@/kernel/http/http-date.ts';
@@ -76,10 +75,12 @@ import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { approvalShaPattern, sha256DigestPattern } from '@/kernel/schema/ids.ts';
 import { matches, sha } from '@/kernel/schema/result.ts';
-import type { Decoded } from '@/kernel/schema/structs.ts';
-import { decodeSync, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
+import { decodeSync, mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
+import type { Write } from '@/persistence/durable/keyspace.ts';
+import { Keyspace, Singleton } from '@/persistence/durable/keyspace.ts';
+import { DurableStorage } from '@/persistence/durable/storage.ts';
 import type { Committed } from '@/persistence/journal';
 import { earliest, Journal } from '@/persistence/journal';
 import type { ClaimStep, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
@@ -90,7 +91,6 @@ import {
 	entry,
 	fail,
 	label,
-	ledgerSchema,
 	pacedPublication,
 	publicationOf,
 	publish,
@@ -111,12 +111,14 @@ import {
 	verifySecondaryPublications,
 } from '@/publication/registries/verify.ts';
 import { projectionRules } from '@/release/adapters/d1/completions.ts';
+import type { Observation, ReleaseSetRecord, ReleaseWake } from '@/release/adapters/do/keys.ts';
+import { journalLayout, Keys } from '@/release/adapters/do/keys.ts';
 import type { DistributionArtifact } from '@/release/distribution/artifact.ts';
 import { readDistributionArtifact } from '@/release/distribution/artifact.ts';
 import { observedDistribution } from '@/release/distribution/observation.ts';
 import type { DistributionFile } from '@/release/distribution/validation.ts';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/release/distribution/validation.ts';
-import { decodeEventV1, decodeExecutionV1, identifyExecution } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1, identifyExecution } from '@/release/domain/execution/codec-v1.ts';
 import {
 	createExecution,
 	dependenciesReady,
@@ -182,39 +184,12 @@ export interface CoordinatorBindings extends AutomationBindings {
 	PUBLISH_BUDGET: DurableObjectNamespace<PublishBudget>;
 	SIGNER?: TagSigner;
 }
-interface ReleaseSetRecord {
-	target: string;
-	ids: string[];
-	workflowId?: string;
-	started?: boolean;
-	completed?: boolean;
-}
 interface ReleaseOperation {
 	id: string;
 	operation: string;
 	paced: boolean;
 	dependencies: string[];
 }
-const releaseSetRecord: Schema.Codec<ReleaseSetRecord, unknown> = mutableStruct({
-	target: Schema.String,
-	ids: mutableArray(Schema.String),
-	workflowId: Schema.optional(Schema.String),
-	started: Schema.optional(Schema.Boolean),
-	completed: Schema.optional(Schema.Boolean),
-});
-const observation = mutableStruct({
-	repositoryId: Schema.Finite,
-	runId: Schema.Finite,
-	due: Schema.optional(Schema.Finite),
-	attempts: Schema.optional(Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0))),
-	error: Schema.optional(Schema.String),
-});
-const releaseWake = Schema.Union([
-	Schema.Literal(true),
-	mutableStruct({ members: Schema.optional(mutableArray(Schema.String)), due: Schema.Finite }),
-]);
-type ReleaseWake = Decoded<typeof releaseWake>;
-const reconcileDue = Schema.NullOr(Schema.Finite);
 const inboxAttempts = 8;
 const observationAttempts = 10;
 const jobPollInterval = 30_000;
@@ -316,7 +291,7 @@ function referenceProbe(reference: string, version: string): Publication | undef
 		required: true,
 	};
 }
-type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, Automation>;
+type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, Automation | DurableStorage>;
 type GateSubject =
 	& Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>
 	& Partial<Pick<Execution, 'reruns'>>;
@@ -351,10 +326,13 @@ function skippedNote(gate: ReleaseGate, fact: string, skip: GateSkip): string {
 }
 
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
-	private readonly application: Layer.Layer<Automation, DomainError>;
+	private readonly application: Layer.Layer<Automation | DurableStorage, DomainError>;
 	constructor(ctx: DurableObjectState, env: CoordinatorBindings, application?: Layer.Layer<Automation, DomainError>) {
 		super(ctx, env);
-		this.application = application ?? applicationLayer(env, work => ctx.waitUntil(work));
+		this.application = Layer.merge(
+			application ?? applicationLayer(env, work => ctx.waitUntil(work)),
+			DurableStorage.layer(ctx.storage),
+		);
 	}
 	private run<A, E>(
 		work: CoordinatorEffect<A, E>,
@@ -370,7 +348,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	private readonly lock = Semaphore.makeUnsafe(1);
-	private readonly journal = new Journal(this.ctx.storage);
+	private readonly journal = new Journal(this.ctx.storage, journalLayout);
 	private projectionRetryAt: number | undefined;
 	private releaseHistory: ReleaseHistory | undefined;
 	private serialized<A>(work: CoordinatorEffect<A, DomainError>): CoordinatorEffect<A, DomainError> {
@@ -386,24 +364,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<A> {
 		return this.run(this.serialized(work), operation, fields);
 	}
-	private read(key: string): CoordinatorEffect<unknown, DomainError> {
-		return fromPromise(() => this.ctx.storage.get(key));
-	}
-	private list(options: DurableObjectListOptions): CoordinatorEffect<Map<string, unknown>, DomainError> {
-		return fromPromise(() => this.ctx.storage.list(options));
-	}
-	private write(key: string, value: unknown): CoordinatorEffect<void, DomainError> {
-		return fromPromise(() => this.ctx.storage.put(key, value));
-	}
-	private writeAll(entries: Record<string, unknown>): CoordinatorEffect<void, DomainError> {
-		return fromPromise(() => this.ctx.storage.put(entries));
-	}
-	private remove(key: string): CoordinatorEffect<void, DomainError> {
-		return fromPromise(() => this.ctx.storage.delete(key)).pipe(Effect.asVoid);
-	}
 	private commit(
 		entries: readonly [Committed, ...Committed[]],
-		extra?: Record<string, unknown>,
+		extra?: readonly Write[],
 	): CoordinatorEffect<void, DomainError> {
 		return this.journal.commit(entries, extra).pipe(Effect.tap(() =>
 			fromSync(() => {
@@ -445,17 +408,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
+			const storage = yield* DurableStorage;
 			const now = clock.currentTimeMillisUnsafe();
-			const wakes = [...(yield* this.list({ prefix: 'release-wake:' })).values()].map(value => {
-				const wake = safeDecode(releaseWake, value);
-				return wake.success ? wakeDue(wake.data) : now;
-			});
+			const wakes = (yield* storage.entries(Keys.releaseWake)).map(wake =>
+				wake.kind === 'readable' ? wakeDue(wake.value) : now
+			);
 			const observations = [
-				...(yield* this.list({ prefix: 'observe:' })).values(),
-				...(yield* this.list({ prefix: 'track:' })).values(),
-			].map(value => safeDecode(observation, value).data?.due ?? now);
-			const inbox = [...(yield* this.list({ prefix: 'inbox:' })).values()].map(value =>
-				safeDecode(inboxEntry, value).data?.due ?? now
+				...(yield* storage.entries(Keys.observe)),
+				...(yield* storage.entries(Keys.track)),
+			].map(entry => entry.kind === 'readable' ? (entry.value.due ?? now) : now);
+			const inbox = (yield* storage.entries(Keys.inbox)).map(entry =>
+				entry.kind === 'readable' ? entry.value.due : now
 			);
 			const pending = yield* this.journal.pending();
 			const reconcileAt = yield* this.reconcileAt();
@@ -471,17 +434,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		});
 	}
 	private reconcileAt(): CoordinatorEffect<number | undefined, DomainError> {
-		return this.read('reconcile-at').pipe(
-			Effect.map(value => {
-				const parsed = safeDecode(reconcileDue, value);
-				return parsed.success ? (parsed.data ?? undefined) : undefined;
-			}),
+		return DurableStorage.use(storage => storage.peek(Keys.reconcileAt)).pipe(
+			Effect.map(stored => stored?.kind === 'readable' ? (stored.value ?? undefined) : undefined),
 		);
 	}
 	private requestReconcile(at: number): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const current = yield* this.reconcileAt();
-			if (current === undefined || current > at) yield* this.write('reconcile-at', at);
+			if (current === undefined || current > at) yield* (yield* DurableStorage).write(Keys.reconcileAt, at);
 		});
 	}
 	private readonly store = Effect.map(Automation, service => service.store);
@@ -490,16 +450,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		{ executions: Execution[]; unreadable: { id: string; error: string }[] },
 		DomainError
 	> {
-		return this.list({ prefix: 'execution:' }).pipe(Effect.map(entries => {
+		return DurableStorage.use(storage => storage.entries(Keys.execution)).pipe(Effect.map(entries => {
 			const executions: Execution[] = [];
 			const unreadable: { id: string; error: string }[] = [];
-			for (const [key, value] of entries) {
-				try {
-					executions.push(decodeExecutionV1(value));
-				} catch (error) {
-					if (!isDecodingFailure(error)) throw error;
-					unreadable.push({ id: key.slice('execution:'.length), error: decodeError(error) });
-				}
+			for (const entry of entries) {
+				if (entry.kind === 'readable') executions.push(entry.value);
+				else unreadable.push({ id: entry.id, error: entry.error });
 			}
 			return { executions, unreadable };
 		}));
@@ -516,7 +472,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
-			yield* this.write(`quarantine:${id}`, { error, at: clock.currentTimeMillisUnsafe() });
+			yield* (yield* DurableStorage).put(Keys.quarantine, id, { error, at: clock.currentTimeMillisUnsafe() });
 			yield* this.auditQuietly('execution.quarantined', `${id}: ${error}`, 'quarantine.audit-failed');
 		});
 	}
@@ -528,15 +484,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		}).pipe(recover(failure => this.quarantine(id, decodeError(failure))));
 	}
 	private stored(id: string): CoordinatorEffect<Execution | undefined, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const value = yield* this.read(`execution:${id}`);
-			return value === undefined ? undefined : yield* fromSync(() => decodeExecutionV1(value));
-		});
+		return DurableStorage.use(storage => storage.get(Keys.execution, id));
 	}
-	private releaseSet(key: string): CoordinatorEffect<ReleaseSetRecord | undefined, DomainError> {
-		return this.read(key).pipe(
-			Effect.flatMap(value => fromSync(() => decodeSync(Schema.optional(releaseSetRecord), value))),
-		);
+	private releaseSet(preparationId: string): CoordinatorEffect<ReleaseSetRecord | undefined, DomainError> {
+		return DurableStorage.use(storage => storage.get(Keys.releaseSet, preparationId));
 	}
 	private pendingContinuations(
 		observed: Execution,
@@ -589,15 +540,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const now = clock.currentTimeMillisUnsafe();
 			execution.updatedAt = now;
-			const extra: Record<string, unknown> = {};
+			const extra: Write[] = [];
 			const set = execution.releaseSet;
 			if (!set?.workflowId) {
 				const current = yield* this.reconcileAt();
-				extra['reconcile-at'] = Math.min(current ?? Number.POSITIVE_INFINITY, now + settleInterval);
+				extra.push(
+					Singleton.write(Keys.reconcileAt, Math.min(current ?? Number.POSITIVE_INFINITY, now + settleInterval)),
+				);
 			} else if (JSON.stringify({ ...previous, updatedAt: 0 }) !== JSON.stringify({ ...execution, updatedAt: 0 })) {
-				const key = `release-wake:${set.preparationId}`;
-				const members = wakeMembers(safeDecode(releaseWake, yield* this.read(key)).data, execution.id);
-				extra[key] = { ...(members ? { members } : {}), due: now };
+				const wake = yield* (yield* DurableStorage).find(Keys.releaseWake, set.preparationId);
+				const members = wakeMembers(wake?.kind === 'readable' ? wake.value : undefined, execution.id);
+				extra.push(Keyspace.write(Keys.releaseWake, set.preparationId, { ...(members ? { members } : {}), due: now }));
 			}
 			yield* this.commit(
 				[
@@ -653,7 +606,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					);
 				}
 			}).pipe(logRecovered('package-tags.failed', { executionId: execution.id }));
-			this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Automation>())(work));
+			this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Automation | DurableStorage>())(work));
 		});
 	}
 	packageTags(
@@ -804,7 +757,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				?? [];
 			if (!required.length) return;
 			const id = releaseEventId({ ...execution, version: execution.version });
-			if (yield* this.read(`release-emitted:${id}`)) return;
+			if (yield* (yield* DurableStorage).has(Keys.releaseEmitted, id)) return;
 			return (yield* history).completed(execution, required);
 		});
 	}
@@ -837,10 +790,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				version: execution.version,
 				release,
 			};
-			yield* this.commit([{ entity: 'release', id, repositoryId: execution.repositoryId, value: event }], {
-				[`release-event:${id}`]: event,
-				[`release-emitted:${id}`]: true,
-			});
+			yield* this.commit(
+				[{ entity: 'release', id, repositoryId: execution.repositoryId, value: event }],
+				[Keyspace.write(Keys.releaseEvent, id, event), Keyspace.write(Keys.releaseEmitted, id, true)],
+			);
 		});
 	}
 	execution(id: string): Promise<Execution | undefined> {
@@ -854,10 +807,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<void> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				const key = `subscription-issue:${id}`;
-				if ((yield* this.read(key)) === true) return;
+				const storage = yield* DurableStorage;
+				if ((yield* storage.find(Keys.subscriptionIssue, id))?.kind === 'readable') return;
 				yield* (yield* this.gateway).ensureIssue(repository, repositoryId, issue);
-				yield* this.write(key, true);
+				yield* storage.put(Keys.subscriptionIssue, id, true);
 			}),
 			'coordinator.subscription.issue',
 			{ repositoryId, deliveryId: id },
@@ -922,35 +875,39 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	exportJournal(): Promise<{ key: string; value: unknown }[]> {
 		return this.run(
-			this.list({}).pipe(Effect.map(entries => [...entries].map(([key, value]) => ({ key, value })))),
+			DurableStorage.use(storage => storage.dump),
 			'coordinator.exportJournal',
 			{},
 		);
 	}
 	releaseEvents(): Promise<AutomationEvent[]> {
 		return this.run(
-			this.list({ prefix: 'release-event:', limit: 100 }).pipe(
-				Effect.flatMap(entries => fromSync(() => [...entries.values()].map(decodeEventV1))),
+			DurableStorage.use(storage => storage.list(Keys.releaseEvent, 100)).pipe(
+				Effect.map(entries => entries.map(entry => entry.value)),
 			),
 			'coordinator.releaseEvents',
 			{},
 		);
 	}
 	acknowledgeReleaseEvent(id: string): Promise<void> {
-		return this.run(this.remove(`release-event:${id}`), 'coordinator.acknowledgeReleaseEvent', { executionId: id });
+		return this.run(
+			DurableStorage.use(storage => storage.remove(Keys.releaseEvent, id)),
+			'coordinator.acknowledgeReleaseEvent',
+			{ executionId: id },
+		);
 	}
 	/** Persist wake-ups separately so failed delivery survives Worker restarts. */
 	private wakeReleaseWorkflows(): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
-			const wakes: Record<string, unknown> = {};
-			for (const [key, value] of yield* this.list({ prefix: 'release-set:' })) {
-				const release = yield* fromSync(() => decodeSync(releaseSetRecord, value));
+			const storage = yield* DurableStorage;
+			const wakes: Write[] = [];
+			for (const { id, value: release } of yield* storage.list(Keys.releaseSet)) {
 				if (!release.workflowId || release.completed) continue;
-				wakes[`release-wake:${key.slice('release-set:'.length)}`] = { due: clock.currentTimeMillisUnsafe() };
+				wakes.push(Keyspace.write(Keys.releaseWake, id, { due: clock.currentTimeMillisUnsafe() }));
 			}
-			if (Object.keys(wakes).length) yield* this.writeAll(wakes);
+			if (wakes.length) yield* storage.writeAll(wakes);
 		});
 	}
 	private deliverReleaseWake(
@@ -995,26 +952,29 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private deliverReleaseEvents(now: number): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			for (const [key, value] of yield* this.list({ prefix: 'release-wake:' })) {
-				const parsed = safeDecode(releaseWake, value);
-				if (!parsed.success) {
-					yield* this.remove(key);
+			const storage = yield* DurableStorage;
+			for (const entry of yield* storage.entries(Keys.releaseWake)) {
+				const preparationId = entry.id;
+				if (entry.kind === 'unreadable') {
+					yield* storage.remove(Keys.releaseWake, preparationId);
 					continue;
 				}
-				const wake = parsed.data;
+				const wake = entry.value;
 				if (wakeDue(wake) > now) continue;
-				const preparationId = key.slice('release-wake:'.length);
-				const release = yield* this.releaseSet(`release-set:${preparationId}`);
+				const release = yield* this.releaseSet(preparationId);
 				const workflowId = release?.workflowId;
 				if (!release || !workflowId || release.completed) {
-					yield* this.remove(key);
+					yield* storage.remove(Keys.releaseWake, preparationId);
 					continue;
 				}
 				yield* this.deliverReleaseWake(preparationId, { ...release, workflowId }, wake).pipe(
-					Effect.andThen(this.remove(key)),
+					Effect.andThen(storage.remove(Keys.releaseWake, preparationId)),
 					recover(error =>
-						Effect.gen({ self: this }, function*() {
-							yield* this.write(key, { ...(wake === true ? {} : wake), due: now + reconcileInterval });
+						Effect.gen(function*() {
+							yield* storage.put(Keys.releaseWake, preparationId, {
+								...(wake === true ? {} : wake),
+								due: now + reconcileInterval,
+							});
 							yield* logFailure('release-wake.failed', error, { preparationId });
 						})
 					),
@@ -1024,7 +984,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private operations(preparationId: string, workflowId: string): CoordinatorEffect<ReleaseOperation[], DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const release = yield* this.releaseSet(`release-set:${preparationId}`);
+			const release = yield* this.releaseSet(preparationId);
 			if (!release || release.workflowId !== workflowId) {
 				return yield* precondition('Release Workflow identity mismatch');
 			}
@@ -1135,7 +1095,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						return yield* precondition('Release is incomplete');
 					}
 				}
-				const release = yield* this.releaseSet(`release-set:${preparationId}`);
+				const release = yield* this.releaseSet(preparationId);
 				if (!release) return yield* precondition('Release set is missing');
 				yield* this.putReleaseSet(preparationId, { ...release, completed: true });
 			}),
@@ -1152,8 +1112,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (yield* this.suspended(preparation.repositoryId)) {
 					return yield* precondition('Repository is suspended');
 				}
-				const key = `release-set:${preparationId}`;
-				const prior = yield* this.releaseSet(key);
+				const prior = yield* this.releaseSet(preparationId);
 				if (prior) {
 					if (prior.target !== target) return yield* precondition('Release set already targets another revision');
 					return yield* Effect.forEach(prior.ids, id => this.get(id), { concurrency: 'unbounded' });
@@ -1190,10 +1149,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					repositoryId: execution.repositoryId,
 					value: execution,
 				}));
-				yield* this.commit([
-					{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
-					...members,
-				], { [`release-wake:${preparationId}`]: { due: clock.currentTimeMillisUnsafe() } });
+				yield* this.commit(
+					[
+						{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
+						...members,
+					],
+					[Keyspace.write(Keys.releaseWake, preparationId, { due: clock.currentTimeMillisUnsafe() })],
+				);
 				return executions;
 			}),
 			'coordinator.startReleaseSet',
@@ -1354,7 +1316,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					previous,
 					next,
 				).pipe(logRecovered('preparation.restate-failed', { executionId: upgraded.id, url: result.url }));
-				this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Automation>())(work));
+				this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Automation | DurableStorage>())(work));
 			}
 		});
 	}
@@ -1386,7 +1348,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}))),
 					logRecovered('preparation.auto-merge-failed', { executionId: execution.id, url: result.url }),
 				);
-			this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Automation>())(work));
+			this.ctx.waitUntil(Effect.runPromiseWith(yield* Effect.context<Automation | DurableStorage>())(work));
 			return result;
 		});
 	}
@@ -2264,8 +2226,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		});
 	}
 	private ledgers(): CoordinatorEffect<Ledger[], DomainError> {
-		return this.list({ prefix: 'ledger:' }).pipe(
-			Effect.flatMap(entries => fromSync(() => [...entries.values()].map(value => decodeSync(ledgerSchema, value)))),
+		return DurableStorage.use(storage => storage.list(Keys.ledger)).pipe(
+			Effect.map(entries => entries.map(entry => entry.value)),
 		);
 	}
 	private acceptedUploads(ledger: Ledger): CoordinatorEffect<Ledger, DomainError> {
@@ -2290,16 +2252,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private ledgerOf(execution: Execution): CoordinatorEffect<Ledger, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const stored = yield* this.read(`ledger:${execution.id}`);
-			if (stored !== undefined) {
-				return yield* this.acceptedUploads(yield* fromSync(() => decodeSync(ledgerSchema, stored)));
-			}
+			const storage = yield* DurableStorage;
+			const stored = yield* storage.get(Keys.ledger, execution.id);
+			if (stored !== undefined) return yield* this.acceptedUploads(stored);
 			const repository = yield* (yield* this.store).repositories.get(execution.repositoryId);
 			if (!repository) return yield* precondition('Repository is not enrolled');
 			const version = execution.version;
 			if (!version) return yield* precondition('The execution has no version to publish');
 			const ledger = planLedger(execution, repository.inventory, version);
-			yield* this.write(`ledger:${execution.id}`, ledger);
+			yield* storage.put(Keys.ledger, execution.id, ledger);
 			return ledger;
 		});
 	}
@@ -2366,7 +2327,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				...ledger,
 				records: ledger.records.map(entry => entry.purl === record.purl ? record : entry),
 			};
-			yield* this.write(`ledger:${ledger.executionId}`, next);
+			yield* (yield* DurableStorage).put(Keys.ledger, ledger.executionId, next);
 			const publication = publicationOf(record);
 			if (publication) yield* this.recordPublication(ledger.executionId, record, publication);
 			return next;
@@ -3368,9 +3329,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			// Classify GitHub first: ledger evidence must never override cancellation,
 			// action required, a startup failure, or incomplete/unknown job evidence.
 			if (!result.retry) return false;
-			const stored = yield* this.read(`ledger:${execution.id}`);
-			if (stored === undefined) return result.retry === 'runner-unassigned';
-			const ledger = yield* fromSync(() => decodeSync(ledgerSchema, stored));
+			const ledger = yield* (yield* DurableStorage).get(Keys.ledger, execution.id);
+			if (ledger === undefined) return result.retry === 'runner-unassigned';
 			const open = ledger.records.filter(record =>
 				record.required && !released(record) && record.status.state !== 'uploaded'
 			);
@@ -3452,7 +3412,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.gen({ self: this }, function*() {
 				const clock = yield* Clock.Clock;
 
-				if (action === 'reconcile') yield* this.remove(`quarantine:${id}`);
+				if (action === 'reconcile') yield* (yield* DurableStorage).remove(Keys.quarantine, id);
 				const execution = yield* this.get(id);
 				const takeover = action === 'reconcile' || execution.operation !== 'promote'
 					? undefined
@@ -3567,10 +3527,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.gen({ self: this }, function*() {
 				const clock = yield* Clock.Clock;
 
-				const key = `inbox:${delivery}`;
-				if (yield* this.read(key)) return;
+				const storage = yield* DurableStorage;
+				if (yield* storage.has(Keys.inbox, delivery)) return;
 				const now = clock.currentTimeMillisUnsafe();
-				yield* this.write(key, { delivery, repositoryId, event, attempts: 0, due: now });
+				yield* storage.put(Keys.inbox, delivery, { delivery, repositoryId, event, attempts: 0, due: now });
 				yield* this.arm(now);
 			}),
 			'coordinator.receive',
@@ -3579,13 +3539,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private drainInbox(now: number): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			for (const [key, value] of yield* this.list({ prefix: 'inbox:' })) {
-				const parsed = safeDecode(inboxEntry, value);
-				if (!parsed.success) {
-					yield* this.remove(key);
+			const storage = yield* DurableStorage;
+			for (const stored of yield* storage.entries(Keys.inbox)) {
+				if (stored.kind === 'unreadable') {
+					yield* storage.remove(Keys.inbox, stored.id);
 					continue;
 				}
-				const entry = parsed.data;
+				const entry = stored.value;
 				if (entry.due > now) continue;
 				yield* withAutomation(service =>
 					service.receive(
@@ -3593,7 +3553,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						entry.repositoryId,
 						entry.event,
 					).pipe(
-						Effect.andThen(this.remove(key)),
+						Effect.andThen(storage.remove(Keys.inbox, stored.id)),
 						recover(error =>
 							Effect.gen({ self: this }, function*() {
 								const attempts = entry.attempts + 1;
@@ -3603,10 +3563,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 									due: now + reconcileInterval * 2 ** entry.attempts,
 									error: decodeError(error),
 								};
-								if (retryable(error) && attempts < inboxAttempts) yield* this.write(key, failed);
+								if (retryable(error) && attempts < inboxAttempts) yield* storage.put(Keys.inbox, stored.id, failed);
 								else {
-									yield* this.write(`inbox-dead:${entry.delivery}`, failed);
-									yield* this.remove(key);
+									yield* storage.put(Keys.inboxDead, entry.delivery, failed);
+									yield* storage.remove(Keys.inbox, stored.id);
 									yield* this.auditQuietly(
 										'inbox.dead',
 										`${entry.delivery}: ${entry.event.kind} after ${attempts} attempts: ${failed.error}`,
@@ -3623,7 +3583,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	observeRun(repositoryId: number, runId: number): Promise<void> {
 		return this.run(
 			Effect.gen({ self: this }, function*() {
-				yield* this.write(`observe:${runId}`, { repositoryId, runId });
+				yield* (yield* DurableStorage).put(Keys.observe, String(runId), { repositoryId, runId });
 				yield* this.wakeUp();
 			}),
 			'coordinator.observeRun',
@@ -3633,8 +3593,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	trackRun(repositoryId: number, runId: number): Promise<void> {
 		return this.run(
 			Effect.gen({ self: this }, function*() {
-				const key = `track:${runId}`;
-				if ((yield* this.read(key)) === undefined) yield* this.write(key, { repositoryId, runId });
+				const storage = yield* DurableStorage;
+				if (!(yield* storage.has(Keys.track, String(runId)))) {
+					yield* storage.put(Keys.track, String(runId), { repositoryId, runId });
+				}
 				yield* this.wakeUp();
 			}),
 			'coordinator.trackRun',
@@ -3642,7 +3604,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	private observedRun(
-		event: Decoded<typeof observation>,
+		event: Observation,
 	): CoordinatorEffect<{ repository: ReadyRepository; run: WorkflowRun; token: string } | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const stored = yield* (yield* this.store).repositories.get(event.repositoryId);
@@ -3666,7 +3628,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return { repository, run, token };
 		});
 	}
-	private observe(event: Decoded<typeof observation>): CoordinatorEffect<void, DomainError> {
+	private observe(event: Observation): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const observed = yield* this.observedRun(event);
 			if (!observed) return;
@@ -3674,7 +3636,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			yield* this.openGates(observed.repository, observed.run, observed.token, Effect.succeed(executions));
 		});
 	}
-	private track(event: Decoded<typeof observation>): CoordinatorEffect<boolean, DomainError> {
+	private track(event: Observation): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const observed = yield* this.observedRun(event);
 			if (!observed || observed.run.status === 'completed') return true;
@@ -3818,7 +3780,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						&& (run.event === 'workflow_dispatch' || (binding.publications?.length ?? 0) > 0);
 					const eventId = `observed:${run.id}`;
 					const id = yield* executionId(repository.id, streamName, operation, eventId);
-					if (yield* this.read(`execution:${id}`)) {
+					if (yield* (yield* DurableStorage).has(Keys.execution, id)) {
 						const previous = yield* this.get(id);
 						if (previous.state === 'succeeded' || (previous.runAttempt ?? 0) >= run.run_attempt) continue;
 					}
@@ -3937,26 +3899,31 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		now: number,
 		kind: 'track' | 'observe',
 		retryDelay: number,
-		handle: (event: Decoded<typeof observation>) => CoordinatorEffect<boolean, DomainError>,
+		handle: (event: Observation) => CoordinatorEffect<boolean, DomainError>,
 	): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			for (const [key, value] of yield* this.list({ prefix: `${kind}:` })) {
-				const parsed = safeDecode(observation, value);
-				if (!parsed.success) {
-					yield* this.remove(key);
+			const storage = yield* DurableStorage;
+			const space = kind === 'track' ? Keys.track : Keys.observe;
+			for (const stored of yield* storage.entries(space)) {
+				if (stored.kind === 'unreadable') {
+					yield* storage.remove(space, stored.id);
 					continue;
 				}
-				const event = parsed.data;
+				const event = stored.value;
 				if ((event.due ?? 0) > now) continue;
 				yield* handle(event).pipe(
 					Effect.flatMap(done =>
 						done
-							? this.remove(key)
-							: this.write(key, { repositoryId: event.repositoryId, runId: event.runId, due: now + retryDelay })
+							? storage.remove(space, stored.id)
+							: storage.put(space, stored.id, {
+								repositoryId: event.repositoryId,
+								runId: event.runId,
+								due: now + retryDelay,
+							})
 					),
 					recover(error =>
 						(event.attempts ?? 0) + 1 >= observationAttempts
-							? this.remove(key).pipe(
+							? storage.remove(space, stored.id).pipe(
 								Effect.andThen(
 									this.auditQuietly(
 										`${kind}.dead`,
@@ -3965,7 +3932,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 									),
 								),
 							)
-							: this.write(key, {
+							: storage.put(space, stored.id, {
 								...event,
 								due: now + retryDelay,
 								attempts: (event.attempts ?? 0) + 1,
@@ -3977,7 +3944,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		});
 	}
 	private setupEdit(): CoordinatorEffect<SetupEdit | undefined, DomainError> {
-		return this.read('setup-edit').pipe(
+		return DurableStorage.use(storage => storage.read(Keys.setupEdit)).pipe(
 			Effect.flatMap(value => value === undefined ? Effect.undefined : fromSync(() => decodeSetupEditV1(value))),
 		);
 	}
@@ -3989,7 +3956,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const previous = yield* this.setupEdit();
 				if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return false;
 				const due = clock.currentTimeMillisUnsafe() + 5000;
-				yield* this.write('setup-edit', { ...edit, due });
+				yield* (yield* DurableStorage).write(Keys.setupEdit, { ...edit, due });
 				yield* this.arm(due);
 				return true;
 			}),
@@ -4018,7 +3985,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				store.auditFailure('beepboop', 'repository.setup.failed', `${edit.repositoryId} ${edit.head}`),
 			);
 			const current = yield* this.setupEdit();
-			if (current?.due === edit.due) yield* this.remove('setup-edit');
+			if (current?.due === edit.due) yield* (yield* DurableStorage).clear(Keys.setupEdit);
 		});
 	}
 	alarm(): Promise<void> {
@@ -4038,7 +4005,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							event => Effect.as(this.observe(event), true),
 						);
 						yield* this.drainObservations(now, 'track', jobPollInterval, event => this.track(event));
-						const due = yield* this.read('reconcile-at');
+						const due = yield* (yield* DurableStorage).peek(Keys.reconcileAt);
 						if (due === undefined || ((yield* this.reconcileAt()) ?? Number.POSITIVE_INFINITY) <= now) {
 							yield* this.reconcile();
 						}
@@ -4353,12 +4320,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				!['succeeded', 'failed', 'cancelled', 'pending'].includes(execution.state) || unresolved(execution)
 				|| publishedAfterFailure(execution)
 			) return true;
-			const stored = yield* this.read(`ledger:${execution.id}`);
-			if (stored !== undefined) {
-				const ledger = yield* fromSync(() => decodeSync(ledgerSchema, stored));
-				if (ledger.records.some(record => record.status.state === 'uploaded' || missingReceipt(execution, record))) {
-					return true;
-				}
+			const ledger = yield* (yield* DurableStorage).get(Keys.ledger, execution.id);
+			if (ledger?.records.some(record => record.status.state === 'uploaded' || missingReceipt(execution, record))) {
+				return true;
 			}
 			return execution.state === 'succeeded'
 				&& ((yield* this.pendingContinuations(execution)).length > 0
@@ -4375,13 +4339,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
-			const storedLedger = yield* this.read(`ledger:${execution.id}`);
-			if (storedLedger !== undefined) {
-				const ledger = yield* fromSync(() => decodeSync(ledgerSchema, storedLedger));
-				if (ledger.records.some(record => record.status.state === 'uploaded' || missingReceipt(execution, record))) {
-					yield* this.acceptedUploads(ledger);
-					return 'continue' as const;
-				}
+			const ledger = yield* (yield* DurableStorage).get(Keys.ledger, execution.id);
+			if (ledger?.records.some(record => record.status.state === 'uploaded' || missingReceipt(execution, record))) {
+				yield* this.acceptedUploads(ledger);
+				return 'continue' as const;
 			}
 
 			if (unresolved(execution)) {
@@ -4458,12 +4419,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
+			const storage = yield* DurableStorage;
 			const started = clock.currentTimeMillisUnsafe();
-			if (!onlyExecution) yield* this.write('reconcile-at', started + reconcileInterval);
+			if (!onlyExecution) yield* storage.write(Keys.reconcileAt, started + reconcileInterval);
 			const journal = yield* this.readJournal();
-			const quarantined = new Set(
-				[...(yield* this.list({ prefix: 'quarantine:' })).keys()].map(key => key.slice('quarantine:'.length)),
-			);
+			const quarantined = new Set(yield* storage.ids(Keys.quarantine));
 			for (const entry of journal.unreadable) {
 				if (!quarantined.has(entry.id)) yield* this.quarantine(entry.id, entry.error);
 			}
@@ -4473,7 +4433,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (executions[0] && (yield* this.suspended(executions[0].repositoryId))) {
 				return;
 			}
-			if (!onlyExecution) yield* this.write('reconcile-at', null);
+			if (!onlyExecution) yield* storage.write(Keys.reconcileAt, null);
 			const active = executions.filter(
 				(e) => !['succeeded', 'cancelled', 'failed'].includes(e.state),
 			);
