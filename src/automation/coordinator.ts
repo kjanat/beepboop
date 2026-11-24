@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Clock, Context, Effect, Layer, ManagedRuntime, Predicate, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
+import { ApprovalGate } from '@/automation/approval-gate.ts';
 import { GitHubReleases } from '@/automation/github-releases.ts';
 import { restatePreparation } from '@/automation/preparation-pull-requests';
 import { PreparationWriter } from '@/automation/preparation-writer.ts';
@@ -15,12 +16,9 @@ import type { AutomationBindings } from '@/automation/service';
 import { Automation, applicationLayer, withAutomation } from '@/automation/service';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { TagSigning } from '@/automation/tag-signing.ts';
-import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
-import { coversBinding } from '@/credentials/grant.ts';
-import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
+import { wakeUp } from '@/automation/wake-up.ts';
+import type { BinaryProgress, PackageTagPage, StreamGates } from '@/contract/views';
 import { discover } from '@/discovery/discover.ts';
-import type { CheckJob } from '@/discovery/workflow-analysis/deployment-jobs.ts';
-import { checkJobs, deploys } from '@/discovery/workflow-analysis/deployment-jobs.ts';
 import type { WorkflowJobs } from '@/discovery/workflow-analysis/job-gate.ts';
 import { gateState, resolvable, workflowJobs } from '@/discovery/workflow-analysis/job-gate.ts';
 import type { Edit } from '@/domain/inventory.ts';
@@ -33,16 +31,12 @@ import {
 } from '@/domain/package-identity.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
 import type { RefPlan, RefState, TagSigner as SignerBinding } from '@/domain/refs.ts';
-import type { CheckChoice, GateSkip, ReleaseGate } from '@/domain/release-gates.ts';
-import { gatedRelease, gateLabel, gateReasons, sameGate } from '@/domain/release-gates.ts';
+import type { CheckChoice } from '@/domain/release-gates.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import { tagPrefix } from '@/domain/version-tags.ts';
 import type { WorkflowRun } from '@/github/resources.ts';
 import {
-	checkRunsSchema,
-	commitSchema,
-	commitStatusSchema,
 	dispatchSchema,
 	gitRefSchema,
 	releaseSchema,
@@ -58,7 +52,7 @@ import type { InboxEvent } from '@/github/webhooks.ts';
 import { fromSync, recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
 import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
@@ -70,7 +64,7 @@ import { Journal, ProjectionSink } from '@/persistence/durable/journal.ts';
 import type { Write } from '@/persistence/durable/keyspace.ts';
 import { Keyspace } from '@/persistence/durable/keyspace.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
-import type { ClaimStep, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
+import type { ClaimStep, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
 import { LedgerStore, PublicationLedger, RegistryVerification } from '@/publication/ledger/service.ts';
 import { released } from '@/publication/ledger.ts';
 import type { Publication } from '@/publication/publication.ts';
@@ -93,6 +87,7 @@ import {
 	rechecked,
 	recheckedPublication,
 	recoverable,
+	reopened,
 	runTitle,
 	settleRun,
 	unreported,
@@ -116,7 +111,6 @@ import { landsByCommit, preparationRequest } from '@/release/domain/preparation-
 import { referenceProbe } from '@/release/domain/reference-probe.ts';
 import { refsRequest } from '@/release/domain/refs-request.ts';
 import type { ReleaseOperation } from '@/release/domain/release-set.ts';
-import { manifestProblems } from '@/release/domain/version.ts';
 import { AlarmPlanner, reconcileInterval } from '@/release/services/coordinator/alarm-planner.ts';
 import { Background } from '@/release/services/coordinator/background.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
@@ -145,8 +139,6 @@ export interface CoordinatorBindings extends AutomationBindings {
 	SIGNER?: SignerBinding;
 }
 const automaticRetries = 3;
-const metadataReason = gateReasons.metadata;
-const passingConclusions = ['success', 'neutral', 'skipped'];
 function freshRun(execution: Execution, workflow: Execution['workflow']): Execution {
 	return {
 		...execution,
@@ -161,11 +153,6 @@ function freshRun(execution: Execution, workflow: Execution['workflow']): Execut
 		publications: reopened(execution.publications),
 	};
 }
-function reopened(publications: Publication[]): Publication[] {
-	return publications.map(publication =>
-		publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
-	);
-}
 function startedPreparation(prior: Execution, started: ReleaseStarted): Execution {
 	const upgraded: Execution = { ...prior, started };
 	if (upgraded.managed) {
@@ -176,14 +163,9 @@ function startedPreparation(prior: Execution, started: ReleaseStarted): Executio
 	}
 	return upgraded;
 }
-function moved(execution: Execution, head: { ref: string; sha: string }): string {
-	const release = execution.operation === 'prepare' || execution.operation === 'promote' || execution.releaseSet;
-	return `${head.ref} is at ${head.sha.slice(0, 12)} but this execution builds ${execution.sourceSha.slice(0, 12)}; ${
-		release ? 'prepare the release again' : 'trigger the operation again'
-	}`;
-}
 type CoordinatorContext =
 	| Infrastructure
+	| ApprovalGate
 	| CoordinatorServices
 	| AuditTrail
 	| Background
@@ -198,38 +180,6 @@ type CoordinatorContext =
 	| TagSigner
 	| TagSigning;
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, CoordinatorContext>;
-type GateSubject =
-	& Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>
-	& Partial<Pick<Execution, 'reruns'>>;
-interface GateOutcome {
-	gate: ReleaseGate;
-	state: 'passed' | 'waiting' | 'failed';
-	fact: string;
-	detail?: string;
-	runId?: number;
-	runDone?: boolean;
-	runAttempt?: number;
-}
-interface CommitGates {
-	manifest: string[];
-	truncated: boolean;
-	runs: number;
-	outcomes: GateOutcome[];
-}
-const gateRank = { passed: 0, waiting: 1, failed: 2 } as const;
-function mergedOutcomes(outcomes: readonly GateOutcome[]): GateOutcome[] {
-	const merged: GateOutcome[] = [];
-	for (const outcome of outcomes) {
-		const index = merged.findIndex(entry => sameGate(entry.gate, outcome.gate));
-		const prior = merged[index];
-		if (!prior) merged.push(outcome);
-		else if (gateRank[outcome.state] > gateRank[prior.state]) merged[index] = outcome;
-	}
-	return merged;
-}
-function skippedNote(gate: ReleaseGate, fact: string, skip: GateSkip): string {
-	return `${gateLabel(gate)} ${fact}, skipped by ${skip.actor}`;
-}
 
 export type Infrastructure = Automation;
 
@@ -334,6 +284,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Layer.mergeAll(
 				jsonLogging,
 				RefPublication.packageTagSchedule.pipe(Layer.provideMerge(committed.pipe(
+					Layer.provideMerge(ApprovalGate.layer),
 					Layer.provideMerge(GitHubReleases.layer),
 					Layer.provideMerge(ReleaseSets.layer),
 					Layer.provideMerge(RefPublication.layer),
@@ -770,9 +721,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	publishNext(id: string, identity: RunIdentity): Promise<NextStep> {
 		return this.serial(
-			Effect.gen({ self: this }, function*() {
+			Effect.gen(function*() {
 				const step = yield* (yield* PublicationLedger).next(id, identity);
-				return step.kind === 'publish' ? { ...step, package: yield* this.forced(id, step.package) } : step;
+				return step.kind === 'publish'
+					? { ...step, package: yield* (yield* ApprovalGate).forced(id, step.package) }
+					: step;
 			}),
 			'coordinator.publishNext',
 			{ executionId: id },
@@ -780,9 +733,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	publishClaim(id: string, identity: RunIdentity, purl: string, digest: string): Promise<ClaimStep> {
 		return this.serial(
-			Effect.gen({ self: this }, function*() {
+			Effect.gen(function*() {
 				const step = yield* (yield* PublicationLedger).claim(id, identity, purl, digest);
-				return step.kind === 'publish' ? { ...step, package: yield* this.forced(id, step.package) } : step;
+				return step.kind === 'publish'
+					? { ...step, package: yield* (yield* ApprovalGate).forced(id, step.package) }
+					: step;
 			}),
 			'coordinator.publishClaim',
 			{ executionId: id },
@@ -795,132 +750,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
-	private supersedeVersion(execution: Execution): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (execution.operation !== 'promote' || !execution.version) return;
-			for (const other of yield* allExecutions) {
-				if (
-					other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
-					&& other.version === execution.version
-					&& ['awaiting-approval', 'blocked', 'pending', 'ready', 'failed'].includes(other.state)
-				) {
-					yield* putExecution({ ...other, state: 'cancelled', reason: `Superseded by ${execution.id}` });
-				}
-			}
-		});
-	}
-	private approveFromPush(execution: Execution, executions: Execution[]): CoordinatorEffect<boolean, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const newer = executions.find(other =>
-				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
-				&& other.version === execution.version && other.createdAt > execution.createdAt
-				&& !['succeeded', 'cancelled', 'failed'].includes(other.state)
-			);
-			if (newer) {
-				yield* putExecution({ ...execution, state: 'cancelled', reason: `Superseded by ${newer.id}` });
-				return true;
-			}
-			const conflict = yield* RefPublication.use(publication => publication.tagProblem(execution, true));
-			if (conflict) {
-				yield* putExecution({ ...execution, state: 'cancelled', reason: conflict });
-				return true;
-			}
-			const waiting = (yield* this.ungranted(execution)) ?? (yield* this.upstream(execution, executions));
-			if (waiting) {
-				if (execution.reason !== waiting) yield* putExecution({ ...execution, reason: waiting });
-				return false;
-			}
-			const forced = execution.started?.force === true;
-			const { pending, failed, skipped } = forced
-				? { pending: [], failed: [], skipped: [] }
-				: yield* this.commitChecks(execution);
-			if (execution.approvedBy === 'start' && failed.length) {
-				yield* putExecution({ ...execution, state: 'failed', reason: failed.join('; ') });
-				return true;
-			}
-			const problems = [...failed, ...pending];
-			if (problems.length) {
-				const reason = problems.join('; ');
-				if (execution.reason !== reason) yield* putExecution({ ...execution, reason });
-				return false;
-			}
-			yield* (yield* this.store).audit(
-				'beepboop',
-				'promotion.approve',
-				`${execution.id}:${execution.sourceSha}:${execution.approvedBy ?? 'push'}${forced ? ':forced' : ''}${
-					skipped.length ? ` skipping: ${skipped.join('; ')}` : ''
-				}`,
-			);
-			const next: Execution = { ...execution, state: 'ready', approvedAt: clock.currentTimeMillisUnsafe() };
-			delete next.reason;
-			yield* this.supersedeVersion(next);
-			yield* putExecution(next);
-			return true;
-		});
-	}
-	private ungranted(execution: Execution): CoordinatorEffect<string | undefined, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const stream = execution.configuration.streams[execution.stream];
-			if (!stream?.credentials.length) return undefined;
-			const record = yield* (yield* this.store).repositories.get(execution.repositoryId);
-			const defaultBranch = record?.defaultBranch ?? execution.workflow?.ref ?? '';
-			const bindings = [
-				['promote', stream.promote.workflow] as const,
-				['prepare', stream.prepare.workflow] as const,
-				...Object.entries(stream.workflows).filter(([, binding]) => binding.mode !== 'observe'),
-			].flatMap(([operation, binding]) => {
-				if (!binding) return [];
-				const ref = binding.ref ?? defaultBranch;
-				return [{ operation, file: binding.file, ref: ref.startsWith('refs/') ? ref : `refs/heads/${ref}` }];
-			});
-			const missing: string[] = [];
-			for (const alias of stream.credentials) {
-				const grants = yield* (yield* Automation).grants.list({ alias, repositoryId: execution.repositoryId });
-				if (!coversBinding(grants, bindings, execution.repository)) missing.push(alias);
-			}
-			const workflow = stream.promote.workflow?.file ?? execution.workflow?.file;
-			return missing.length
-				? `no runtime grant for ${workflow}: ${missing.join(', ')}`
-				: undefined;
-		});
-	}
-	private upstream(execution: Execution, executions: Execution[]): CoordinatorEffect<string | undefined, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const record = yield* (yield* this.store).repositories.get(execution.repositoryId);
-			if (!record) return undefined;
-			const file = execution.workflow?.file;
-			if (record.inventory.workflows.some(workflow => workflow.file === file && workflow.ledger)) return undefined;
-			const packagesOf = (candidate: Execution) => {
-				const references = candidate.configuration.streams[candidate.stream]?.packages;
-				return publishablePackages(record.inventory.packages, references);
-			};
-			const needed = new Set(
-				packagesOf(execution).flatMap(pkg => pkg.dependencies.map(name => `${pkg.manager}:${name}`)),
-			);
-			for (const other of executions) {
-				if (
-					other.id === execution.id || other.operation !== 'promote' || other.stream === execution.stream
-					|| other.repositoryId !== execution.repositoryId
-					|| ['succeeded', 'cancelled', 'failed'].includes(other.state)
-				) continue;
-				const provided = packagesOf(other).filter(pkg =>
-					needed.has(`${pkg.manager}:${pkg.name}`)
-					&& (other.sourceSha === execution.sourceSha || pkg.version === other.version)
-				);
-				if (provided.length) {
-					return `waiting for ${other.stream}: ${provided.map(packageId).join(', ')}`;
-				}
-			}
-			return undefined;
-		});
-	}
 	approve(id: string, commitSha: string, actor: string, force = false): Promise<Execution> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
+				const gate = yield* ApprovalGate;
+				const commits = yield* ReleaseCommits;
 				const execution = yield* getExecution(id);
 				const reference = yield* Effect.fromResult(matches(commitSha, approvalShaPattern));
 				const commit = yield* Effect.fromResult(sha(execution.sourceSha));
@@ -928,12 +762,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return yield* precondition('This release is not waiting for you to publish that commit');
 				}
 				const token = yield* (yield* this.gateway).token(execution.repository, execution.repositoryId);
-				const head = yield* this.refHead(execution, token);
+				const head = yield* commits.head(execution, token);
 				if (
 					head
 					&& (head.tag
 						? head.sha !== execution.sourceSha
-						: !(yield* (yield* ReleaseCommits).contains(execution, head.sha, token)))
+						: !(yield* commits.contains(execution, head.sha, token)))
 				) {
 					return yield* precondition(
 						`${head.ref} is at ${head.sha.slice(0, 12)}. Publish the release for that commit.`,
@@ -941,23 +775,18 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 				const conflict = yield* RefPublication.use(publication => publication.tagProblem(execution, true));
 				if (conflict) return yield* precondition(conflict);
-				const incomplete = yield* this.metadataBlocks(execution);
+				const incomplete = yield* gate.metadataBlocks(execution);
 				if (incomplete.length) return yield* precondition(incomplete.join('; '));
-				const checks = yield* this.commitChecks(execution);
+				const checks = yield* gate.checks(execution);
 				const problems = [...checks.failed, ...checks.pending];
 				if (problems.length && !force) return yield* precondition(problems.join('; '));
-				yield* (yield* this.store).audit(
+				return yield* gate.admit(
+					execution,
 					actor,
-					'promotion.approve',
 					`${id}:${commit}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}${
 						checks.skipped.length ? ` skipping: ${checks.skipped.join('; ')}` : ''
 					}`,
 				);
-				const next: Execution = { ...execution, state: 'ready', approvedAt: clock.currentTimeMillisUnsafe() };
-				delete next.reason;
-				yield* this.supersedeVersion(next);
-				yield* putExecution(next);
-				return next;
 			}),
 			'coordinator.approve',
 			{ executionId: id },
@@ -1018,15 +847,16 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	approvalReadiness(id: string): Promise<{ problems: string[]; blocked: string[] }> {
 		return this.run(
-			Effect.gen({ self: this }, function*() {
+			Effect.gen(function*() {
+				const gate = yield* ApprovalGate;
 				const execution = yield* getExecution(id);
 				if (execution.state !== 'awaiting-approval') {
 					return { problems: [], blocked: ['This release is not waiting for you to publish it'] };
 				}
 				const [conflict, incomplete, problems] = yield* Effect.all([
 					RefPublication.use(publication => publication.tagProblem(execution)),
-					this.metadataBlocks(execution),
-					Effect.result(this.approvalProblems(execution)),
+					gate.metadataBlocks(execution),
+					Effect.result(gate.problems(execution)),
 				], { concurrency: 'unbounded' });
 				if (conflict) return { problems: [], blocked: [`${conflict}. Release a new version.`] };
 				if (incomplete.length) return { problems: [], blocked: incomplete };
@@ -1037,152 +867,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	gates(repositoryId: number, stream: string): Promise<StreamGates> {
-		return this.run(
-			Effect.gen({ self: this }, function*() {
-				const record = yield* (yield* this.store).repositories.get(repositoryId);
-				const configuration = record?.configuration;
-				if (!record || !configuration || !Object.hasOwn(configuration.streams, stream)) {
-					return yield* notFound('stream', `Unknown stream ${stream}`, stream);
-				}
-				const release = gatedRelease(yield* allExecutions, stream);
-				const subject: GateSubject = release
-					?? { repository: record.name, repositoryId, sourceSha: record.sha, configuration, stream };
-				const [{ outcomes }, skips, metadata] = yield* Effect.all([
-					this.commitGates(subject),
-					Effect.flatMap(this.store, store => store.gateSkips.list(repositoryId, stream)),
-					this.metadataProblemsOf(subject),
-				], { concurrency: 'unbounded' });
-				const merged = mergedOutcomes([...outcomes, {
-					gate: { kind: 'metadata' },
-					state: metadata.length ? 'failed' : 'passed',
-					fact: metadata.length ? 'incomplete' : 'complete',
-					...(metadata.length ? { detail: metadata.join('; ') } : {}),
-				}]);
-				const skipOf = (gate: ReleaseGate) => skips.find(skip => sameGate(skip.gate, gate));
-				const gates: GateView[] = merged.map(outcome => {
-					const skip = skipOf(outcome.gate);
-					const { runId: _runId, runDone: _runDone, ...shown } = outcome;
-					return { ...shown, ...(skip ? { skipped: { actor: skip.actor, at: skip.at } } : {}) };
-				});
-				for (const skip of skips) {
-					if (merged.some(outcome => sameGate(outcome.gate, skip.gate))) continue;
-					gates.push({
-						gate: skip.gate,
-						state: 'absent',
-						fact: 'not on this commit',
-						skipped: { actor: skip.actor, at: skip.at },
-					});
-				}
-				return {
-					stream,
-					commit: subject.sourceSha,
-					...(release?.version ? { version: release.version } : {}),
-					gates,
-				};
-			}),
-			'coordinator.gates',
-			{ repositoryId, stream },
-		);
-	}
-	resolveChecks(id: string, choice: CheckChoice, actor: string): Promise<Execution> {
-		return this.serial(
-			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-				const execution = yield* getExecution(id);
-				if (execution.operation !== 'promote' || !['failed', 'awaiting-approval'].includes(execution.state)) {
-					return yield* precondition('Only a release that waits on its checks or stopped on them takes this choice');
-				}
-				if (execution.state === 'failed' && (execution.attempts > 0 || execution.approvedAt !== undefined)) {
-					return yield* precondition('This release already ran its workflow; retry it instead');
-				}
-				const [{ outcomes }, skips, metadata] = yield* Effect.all([
-					this.commitGates(execution),
-					this.gateSkips(execution),
-					this.metadataProblemsOf(execution),
-				], { concurrency: 'unbounded' });
-				const stopping = mergedOutcomes([
-					...outcomes,
-					...(metadata.length
-						? [{ gate: { kind: 'metadata' as const }, state: 'failed' as const, fact: 'incomplete' }]
-						: []),
-				]).filter(outcome => outcome.state !== 'passed' && !skips.some(skip => sameGate(skip.gate, outcome.gate)));
-				const next: Execution = execution.state === 'failed'
-					? { ...execution, state: 'awaiting-approval', publications: reopened(execution.publications) }
-					: { ...execution };
-				delete next.reason;
-				if (!stopping.length) {
-					if (execution.state !== 'failed') return yield* precondition('No check stops this release');
-					yield* putExecution(next);
-					yield* this.wakeUp();
-					return next;
-				}
-				const store = yield* this.store;
-				const at = clock.currentTimeMillisUnsafe();
-				if (choice === 'rerun') {
-					const runs = new Map(
-						outcomes.flatMap(outcome =>
-							outcome.state === 'failed' && outcome.runId !== undefined && outcome.runDone === true
-								&& stopping.some(entry => sameGate(entry.gate, outcome.gate))
-								? [[outcome.runId, (outcome.runAttempt ?? 1) + 1] as const]
-								: []
-						),
-					);
-					if (!runs.size) return yield* precondition('No finished check run failed, so none can rerun');
-					const gateway = yield* this.gateway;
-					const token = yield* gateway.token(execution.repository, execution.repositoryId, {
-						contents: 'read',
-						actions: 'write',
-					});
-					for (const [run, attempt] of runs) {
-						yield* gateway.call(`/repos/${execution.repository}/actions/runs/${run}/rerun-failed-jobs`, token, 'POST');
-						next.reruns = [...(next.reruns ?? []).filter(rerun => rerun.id !== run), { id: run, attempt }];
-						yield* putExecution(next);
-						yield* store.audit(actor, 'promotion.checks.rerun', `${id}: ${run}`);
-					}
-				} else if (choice === 'skip') {
-					next.skippedGates = [
-						...(execution.skippedGates ?? []),
-						...stopping.map(outcome => ({ gate: outcome.gate, actor, at })),
-					];
-					yield* store.audit(
-						actor,
-						'promotion.checks.skip',
-						`${id}: ${stopping.map(outcome => gateLabel(outcome.gate)).join(', ')}`,
-					);
-				} else {
-					const failing = stopping.filter(outcome => outcome.state === 'failed');
-					if (!failing.length) return yield* precondition('No failed check to switch off');
-					for (const outcome of failing) {
-						yield* store.gateSkips.skip(execution.repositoryId, execution.stream, outcome.gate, actor);
-						yield* store.audit(
-							actor,
-							'stream.gate.skip',
-							`${execution.repository}:${execution.stream}:${gateLabel(outcome.gate)}`,
-						);
-					}
-				}
-				yield* putExecution(next);
-				yield* this.wakeUp();
-				return next;
-			}),
-			'coordinator.resolveChecks',
-			{ executionId: id },
-		);
-	}
-	private metadataBlocks(execution: Execution): CoordinatorEffect<string[], DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (execution.operation !== 'promote') return [];
-			const skips = yield* this.gateSkips(execution);
-			if (skips.some(skip => skip.gate.kind === 'metadata')) return [];
-			return yield* this.metadataProblemsOf(execution);
+		return this.run(ApprovalGate.use(gate => gate.gates(repositoryId, stream)), 'coordinator.gates', {
+			repositoryId,
+			stream,
 		});
 	}
-	private metadataProblemsOf(subject: GateSubject): CoordinatorEffect<string[], DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const record = yield* (yield* this.store).repositories.get(subject.repositoryId);
-			if (!record) return [];
-			const references = subject.configuration.streams[subject.stream]?.packages;
-			return metadataProblems(record.inventory, publishablePackages(record.inventory.packages, references));
+	resolveChecks(id: string, choice: CheckChoice, actor: string): Promise<Execution> {
+		return this.serial(ApprovalGate.use(gate => gate.resolveChecks(id, choice, actor)), 'coordinator.resolveChecks', {
+			executionId: id,
 		});
 	}
 	reclaimable(
@@ -1197,207 +889,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			'coordinator.reclaimable',
 			{ repositoryId, stream, version },
 		);
-	}
-	private approvalProblems(execution: Execution): CoordinatorEffect<string[], DomainError> {
-		return this.commitChecks(execution).pipe(Effect.map(({ pending, failed }) => [...failed, ...pending]));
-	}
-	private commitGates(subject: GateSubject): CoordinatorEffect<CommitGates, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const gateway = yield* this.gateway;
-			const token = yield* gateway.token(subject.repository, subject.repositoryId);
-			const base = `/repos/${subject.repository}`;
-			const manifest: string[] = [];
-			const repository = yield* (yield* this.store).repositories.get(subject.repositoryId);
-			const references = subject.configuration.streams[subject.stream]?.packages;
-			if (repository) {
-				manifest.push(...manifestProblems(
-					repository.inventory,
-					repository.inventory.packages.filter(pkg =>
-						!references || references.some(reference => matchesPackage(reference, pkg))
-					),
-				));
-			}
-			const [commit, checks, { workflow_runs: workflowRuns }, status] = yield* Effect.all([
-				gateway.read(commitSchema, `${base}/commits/${subject.sourceSha}`, token),
-				gateway.read(
-					checkRunsSchema,
-					`${base}/commits/${subject.sourceSha}/check-runs?per_page=100&filter=latest`,
-					token,
-				),
-				gateway.read(
-					workflowRunsSchema,
-					`${base}/actions/runs?head_sha=${subject.sourceSha}&per_page=100`,
-					token,
-				),
-				gateway.read(commitStatusSchema, `${base}/commits/${subject.sourceSha}/status`, token),
-			], { concurrency: 'unbounded' });
-			const verified = commit.commit.verification.verified === true;
-			const outcomes: GateOutcome[] = [{
-				gate: { kind: 'signature' },
-				state: verified ? 'passed' : 'failed',
-				fact: verified ? 'verified' : 'unverified',
-			}];
-			const runs = checks.check_runs;
-			const releaseFiles = new Set(
-				Object.values(subject.configuration.streams).flatMap(stream =>
-					[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
-						.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
-				),
-			);
-			const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
-			const statuses = new Map(workflowRuns.map(run => [String(run.id), run]));
-			const runOf = (run: (typeof runs)[number]) => /\/actions\/runs\/(\d+)\//.exec(String(run.details_url))?.[1];
-			const pathOf = (run: (typeof runs)[number]) => paths.get(runOf(run) ?? '');
-			const unfinished = runs.filter(run => run.status !== 'completed');
-			const deploying = new Map<string, CheckJob[]>();
-			for (const path of new Set(unfinished.flatMap(run => pathOf(run) ?? []))) {
-				if (releaseFiles.has(path)) continue;
-				const source = yield* gateway.file(subject.repository, path, subject.sourceSha, token);
-				deploying.set(path, source === null ? [] : checkJobs(source));
-			}
-			const gating = runs.filter(run => {
-				const path = pathOf(run);
-				if (!path) return true;
-				if (releaseFiles.has(path)) return false;
-				return run.status === 'completed' || !deploys(String(run.name), deploying.get(path) ?? []);
-			});
-			for (const run of gating) {
-				const conclusion = String(run.conclusion);
-				const runId = runOf(run);
-				const workflowRun = statuses.get(runId ?? '');
-				const runDone = workflowRun === undefined || workflowRun.status === 'completed';
-				const failed = run.status === 'completed' && !passingConclusions.includes(conclusion);
-				const requested = subject.reruns?.find(rerun => rerun.id === Number(runId));
-				const rerunning = failed && requested !== undefined
-					&& (!runDone || (workflowRun?.run_attempt ?? requested.attempt) < requested.attempt);
-				outcomes.push({
-					...(runId ? { runId: Number(runId), runDone } : {}),
-					...(workflowRun ? { runAttempt: workflowRun.run_attempt } : {}),
-					gate: { kind: 'check', name: String(run.name) },
-					state: run.status !== 'completed' || rerunning ? 'waiting' : failed ? 'failed' : 'passed',
-					fact: rerunning ? 'rerunning' : run.status === 'completed' ? conclusion : 'running',
-				});
-			}
-			if (Number(status.total_count) > 0) {
-				outcomes.push({
-					gate: { kind: 'status' },
-					state: status.state === 'success' ? 'passed' : status.state === 'pending' ? 'waiting' : 'failed',
-					fact: String(status.state),
-				});
-			}
-			return { manifest, truncated: checks.total_count !== runs.length, runs: runs.length, outcomes };
-		});
-	}
-	private forced(id: string, pkg: LedgerPackage): CoordinatorEffect<LedgerPackage, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const execution = yield* getExecution(id);
-			const metadata = execution.started?.force === true
-				|| (yield* this.gateSkips(execution)).some(skip => skip.gate.kind === 'metadata');
-			return metadata ? { ...pkg, force: true } : pkg;
-		});
-	}
-	private gateSkips(
-		subject: Pick<Execution, 'repositoryId' | 'stream' | 'skippedGates'>,
-	): CoordinatorEffect<GateSkip[], DomainError> {
-		return Effect.flatMap(this.store, store => store.gateSkips.list(subject.repositoryId, subject.stream)).pipe(
-			Effect.map(skips => [...skips, ...(subject.skippedGates ?? [])]),
-		);
-	}
-	private commitChecks(
-		execution: Execution,
-	): CoordinatorEffect<{ pending: string[]; failed: string[]; skipped: string[] }, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const [{ manifest, truncated, runs, outcomes }, skips] = yield* Effect.all([
-				this.commitGates(execution),
-				this.gateSkips(execution),
-			], { concurrency: 'unbounded' });
-			const skipOf = (gate: ReleaseGate) => skips.find(skip => sameGate(skip.gate, gate));
-			const kept = outcomes.filter(outcome => !skipOf(outcome.gate));
-			const failed = [...manifest], pending: string[] = [];
-			if (kept.some(outcome => outcome.gate.kind === 'signature' && outcome.state === 'failed')) {
-				failed.push(gateReasons.signature);
-			}
-			if (truncated) failed.push('over 100 check runs');
-			if (!runs) pending.push('no checks yet');
-			else if (!outcomes.some(outcome => outcome.gate.kind === 'check')) pending.push('no verification check yet');
-			const checks = kept.flatMap(outcome =>
-				outcome.gate.kind === 'check' ? [{ ...outcome, name: outcome.gate.name }] : []
-			);
-			const running = checks.filter(check => check.state === 'waiting').map(check => check.name);
-			if (running.length) pending.push(`${running.join(', ')} running`);
-			const failing = checks.flatMap(check =>
-				check.state !== 'failed' ? [] : [check.fact === 'failure' ? check.name : `${check.name} (${check.fact})`]
-			);
-			if (failing.length) failed.push(`${gateReasons.checks}${failing.join(', ')}`);
-			const status = kept.find(outcome => outcome.gate.kind === 'status');
-			if (status && status.state !== 'passed') {
-				(status.state === 'waiting' ? pending : failed).push(`${gateReasons.status}${status.fact}`);
-			}
-			const skipped = mergedOutcomes(outcomes).flatMap(outcome => {
-				const skip = skipOf(outcome.gate);
-				return skip && outcome.state !== 'passed' ? [skippedNote(outcome.gate, outcome.fact, skip)] : [];
-			});
-			const metadata = skipOf({ kind: 'metadata' });
-			if (metadata) {
-				const incomplete = yield* this.metadataProblemsOf(execution);
-				if (incomplete.length) skipped.push(skippedNote({ kind: 'metadata' }, 'incomplete', metadata));
-			}
-			return { pending, failed, skipped };
-		});
-	}
-	private refHead(
-		execution: Execution,
-		token: string,
-		observedRef?: string,
-	): CoordinatorEffect<{ ref: string; sha: string; tag: boolean } | undefined, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const configured = execution.workflow?.ref;
-			if (configured === undefined) return undefined;
-			const namespace = /^refs\/(heads|tags)\//.exec(configured)?.[1] ?? execution.refNamespace;
-			const pattern = configured.replace(/^refs\/(heads|tags)\//, '');
-			const patterned = /[*?[]/.test(pattern);
-			const ref = patterned ? observedRef : pattern;
-			if (!ref) return undefined;
-			if (patterned || namespace !== undefined) {
-				for (const candidate of namespace === undefined ? ['tags', 'heads'] : [namespace]) {
-					const found = yield* (yield* this.gateway).read(
-						Schema.NullOr(gitRefSchema),
-						`/repos/${execution.repository}/git/ref/${candidate}/${encodeURIComponent(ref)}`,
-						token,
-					);
-					if (found === null) continue;
-					const target = yield* (yield* this.gateway).peelTag(execution.repository, found.object, token);
-					return { ref, sha: target.sha, tag: candidate === 'tags' };
-				}
-				return yield* precondition(`Workflow ref ${ref} no longer exists`);
-			}
-			const commit = yield* (yield* this.gateway).read(
-				Schema.NullOr(commitSchema),
-				`/repos/${execution.repository}/commits/${encodeURIComponent(ref)}`,
-				token,
-			);
-			if (commit === null) return yield* precondition(`Workflow ref ${ref} no longer exists`);
-			return { ref, sha: commit.sha, tag: false };
-		});
-	}
-	private headMoved(
-		execution: Execution,
-		token: string,
-		observedRef?: string,
-	): CoordinatorEffect<string | undefined, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const head = yield* this.refHead(execution, token, observedRef);
-			if (!head) return undefined;
-			if (head.tag) {
-				if (head.sha === execution.sourceSha) return undefined;
-				return `Tag ${head.ref} moved to ${head.sha.slice(0, 12)}; this release builds ${
-					execution.sourceSha.slice(0, 12)
-				}`;
-			}
-			if (yield* (yield* ReleaseCommits).contains(execution, head.sha, token)) return undefined;
-			if (!execution.eventId.startsWith('observed:')) return moved(execution, head);
-			return `${head.ref} at ${head.sha.slice(0, 12)} no longer contains ${execution.sourceSha.slice(0, 12)}`;
-		});
 	}
 	private redispatch(
 		execution: Execution,
@@ -1419,7 +910,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					token,
 				)
 				: null;
-			const moved = yield* this.headMoved(
+			const moved = yield* (yield* ReleaseCommits).moved(
 				execution,
 				token,
 				typeof run?.head_branch === 'string' ? run.head_branch : undefined,
@@ -1648,12 +1139,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	private wakeUp(): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			yield* (yield* ReleaseSets).wake;
-			yield* (yield* AlarmPlanner).requestReconcile(clock.currentTimeMillisUnsafe());
-			yield* (yield* AlarmPlanner).arm(clock.currentTimeMillisUnsafe());
+		return Effect.gen(function*() {
+			yield* wakeUp(yield* ReleaseSets, yield* AlarmPlanner);
 		});
 	}
 	wake(): Promise<void> {
@@ -2263,7 +1750,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					)
 				) return;
 			}
-			const reason = yield* this.headMoved(execution, token);
+			const reason = yield* (yield* ReleaseCommits).moved(execution, token);
 			if (reason) {
 				yield* putExecution({ ...execution, state: 'failed', reason });
 				return;
@@ -2343,8 +1830,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		unresolved: (execution: Execution) => boolean,
 	): CoordinatorEffect<'continue' | 'stop', DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
 			if (yield* (yield* PublicationLedger).settleReceipts(execution)) return 'continue' as const;
 
 			if (unresolved(execution)) {
@@ -2376,41 +1861,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				else yield* this.captureReleaseEvent(execution);
 			}
 			if (!active.includes(execution) || execution.state === 'pending') return 'continue' as const;
-			if (execution.state === 'awaiting-approval') {
-				const incomplete = execution.started?.force ? [] : yield* this.metadataBlocks(execution);
-				const blocked = incomplete.length ? `${metadataReason}${incomplete.join('; ')}` : undefined;
-				let current = execution;
-				if (blocked !== execution.reason && (blocked || execution.reason?.startsWith(metadataReason))) {
-					current = { ...execution, ...(blocked ? { reason: blocked } : {}) };
-					if (!blocked) delete current.reason;
-					yield* putExecution(current);
-				}
-				if (blocked && current.approvedBy === 'start') {
-					yield* putExecution({ ...current, state: 'failed', reason: blocked });
-					return 'continue' as const;
-				}
-				if (blocked) return 'continue' as const;
-				if (
-					current.configuration.streams[current.stream]?.promote.approval !== 'push'
-					&& current.approvedBy === undefined
-				) return 'continue' as const;
-				return yield* this.approveFromPush(current, executions).pipe(
-					Effect.flatMap(approved =>
-						approved
-							? AlarmPlanner.use(planner => planner.requestReconcile(clock.currentTimeMillisUnsafe())).pipe(
-								Effect.as('stop' as const),
-							)
-							: Effect.succeed('continue' as const)
-					),
-					recover(error =>
-						Effect.gen({ self: this }, function*() {
-							const reason = `commit check error: ${decodeError(error)}`;
-							if (current.reason !== reason) yield* putExecution({ ...current, reason });
-							return 'continue' as const;
-						})
-					),
-				);
-			}
+			if (execution.state === 'awaiting-approval') return yield* (yield* ApprovalGate).review(execution, executions);
 			if (execution.managed) {
 				yield* this.runManaged(execution);
 				return 'continue' as const;
