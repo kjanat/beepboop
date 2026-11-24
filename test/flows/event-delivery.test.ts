@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { jsonFile, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
 import { Automation } from '@/automation/service';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { ReleaseEvents } from '@/notifications/adapters/d1/events.ts';
@@ -10,6 +10,7 @@ import type { EventDelivery } from '@/notifications/event-delivery.ts';
 import { deliverEvent, deliverPending } from '@/notifications/event-delivery.ts';
 import { sql } from '@/persistence/d1/database';
 import type { AutomationEvent, Execution } from '@/release/domain/execution/types.ts';
+import { ScheduledSweep } from '@/server/scheduled/sweep.ts';
 
 let world: World;
 eachWorld(created => {
@@ -122,7 +123,11 @@ test('the scheduled sweep delivers an outbox release event before it acknowledge
 	const { repository } = await follower();
 	const coordinator = world.coordinators.instance(String(repository.id));
 	await coordinator.storage.put(`release-event:${release.id}`, release);
-	await world.run(Automation.use(service => service.scheduled));
+	await Effect.runPromise(
+		ScheduledSweep.use(sweep => sweep.run).pipe(
+			Effect.provide(ScheduledSweep.layer.pipe(Layer.provide(world.application))),
+		),
+	);
 	expect(await coordinator.object.releaseEvents()).toEqual([]);
 	expect(await world.run(new ReleaseEvents(sql(world.db)).event(release.id))).toEqual(release);
 	expect(await deliveryRows()).toMatchObject([{ state: 'delivered', error: null }]);

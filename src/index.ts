@@ -1,10 +1,11 @@
 import { handle } from '@astrojs/cloudflare/handler';
-import { Cause, Effect } from 'effect';
+import { Cause, Effect, Layer } from 'effect';
 import type { AutomationBindings } from '@/automation/service.ts';
-import { applicationLayer, withAutomation } from '@/automation/service.ts';
+import { applicationLayer } from '@/automation/service.ts';
 import { failure } from '@/kernel/errors/classify.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { parseBindings } from '@/server/bindings.ts';
+import { ScheduledSweep } from '@/server/scheduled/sweep.ts';
 
 export { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
 export { PublishBudget } from '@/server/durable/publish-budget.ts';
@@ -27,7 +28,9 @@ export default {
 		await Effect.runPromise(
 			parseBindings(env).pipe(
 				Effect.flatMap(parsed =>
-					withAutomation(service => service.scheduled).pipe(Effect.provide(applicationLayer(parsed)))
+					ScheduledSweep.use(sweep => sweep.run).pipe(
+						Effect.provide(ScheduledSweep.layer.pipe(Layer.provide(applicationLayer(parsed)))),
+					)
 				),
 			),
 		);

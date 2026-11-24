@@ -292,6 +292,18 @@
 		"specifier": "@/automation/release-workflow-driver.ts"
 	},
 	{
+		"file": "packages/server/src/scheduled/sweep.ts",
+		"specifier": "@/automation/coordinator-client.ts"
+	},
+	{
+		"file": "packages/server/src/scheduled/sweep.ts",
+		"specifier": "@/automation/release-event-outbox.ts"
+	},
+	{
+		"file": "packages/server/src/scheduled/sweep.ts",
+		"specifier": "@/automation/service.ts"
+	},
+	{
 		"file": "packages/setup/src/server/maintenance.ts",
 		"specifier": "@/automation/gateway.ts"
 	},

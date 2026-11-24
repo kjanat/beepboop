@@ -11,10 +11,12 @@
 		"@beepboopbot/domain": "workspace:*",
 		"@beepboopbot/github": "workspace:*",
 		"@beepboopbot/kernel": "workspace:*",
+		"@beepboopbot/notifications": "workspace:*",
 		"@beepboopbot/persistence": "workspace:*",
 		"@beepboopbot/publication": "workspace:*",
 		"@beepboopbot/release": "workspace:*",
 		"@beepboopbot/setup": "workspace:*",
+		"cron-parser": "^5.10.3",
 		"effect": "^4.1.2"
 	}
 }
