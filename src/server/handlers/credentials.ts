@@ -9,7 +9,6 @@ import {
 	revokeGrant,
 	syncCredential,
 } from '@/credentials/http/credentials.ts';
-import { fromPromise } from '@/kernel/errors/classify.ts';
 import { admin, elevated, readyRepository } from '@/server/handlers/kit';
 
 function endpoints(service: AutomationService): CredentialEndpoints {
@@ -20,7 +19,7 @@ function endpoints(service: AutomationService): CredentialEndpoints {
 		vault: service.vault(),
 		writer: service.gateway,
 		readyRepository: id => readyRepository(service, id, 'Repository is not enrolled'),
-		wake: repositoryId => fromPromise(() => service.coordinator(repositoryId).wake()),
+		wake: repositoryId => service.coordinators.wake(repositoryId),
 	};
 }
 

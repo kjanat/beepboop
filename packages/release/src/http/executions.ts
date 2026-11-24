@@ -1,7 +1,6 @@
 import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import { routes } from '@/contract/routes';
-import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
@@ -23,7 +22,7 @@ function execution(
 		const full = known?.id ?? id;
 		const found = owner === undefined
 			? undefined
-			: yield* fromPromise(() => service.coordinator(owner).execution(full));
+			: yield* service.coordinators.execution(owner, full);
 		if (!found) return yield* notFound('execution', 'Unknown execution', id);
 		return found;
 	});
@@ -41,21 +40,21 @@ export const executionEndpoints = {
 		routes.executionsBinaries,
 		(input, { service }) =>
 			execution(service, input.id, input.repositoryId).pipe(
-				Effect.flatMap(found => fromPromise(() => service.coordinator(found.repositoryId).binaryProgress(found.id))),
+				Effect.flatMap(found => service.coordinators.binaryProgress(found.repositoryId, found.id)),
 			),
 	),
 	executionsApproval: admin(
 		routes.executionsApproval,
 		(input, { service }) =>
 			execution(service, input.id, input.repositoryId).pipe(
-				Effect.flatMap(found => fromPromise(() => service.coordinator(found.repositoryId).approvalReadiness(found.id))),
+				Effect.flatMap(found => service.coordinators.approvalReadiness(found.repositoryId, found.id)),
 			),
 	),
 	executionsCancel: admin(
 		routes.executionsCancel,
 		(input, { service, actor }) =>
 			execution(service, input.id, input.repositoryId).pipe(
-				Effect.flatMap(found => fromPromise(() => service.coordinator(found.repositoryId).cancel(found.id, actor))),
+				Effect.flatMap(found => service.coordinators.cancel(found.repositoryId, found.id, actor)),
 			),
 	),
 	executionsApprove: admin(
@@ -63,9 +62,7 @@ export const executionEndpoints = {
 		(input, { service, actor }) =>
 			execution(service, input.id, input.repositoryId).pipe(
 				Effect.flatMap(found =>
-					fromPromise(() =>
-						service.coordinator(found.repositoryId).approve(found.id, input.sourceSha, actor, input.force === true)
-					)
+					service.coordinators.approve(found.repositoryId, found.id, input.sourceSha, actor, input.force === true)
 				),
 			),
 	),
@@ -73,18 +70,14 @@ export const executionEndpoints = {
 		routes.executionsChecks,
 		(input, { service, actor }) =>
 			execution(service, input.id, input.repositoryId).pipe(
-				Effect.flatMap(found =>
-					fromPromise(() => service.coordinator(found.repositoryId).resolveChecks(found.id, input.choice, actor))
-				),
+				Effect.flatMap(found => service.coordinators.resolveChecks(found.repositoryId, found.id, input.choice, actor)),
 			),
 	),
 	executionsRecover: admin(
 		routes.executionsRecover,
 		(input, { service, actor }) =>
 			execution(service, input.id, input.repositoryId).pipe(
-				Effect.flatMap(found =>
-					fromPromise(() => service.coordinator(found.repositoryId).recover(found.id, input.action, actor))
-				),
+				Effect.flatMap(found => service.coordinators.recover(found.repositoryId, found.id, input.action, actor)),
 			),
 	),
 } as const;

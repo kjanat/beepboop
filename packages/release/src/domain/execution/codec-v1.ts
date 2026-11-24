@@ -4,7 +4,7 @@ import { githubRunState } from '@/domain/github-run-state.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { identityOf, packageId } from '@/domain/package-identity.ts';
-import type { RefPlan } from '@/domain/refs.ts';
+import type { RefPlan, RefState } from '@/domain/refs.ts';
 import { gateSkip } from '@/domain/release-gates.ts';
 import { startChannel } from '@/domain/release-start.ts';
 import { autoMergeMethods, versionPrMerge } from '@/domain/setup-terms.ts';
@@ -19,6 +19,7 @@ import type {
 	Artifact,
 	AutomationEvent,
 	Execution,
+	PreparedRelease,
 	ReleasePlan,
 	ReleaseReference,
 } from '@/release/domain/execution/types.ts';
@@ -107,7 +108,7 @@ const resolvedInput: Schema.Codec<ResolvedInput, unknown> = mutableStruct({
 	kind: outputSchema.fields.kind,
 	artifact,
 });
-const refPlan: Schema.Codec<RefPlan, unknown> = mutableStruct({
+export const refPlanSchema: Schema.Codec<RefPlan, unknown> = mutableStruct({
 	distribution: Schema.optional(mutableStruct({
 		sourceSha: Schema.String,
 		commit: Schema.String,
@@ -131,7 +132,7 @@ const refPlan: Schema.Codec<RefPlan, unknown> = mutableStruct({
 	publicKey: Schema.optional(Schema.String),
 });
 const autoMergeMethod = Schema.Literals(autoMergeMethods);
-const pullResult = mutableStruct({
+export const preparationResultSchema = mutableStruct({
 	url: Schema.String,
 	head: Schema.String,
 	kind: Schema.optional(Schema.Literal('commit')),
@@ -140,12 +141,24 @@ const pullResult = mutableStruct({
 		mutableStruct({ method: autoMergeMethod, state: Schema.Literal('refused'), note: Schema.String }),
 	])),
 });
+const releaseStarted = mutableStruct({
+	via: startChannel,
+	actor: Schema.String,
+	force: Schema.optional(Schema.Literal(true)),
+});
+export const preparedReleaseSchema: Schema.Codec<PreparedRelease, unknown> = mutableStruct({
+	...preparationResultSchema.fields,
+	started: Schema.optional(releaseStarted),
+});
+export const refStatesSchema: Schema.Codec<RefState[], unknown> = mutableArray(
+	mutableStruct({ name: Schema.String, oid: Schema.String, commit: Schema.String }),
+);
 export const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	prepared: Schema.optional(
 		mutableStruct({
 			edits: mutableArray(edit),
 			head: Schema.optional(Schema.String),
-			result: Schema.optional(pullResult),
+			result: Schema.optional(preparationResultSchema),
 		}),
 	),
 	releaseSet: Schema.optional(mutableStruct({
@@ -163,13 +176,11 @@ export const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 		title: Schema.String,
 		body: Schema.String,
 		head: Schema.optional(Schema.String),
-		result: Schema.optional(pullResult),
+		result: Schema.optional(preparationResultSchema),
 	})),
 	resolvedInputs: Schema.optional(mutableArray(resolvedInput)),
-	refPlan: Schema.optional(refPlan),
-	reclaims: Schema.optional(
-		mutableArray(mutableStruct({ name: Schema.String, oid: Schema.String, commit: Schema.String })),
-	),
+	refPlan: Schema.optional(refPlanSchema),
+	reclaims: Schema.optional(refStatesSchema),
 	moduleTags: Schema.optional(mutableArray(mutableStruct({ id: Schema.String, prefix: Schema.String }))),
 	packageTags: Schema.optional(
 		mutableArray(mutableStruct({
@@ -212,9 +223,7 @@ export const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	titled: Schema.optional(Schema.Boolean),
 	dispatchedAt: Schema.optional(Schema.Finite),
 	approvedBy: Schema.optional(Schema.Literals(['merge', 'start'])),
-	started: Schema.optional(
-		mutableStruct({ via: startChannel, actor: Schema.String, force: Schema.optional(Schema.Literal(true)) }),
-	),
+	started: Schema.optional(releaseStarted),
 	skippedGates: Schema.optional(mutableArray(gateSkip)),
 	reruns: Schema.optional(mutableArray(mutableStruct({ id: Schema.Finite, attempt: Schema.Finite }))),
 	versionPrMerge: Schema.optional(versionPrMerge),
@@ -225,7 +234,7 @@ export const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	updatedAt: Schema.Finite,
 	reason: Schema.optional(Schema.String),
 });
-const automationEventSchema: Schema.Codec<AutomationEvent, unknown> = mutableStruct({
+export const automationEventSchema: Schema.Codec<AutomationEvent, unknown> = mutableStruct({
 	occurredAt: Schema.optional(Schema.Finite),
 	id: Schema.String,
 	source: Schema.String,
