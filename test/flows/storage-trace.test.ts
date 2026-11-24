@@ -21,9 +21,9 @@ async function traced(directory: string, writes: Writes): Promise<void> {
 }
 
 async function compared(...directories: string[]): Promise<{ code: number; output: string }> {
-	const child = Bun.spawn([process.execPath, 'scripts/storage-trace.ts', ...directories], {
+	const child = Bun.spawn([process.execPath, '--no-env-file', 'scripts/storage-trace.ts', ...directories], {
 		cwd: root,
-		env: Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== 'GITHUB_ACTIONS')),
+		env: { NO_COLOR: '1' },
 		stdout: 'pipe',
 		stderr: 'pipe',
 	});
