@@ -18,7 +18,7 @@ const random = new RegExp(
 type Worlds = Map<string, string[]>;
 
 const operation =
-	/^\S+ (?:put|setAlarm) "(?:[^"\\]|\\.)*" \S.*$|^\S+ (?:delete|deleteAll|deleteAlarm|rollback) "(?:[^"\\]|\\.)*"$/s;
+	/^\S+ (?:put|setAlarm|throw|sleep|wait) "(?:[^"\\]|\\.)*" \S.*$|^\S+ do "(?:[^"\\]|\\.)*"(?: \S.*)?$|^\S+ (?:delete|deleteAll|deleteAlarm|rollback) "(?:[^"\\]|\\.)*"$/s;
 
 function parse(file: string, text: string): [string, string[]][] | string {
 	if (!text.startsWith('## world ') || !text.endsWith('\n')) return `${file} is not a complete storage trace`;

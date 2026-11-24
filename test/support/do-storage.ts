@@ -180,6 +180,22 @@ export class MemoryStorage {
 	}
 }
 
+export function executionContext(): ExecutionContext {
+	return {
+		waitUntil: deferBackground,
+		passThroughOnException() {},
+		get exports(): Cloudflare.Exports {
+			return unsupported('exports');
+		},
+		props: undefined,
+		mapVirtualHost: () => unsupported('mapVirtualHost'),
+		get tracing(): Tracing {
+			return unsupported('tracing');
+		},
+		abort: reason => unsupported(`abort(${reason ?? ''})`),
+	};
+}
+
 export function durableObjectState(name: string, storage: MemoryStorage): DurableObjectState {
 	const id: DurableObjectId = {
 		name,

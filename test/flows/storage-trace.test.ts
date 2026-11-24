@@ -424,6 +424,49 @@ test('a token that differs between the baseline runs is random and a token both 
 		});
 	}));
 
+test('release workflow steps compare with the storage writes of their world', () =>
+	inTemp(async temp => {
+		const directory = (name: string) => join(temp, name);
+		const steps = (state: string) => async (name: string) => {
+			await withEnvironment({ BEEPBOOP_STORAGE_TRACE: directory(name) }, async () => {
+				const trace = startTrace(testFile());
+				await new MemoryStorage('AutomationCoordinator:1', trace).put('release-set:p', { ids: ['a'] });
+				trace?.write('ReleaseWorkflow:release-p', 'do', 'Load release operations', [{ id: 'a' }]);
+				trace?.write('ReleaseWorkflow:release-p', 'do', 'a: reconcile 0', state);
+				trace?.write('ReleaseWorkflow:release-p', 'sleep', 'a: deferred 0', 60_000);
+				trace?.write('ReleaseWorkflow:release-p', 'wait', 'a: wait 0', 'a');
+				trace?.write('ReleaseWorkflow:release-p', 'throw', 'a: reconcile 1', new Error('gone'));
+				trace?.write('ReleaseWorkflow:release-p', 'do', 'Record coordination failure');
+				trace?.finish();
+			});
+		};
+		await steps('running')('before');
+		await steps('running')('after');
+		await steps('succeeded')('changed');
+
+		expect(readFileSync(join(directory('before'), traceFile), 'utf8')).toBe([
+			'## world 1',
+			'AutomationCoordinator:1 put "release-set:p" {"ids":["a"]}',
+			'ReleaseWorkflow:release-p do "Load release operations" [{"id":"a"}]',
+			'ReleaseWorkflow:release-p do "a: reconcile 0" "running"',
+			'ReleaseWorkflow:release-p sleep "a: deferred 0" 60000',
+			'ReleaseWorkflow:release-p wait "a: wait 0" "a"',
+			'ReleaseWorkflow:release-p throw "a: reconcile 1" Error("gone")',
+			'ReleaseWorkflow:release-p do "Record coordination failure"',
+			'',
+		].join('\n'));
+		expect(await compared(directory('before'), directory('after'))).toEqual({ code: 0, output: summary(0, 0, 7) });
+		expect(await compared(directory('before'), directory('changed'))).toEqual({
+			code: 1,
+			output: [
+				`${traceFile} world 1:`,
+				'- ReleaseWorkflow:release-p do "a: reconcile 0" "running"',
+				'+ ReleaseWorkflow:release-p do "a: reconcile 0" "succeeded"',
+				summary(0, 1, 7),
+			].join('\n'),
+		});
+	}));
+
 test('a trace directory that is not a complete trace is refused', () =>
 	inTemp(async temp => {
 		const directory = (name: string, text: string) => {
@@ -441,6 +484,8 @@ test('a trace directory that is not a complete trace is refused', () =>
 			['## world 1\nAutomationCoordinator:1 put "k" 1', incomplete],
 			['## world 1\nAutomationCoordinator:1 put "k"\n', invalid(2, 'AutomationCoordinator:1 put "k"')],
 			['## world 1\nAutomationCoordinator:1 jump "k"\n', invalid(2, 'AutomationCoordinator:1 jump "k"')],
+			['## world 1\nReleaseWorkflow:x sleep "k"\n', invalid(2, 'ReleaseWorkflow:x sleep "k"')],
+			['## world 1\nReleaseWorkflow:x do "k"1\n', invalid(2, 'ReleaseWorkflow:x do "k"1')],
 			['## world one\n', invalid(1, '## world one')],
 		];
 

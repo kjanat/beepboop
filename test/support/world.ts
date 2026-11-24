@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, mock, setSystemTime, spyOn } from 'bun:test';
 import { env as runtimeEnv } from '@root/test/support/cloudflare-workers.ts';
 import { TestD1 } from '@root/test/support/d1.ts';
-import { deferBackground, drainBackground, MemoryStorage } from '@root/test/support/do-storage.ts';
+import { deferBackground, drainBackground, executionContext, MemoryStorage } from '@root/test/support/do-storage.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { appId, FakeGitHub, ownerId } from '@root/test/support/github.ts';
 import { Network } from '@root/test/support/network.ts';
@@ -17,6 +17,7 @@ import type { CoordinatorBindings } from '@/automation/coordinator';
 import { AutomationCoordinator } from '@/automation/coordinator';
 import { PublishBudget } from '@/automation/publish-budget';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
+import { ReleaseWorkflow } from '@/automation/release-workflow';
 import type { Automation, AutomationBindings } from '@/automation/service';
 import { applicationLayer } from '@/automation/service';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
@@ -67,7 +68,7 @@ export class World {
 	readonly github = new FakeGitHub();
 	readonly npm = new FakeNpm();
 	readonly db = new TestD1();
-	readonly releaseWorkflow = new FakeWorkflow<ReleaseWorkflowParams>();
+	readonly releaseWorkflow: FakeWorkflow<ReleaseWorkflowParams>;
 	readonly coordinators: FakeNamespace<AutomationCoordinator>;
 	readonly budgets: FakeNamespace<PublishBudget>;
 	readonly env: Environment;
@@ -78,6 +79,7 @@ export class World {
 		appKey: string,
 		private readonly trace: StorageTrace | undefined,
 	) {
+		this.releaseWorkflow = new FakeWorkflow(trace);
 		this.budgets = new FakeNamespace('PublishBudget', state => new PublishBudget(state, this.env), trace);
 		this.coordinators = new FakeNamespace(
 			'AutomationCoordinator',
@@ -139,6 +141,7 @@ export class World {
 		return new MemoryStorage(label, this.trace);
 	}
 	async dispose(): Promise<void> {
+		this.releaseWorkflow.dispose();
 		this.trace?.finish();
 		mock.restore();
 		setSystemTime();
@@ -157,6 +160,9 @@ export class World {
 	}
 	advance(milliseconds: number): void {
 		setSystemTime(new Date(Date.now() + milliseconds));
+	}
+	runReleaseWorkflows(): void {
+		this.releaseWorkflow.runs((event, step) => new ReleaseWorkflow(executionContext(), this.env).run(event, step));
 	}
 	coordinator(repository: Repository): AutomationCoordinator {
 		return this.coordinators.instance(String(repository.id)).object;
