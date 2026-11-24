@@ -2459,3 +2459,32 @@ test('a budget drops more than 128 expired reservations in one reserve', async (
 		'reservation:update:run:new',
 	]);
 });
+
+test(
+	'a rate-limited crate waits for a cooldown that another repository extended past its own Retry-After',
+	async () => {
+		const { begun } = await released({ main: [core] });
+		const { execution, identity } = started(begun, 'main');
+		const purl = 'pkg:cargo/lint-core@1.1.0';
+		const claim = { executionId: execution.id, purl, digest: checksum('lint-core', '1.1.0') };
+		const now = Date.now(), own = now + 120_000, extended = now + 600_000;
+		const outcomes = await withIdentity(world, identity, async () => {
+			const first = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim));
+			await Effect.runPromise(
+				workflowCall(world, '/api/workflow/publish/report', {
+					executionId: execution.id,
+					purl,
+					outcome: 'rate-limited',
+					retryAfter: '120',
+				}),
+			);
+			await world.budgets.getByName('crates-io').defer(extended);
+			world.advance(120_000);
+			return [first, await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim))] as const;
+		});
+		expect(outcomes[0]).toMatchObject({ kind: 'publish' });
+		expect(own).toBeLessThan(extended);
+		expect(outcomes[1]).toMatchObject({ kind: 'wait', until: extended });
+	},
+	60_000,
+);

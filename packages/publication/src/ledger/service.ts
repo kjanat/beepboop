@@ -307,10 +307,14 @@ export class PublicationLedger extends Context.Service<PublicationLedger, {
 								record = { ...record, reservation: slot.kind, notBefore };
 								yield* settleRecord(ledger, record);
 							}
-							const pace = availability(record, holder, now);
-							if (pace.kind === 'wait') {
-								yield* recordPublication(execution.id, record, pacedPublication(record, pace.until));
-								return { kind: 'wait' as const, until: pace.until, reason: pace.reason };
+							const until = record.notBefore ?? 0;
+							if (until > now) {
+								yield* recordPublication(execution.id, record, pacedPublication(record, until));
+								return {
+									kind: 'wait' as const,
+									until,
+									reason: `${registries[record.manager]} allows ${label(record)} at ${new Date(until).toISOString()}`,
+								};
 							}
 						}
 					}
