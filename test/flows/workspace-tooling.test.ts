@@ -924,6 +924,73 @@ describe('boundaries', () => {
 		]);
 	});
 
+	test('a path present in more than one target of an alias is reported with the file that wins', async () => {
+		repository({
+			'tsconfig.json': tsconfig.replace(
+				'"@root/*": ["./*"]',
+				[
+					'"@/server/*": ["./packages/server/src/*", "./src/server/*"]',
+					'"@/server/special/*": ["./special/*"]',
+					'"@server": ["./packages/server/src/main.ts", "./src/server/main.ts"]',
+					'"@/widget/*": ["./packages/server/src/widgets/*/widget.ts", "./src/widgets/*.ts"]',
+					'"@x/*": ["./a/pre*", "./b/pre*"]',
+					'"@entry": ["./src/entry", "./src/entry.ts"]',
+					'"@fixed/*": ["./fixed/one.ts", "./fixed/two.ts"]',
+					'"@js/foo": ["./ja/foo.ts"]',
+					'"@js/*": ["./ja/*", "./jb/*"]',
+					'"@exact": ["./ex/a*.ts", "./ex/b.ts"]',
+					'"@empty/*": ["./ea/pre*.ts", "./eb/pre*.tsx"]',
+				].join(',\n\t\t\t'),
+			),
+			'packages/server/package.json': '{ "name": "@beepboop/server", "exports": { "./*": "./src/*" } }',
+			'packages/server/src/durable/shell.ts': 'export const shell = 1;\n',
+			'packages/server/src/main.ts': 'export const main = 1;\n',
+			'packages/server/src/only.ts': 'export const only = 1;\n',
+			'packages/server/src/view.ts': 'export const view = 1;\n',
+			'packages/server/src/layers/index.ts': 'export const layers = 1;\n',
+			'packages/server/src/special/kept.ts': 'export const kept = 1;\n',
+			'src/server/durable/shell.ts': 'export const shell = 2;\n',
+			'src/server/main.ts': 'export const main = 2;\n',
+			'src/server/legacy.ts': 'export const legacy = 1;\n',
+			'src/server/view.tsx': 'export const view = 2;\n',
+			'src/server/layers.ts': 'export const layers = 2;\n',
+			'src/server/special/kept.ts': 'export const kept = 2;\n',
+			'packages/server/src/widgets/dial/widget.ts': 'export const dial = 1;\n',
+			'src/widgets/dial.ts': 'export const dial = 2;\n',
+			'src/widgets/knob.ts': 'export const knob = 1;\n',
+			'packages/server/src/esm.mts': 'export const esm = 1;\n',
+			'src/server/esm.d.mts': 'export declare const esm: number;\n',
+			'a/prefile.ts': 'export const file = 1;\n',
+			'b/prefile.ts': 'export const file = 2;\n',
+			'src/entry.ts': 'export const entry = 1;\n',
+			'fixed/one.ts': 'export const one = 1;\n',
+			'fixed/two.ts': 'export const two = 2;\n',
+			'ja/foo.ts': 'export const foo = 1;\n',
+			'jb/foo.d.ts': 'export declare const foo: number;\n',
+			'ex/a.ts': 'export const a = 1;\n',
+			'ex/b.ts': 'export const b = 2;\n',
+			'ea/pre.ts': 'export const pre = 1;\n',
+			'eb/pre.tsx': 'export const pre = 2;\n',
+		});
+		const report = await Effect.runPromise(checkBoundaries(root));
+
+		expect(report.violations.map(describeViolation)).toEqual([
+			'@/server/durable/shell.ts resolves to packages/server/src/durable/shell.ts and hides src/server/durable/shell.ts',
+			'@/server/esm.mjs resolves to packages/server/src/esm.mts and hides src/server/esm.d.mts',
+			'@/server/layers resolves to packages/server/src/layers/index.ts and hides src/server/layers.ts',
+			'@/server/main.ts resolves to packages/server/src/main.ts and hides src/server/main.ts',
+			'@/server/view resolves to packages/server/src/view.ts and hides src/server/view.tsx',
+			'@server resolves to packages/server/src/main.ts and hides src/server/main.ts',
+			'@/widget/dial resolves to packages/server/src/widgets/dial/widget.ts and hides src/widgets/dial.ts',
+			'@x/file.ts resolves to a/prefile.ts and hides b/prefile.ts',
+			'@fixed/* resolves to fixed/one.ts and hides fixed/two.ts',
+			'@js/foo.js resolves to ja/foo.ts and hides jb/foo.d.ts',
+			'@exact resolves to ex/a.ts and hides ex/b.ts',
+			'@empty/ resolves to ea/pre.ts and hides eb/pre.tsx',
+		]);
+		expect(await refusal(boundariesCommand(root))).toContain('12 package boundary violations');
+	});
+
 	test('the boundaries script exits non-zero on violations', () => {
 		repository({
 			'packages/kernel/package.json': '{ "name": "@beepboop/kernel" }',

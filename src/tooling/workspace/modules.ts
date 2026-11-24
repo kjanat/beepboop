@@ -553,7 +553,10 @@ function wildcard(alias: Alias): string | undefined {
 	return alias.pattern.endsWith('*') ? alias.pattern.slice(0, -1) : undefined;
 }
 
-function matchingAlias(aliases: readonly Alias[], specifier: string): { alias: Alias; rest: string } | undefined {
+export function matchingAlias(
+	aliases: readonly Alias[],
+	specifier: string,
+): { alias: Alias; rest: string } | undefined {
 	const exact = aliases.find(alias => alias.pattern === specifier);
 	if (exact) return { alias: exact, rest: '' };
 	let best: { alias: Alias; rest: string; length: number } | undefined;
@@ -587,6 +590,19 @@ export function candidatePaths(base: string): string[] {
 		for (const to of targets) candidates.push(repositoryPath(`${base.slice(0, -from.length)}${to}`));
 	}
 	return candidates;
+}
+
+export function specifierForms(path: string): string[] {
+	const forms = new Set([path]);
+	for (const probe of probes) {
+		if (probe && path.endsWith(probe) && path.length > probe.length) forms.add(path.slice(0, -probe.length));
+	}
+	for (const [from, targets] of javascriptExtensions) {
+		for (const to of targets) {
+			if (path.endsWith(to) && path.length > to.length) forms.add(`${path.slice(0, -to.length)}${from}`);
+		}
+	}
+	return [...forms];
 }
 
 export function aliasBases(aliases: readonly Alias[], specifier: string): string[] {
