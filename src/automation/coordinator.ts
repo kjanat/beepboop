@@ -21,7 +21,7 @@ import { checkJobs, deploys } from '@/discovery/workflow-analysis/deployment-job
 import type { WorkflowJobs } from '@/discovery/workflow-analysis/job-gate.ts';
 import { gateState, resolvable, workflowJobs } from '@/discovery/workflow-analysis/job-gate.ts';
 import { identifiedManagers, isManagerName, managerSpec } from '@/domain/catalog.ts';
-import type { Edit, Package } from '@/domain/inventory.ts';
+import type { Edit } from '@/domain/inventory.ts';
 import {
 	identityPackageName,
 	matchesPackage,
@@ -59,11 +59,10 @@ import type { GitHubRunResult, RunJob } from '@/github/run-state.ts';
 import { classifyJob, classifyRun, jobProgressState } from '@/github/run-state.ts';
 import { GitHubRejection } from '@/github/transport.ts';
 import type { InboxEvent } from '@/github/webhooks.ts';
-import { fromPromise, fromSync, recover, toDomainError } from '@/kernel/errors/classify.ts';
+import { fromPromise, fromSync, recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
-import { parseRetryAfter } from '@/kernel/http/http-date.ts';
 import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
@@ -77,26 +76,9 @@ import type { Write } from '@/persistence/durable/keyspace.ts';
 import { Keyspace } from '@/persistence/durable/keyspace.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
 import type { ClaimStep, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
-import type { Ledger, LedgerRecord } from '@/publication/ledger.ts';
-import {
-	availability,
-	claim,
-	entry,
-	fail,
-	label,
-	pacedPublication,
-	publicationOf,
-	publish,
-	rateLimit,
-	registries,
-	released,
-	reservation,
-	reuse,
-	view,
-} from '@/publication/ledger.ts';
-import { dependencyBlocker, planLedger, publicationDeadlock } from '@/publication/ledger-plan.ts';
+import { LedgerStore, PublicationLedger, RegistryVerification } from '@/publication/ledger/service.ts';
+import { released } from '@/publication/ledger.ts';
 import type { Publication } from '@/publication/publication.ts';
-import type { PacedManager, PublishKind } from '@/publication/publish-pace.ts';
 import { PublishPacing, paced } from '@/publication/publish-pace.ts';
 import { verifiedPublication } from '@/publication/registries/verification.ts';
 import {
@@ -199,16 +181,8 @@ interface ReleaseOperation {
 }
 const reconcileInterval = 60_000;
 const automaticRetries = 3;
-const defaultRetryAfter = 60_000;
 const metadataReason = gateReasons.metadata;
 const passingConclusions = ['success', 'neutral', 'skipped'];
-function missingReceipt(execution: Execution, record: LedgerRecord): boolean {
-	return released(record)
-		&& !execution.publications.some(publication =>
-			publication.id === record.id && publication.version === record.version && publication.outcome === 'succeeded'
-			&& (!record.digest || publication.digest === record.digest)
-		);
-}
 function freshRun(execution: Execution, workflow: Execution['workflow']): Execution {
 	return {
 		...execution,
@@ -285,6 +259,7 @@ type CoordinatorContext =
 	| AuditTrail
 	| Background
 	| PreparationWriter
+	| PublicationLedger
 	| PublishPacing
 	| ReleaseCommits
 	| RunCallbacks;
@@ -382,6 +357,21 @@ const auditTrail = Layer.effect(
 	}),
 );
 
+const registryVerification = Layer.effect(
+	RegistryVerification,
+	Effect.gen(function*() {
+		const automation = yield* Automation;
+		return RegistryVerification.of({
+			verify: (repository, repositoryId, publication) =>
+				verifyPublication(
+					publication,
+					automation.dependencies.transport,
+					automation.gateway.verification(repository, repositoryId),
+				),
+		});
+	}),
+);
+
 const projectionSink = Layer.effect(
 	ProjectionSink,
 	Effect.gen(function*() {
@@ -412,8 +402,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				committed.pipe(
 					Layer.provideMerge(RunCallbacks.layer),
 					Layer.provideMerge(Layer.merge(PreparationWriter.layer, ReleaseCommits.layer)),
+					Layer.provideMerge(PublicationLedger.layer),
 					Layer.provideMerge(Background.layer(work => ctx.waitUntil(work))),
 					Layer.provideMerge(PublishPacing.layer(name => env.PUBLISH_BUDGET.getByName(name))),
+					Layer.provideMerge(registryVerification),
 					Layer.provideMerge(setupEditSource),
 					Layer.provideMerge(coordinatorLayer(ctx.storage)),
 					Layer.provide(Layer.merge(projectionSink, repositoryRevisions)),
@@ -903,7 +895,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return yield* precondition('Operation is not a paced publication in this release');
 				}
 				if (!execution.reservation) {
-					const { kind, allowedAt } = yield* this.reserveBudget(
+					const { kind, allowedAt } = yield* (yield* PublicationLedger).reserve(
 						execution.repositoryId,
 						target.manager,
 						pkg => matchesPackage(target.id, pkg),
@@ -1787,44 +1779,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	publishNext(id: string, identity: RunIdentity): Promise<NextStep> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
-				const { execution, holder } = yield* this.publishing(id, identity);
-				let ledger = yield* this.ledgerOf(execution);
-				const now = clock.currentTimeMillisUnsafe();
-				const ledgers = yield* this.ledgers(), executions = yield* allExecutions;
-				const waits: { until: number; reason: string }[] = [];
-				for (const purl of ledger.records.map(record => record.purl)) {
-					const record = ledger.records.find(entry => entry.purl === purl);
-					if (!record) continue;
-					const open = availability(record, holder, now);
-					if (open.kind === 'settled' || open.kind === 'uploaded') continue;
-					if (open.kind === 'held') {
-						return { kind: 'publish' as const, package: yield* this.ledgerView(execution, record) };
-					}
-					if (open.kind === 'wait') {
-						waits.push(open);
-						continue;
-					}
-					const blocked = dependencyBlocker(execution, record, holder, ledgers, executions, now);
-					if (blocked?.kind === 'failed') {
-						ledger = yield* this.settleRecord(ledger, fail(record, holder, blocked.reason, false, now));
-					} else if (blocked) waits.push({ until: blocked.until, reason: blocked.reason });
-					else return { kind: 'publish' as const, package: yield* this.ledgerView(execution, record) };
-				}
-				const [wait] = waits.sort((a, b) => a.until - b.until);
-				if (wait) {
-					const cycle = publicationDeadlock(
-						ledger,
-						[ledger, ...ledgers.filter(other => other.executionId !== id)],
-						executions,
-						now,
-					);
-					if (cycle) return yield* precondition(`Publication dependency cycle at ${cycle.id}`);
-				}
-				return wait
-					? { kind: 'wait' as const, ...wait }
-					: { kind: 'done' as const, entries: ledger.records.map(entry) };
+				const step = yield* (yield* PublicationLedger).next(id, identity);
+				return step.kind === 'publish' ? { ...step, package: yield* this.forced(id, step.package) } : step;
 			}),
 			'coordinator.publishNext',
 			{ executionId: id },
@@ -1833,65 +1789,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	publishClaim(id: string, identity: RunIdentity, purl: string, digest: string): Promise<ClaimStep> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
-				const { execution, holder } = yield* this.publishing(id, identity);
-				const ledger = yield* this.ledgerOf(execution);
-				let record = yield* this.recordOf(ledger, purl);
-				const now = clock.currentTimeMillisUnsafe();
-				const open = availability(record, holder, now);
-				if (open.kind === 'settled' || open.kind === 'uploaded') {
-					return { kind: 'settled' as const, entry: entry(record) };
-				}
-				if (open.kind === 'wait') return { kind: 'wait' as const, until: open.until, reason: open.reason };
-				if (open.kind === 'open') {
-					const blocked = dependencyBlocker(
-						execution,
-						record,
-						holder,
-						yield* this.ledgers(),
-						yield* allExecutions,
-						now,
-					);
-					if (blocked?.kind === 'failed') {
-						return yield* this.settled(ledger, fail(record, holder, blocked.reason, false, now));
-					}
-					if (blocked) return { kind: 'wait' as const, until: blocked.until, reason: blocked.reason };
-					const found = yield* this.registry(execution, { ...record, digest });
-					const verified = yield* this.verified(
-						ledger,
-						record,
-						holder,
-						found,
-						url => reuse({ ...record, digest }, holder, url, now),
-						now,
-					);
-					if (verified) return verified;
-					if (found.outcome !== 'pending') {
-						return {
-							kind: 'wait' as const,
-							until: now + 15_000,
-							reason: `${registries[record.manager]} could not confirm whether it has ${label(record)}`,
-						};
-					}
-					if (paced(record.manager) && !record.reservation) {
-						const { kind, allowedAt } = yield* this.reserveBudget(
-							execution.repositoryId,
-							record.manager,
-							pkg => packageId(pkg) === record.id,
-						);
-						record = { ...record, reservation: kind, notBefore: allowedAt };
-						yield* this.settleRecord(ledger, record);
-						const paced = availability(record, holder, now);
-						if (paced.kind === 'wait') {
-							yield* this.recordPublication(execution.id, record, pacedPublication(record, paced.until));
-							return { kind: 'wait' as const, until: paced.until, reason: paced.reason };
-						}
-					}
-				}
-				const claimed = yield* Effect.fromResult(claim(record, holder, digest, now));
-				yield* this.settleRecord(ledger, claimed);
-				return { kind: 'publish' as const, package: yield* this.ledgerView(execution, claimed) };
+				const step = yield* (yield* PublicationLedger).claim(id, identity, purl, digest);
+				return step.kind === 'publish' ? { ...step, package: yield* this.forced(id, step.package) } : step;
 			}),
 			'coordinator.publishClaim',
 			{ executionId: id },
@@ -1899,189 +1798,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	publishReport(id: string, identity: RunIdentity, report: PublishReport): Promise<ReportStep> {
 		return this.serial(
-			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
-				const { execution, holder } = yield* this.publishing(id, identity);
-				const ledger = yield* this.ledgerOf(execution);
-				const record = yield* this.recordOf(ledger, report.purl);
-				const now = clock.currentTimeMillisUnsafe();
-				const open = availability(record, holder, now);
-				if (open.kind === 'settled' || open.kind === 'uploaded') {
-					return { kind: 'settled' as const, entry: entry(record) };
-				}
-				if (report.outcome === 'failed' && open.kind === 'open') {
-					return yield* this.settled(ledger, fail(record, holder, report.message, false, now));
-				}
-				if (open.kind !== 'held') return yield* precondition(`This run does not hold ${label(record)}`);
-				if (report.outcome === 'rate-limited') {
-					const until = parseRetryAfter(report.retryAfter ?? '', now) ?? now + defaultRetryAfter;
-					yield* PublishPacing.use(pacing => pacing.defer(record.manager, until));
-					return yield* this.settled(ledger, rateLimit(record, holder, until, now));
-				}
-				if (report.outcome === 'published') {
-					return yield* this.settled(ledger, publish(record, holder, '', now));
-				}
-				const found = yield* this.registry(execution, record);
-				const verified = yield* this.verified(
-					ledger,
-					record,
-					holder,
-					found,
-					url => publish(record, holder, url, now),
-					now,
-				);
-				return verified ?? (yield* this.settled(ledger, fail(record, holder, report.message, false, now)));
-			}),
+			PublicationLedger.use(ledger => ledger.report(id, identity, report)),
 			'coordinator.publishReport',
 			{ executionId: id },
 		);
-	}
-	private publishing(
-		id: string,
-		identity: RunIdentity,
-	): CoordinatorEffect<{ execution: Execution; holder: string }, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const execution = yield* getExecution(id);
-			yield* WorkflowRunGuard.require(execution, identity, {
-				_tag: 'SameRun',
-				mismatch: 'Publication identity mismatch',
-			});
-			return { execution, holder: `${identity.runId}:${identity.attempt}` };
-		});
-	}
-	private ledgers(): CoordinatorEffect<Ledger[], DomainError> {
-		return DurableStorage.use(storage => storage.list(Keys.ledger)).pipe(
-			Effect.map(entries => entries.map(entry => entry.value)),
-		);
-	}
-	private acceptedUploads(ledger: Ledger): CoordinatorEffect<Ledger, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			let next = ledger;
-			const execution = yield* getExecution(ledger.executionId);
-			for (const record of ledger.records) {
-				if (record.status.state === 'uploaded') {
-					next = yield* this.settleRecord(
-						next,
-						publish(record, record.status.holder, '', clock.currentTimeMillisUnsafe()),
-					);
-				} else if (missingReceipt(execution, record)) {
-					const publication = publicationOf(record);
-					if (publication) yield* this.recordPublication(ledger.executionId, record, publication);
-				}
-			}
-			return next;
-		});
-	}
-	private ledgerOf(execution: Execution): CoordinatorEffect<Ledger, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const storage = yield* DurableStorage;
-			const stored = yield* storage.get(Keys.ledger, execution.id);
-			if (stored !== undefined) return yield* this.acceptedUploads(stored);
-			const repository = yield* (yield* this.store).repositories.get(execution.repositoryId);
-			if (!repository) return yield* precondition('Repository is not enrolled');
-			const version = execution.version;
-			if (!version) return yield* precondition('The execution has no version to publish');
-			const ledger = planLedger(execution, repository.inventory, version);
-			yield* storage.put(Keys.ledger, execution.id, ledger);
-			return ledger;
-		});
-	}
-	private recordOf(ledger: Ledger, purl: string): CoordinatorEffect<LedgerRecord, DomainError> {
-		const record = ledger.records.find(entry => entry.purl === purl);
-		return record ? Effect.succeed(record) : Effect.fail(precondition(`${purl} is not in this execution's plan`));
-	}
-	private registry(execution: Execution, record: LedgerRecord): CoordinatorEffect<Publication, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const service = yield* Automation;
-			return yield* Effect.fromResult(parseReleaseIdentity(record.purl)).pipe(
-				Effect.mapError(toDomainError),
-				Effect.flatMap(identity => {
-					const publication: Publication = {
-						identity,
-						id: record.id,
-						manager: record.manager,
-						name: record.name,
-						version: record.version,
-						required: record.required,
-						...(record.digest ? { digest: record.digest } : {}),
-						outcome: 'succeeded',
-					};
-					return verifyPublication(
-						publication,
-						service.dependencies.transport,
-						service.gateway.verification(execution.repository, execution.repositoryId),
-					).pipe(Effect.map(outcome => verifiedPublication(publication, outcome)));
-				}),
-			);
-		});
-	}
-	private verified(
-		ledger: Ledger,
-		record: LedgerRecord,
-		holder: string,
-		found: Publication,
-		accept: (url: string) => LedgerRecord,
-		now: number,
-	): CoordinatorEffect<Extract<ReportStep, { kind: 'settled' }> | undefined, DomainError> {
-		if (found.outcome === 'succeeded') return this.settled(ledger, accept(found.url ?? ''));
-		if (found.outcome === 'failed') {
-			return this.settled(
-				ledger,
-				fail(record, holder, `${registries[record.manager]} has a different ${label(record)}`, true, now),
-			);
-		}
-		return Effect.undefined;
-	}
-	private reserveBudget(
-		repositoryId: number,
-		manager: PacedManager,
-		matches: (pkg: Package) => boolean,
-	): CoordinatorEffect<{ kind: PublishKind; allowedAt: number }, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const inventory = (yield* (yield* this.store).repositories.get(repositoryId))?.inventory;
-			const kind = reservation(inventory?.packages.find(matches)?.publicationStatus);
-			const allowedAt = yield* PublishPacing.use(pacing => pacing.reserve(manager, kind));
-			return { kind, allowedAt };
-		});
-	}
-	private settleRecord(ledger: Ledger, record: LedgerRecord): CoordinatorEffect<Ledger, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const next = {
-				...ledger,
-				records: ledger.records.map(entry => entry.purl === record.purl ? record : entry),
-			};
-			yield* (yield* DurableStorage).put(Keys.ledger, ledger.executionId, next);
-			const publication = publicationOf(record);
-			if (publication) yield* this.recordPublication(ledger.executionId, record, publication);
-			return next;
-		});
-	}
-	private recordPublication(
-		executionId: string,
-		record: LedgerRecord,
-		publication: Publication,
-	): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const execution = yield* getExecution(executionId);
-			const identity = yield* Effect.fromResult(parseReleaseIdentity(record.purl)).pipe(Effect.mapError(toDomainError));
-			yield* putExecution({
-				...execution,
-				publications: yield* mergePublications(execution.publications, [{ ...publication, identity }]),
-			});
-		});
-	}
-	private settled(
-		ledger: Ledger,
-		record: LedgerRecord,
-	): CoordinatorEffect<Extract<ReportStep, { kind: 'settled' }>, DomainError> {
-		return this.settleRecord(ledger, record).pipe(Effect.as({
-			kind: 'settled' as const,
-			entry: entry(record),
-			...(record.status.state === 'rate-limited' ? { until: record.status.retryAfter } : {}),
-		}));
 	}
 	private supersedeVersion(execution: Execution): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
@@ -2755,11 +2475,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return { manifest, truncated: checks.total_count !== runs.length, runs: runs.length, outcomes };
 		});
 	}
-	private ledgerView(execution: Execution, record: LedgerRecord): CoordinatorEffect<LedgerPackage, DomainError> {
+	private forced(id: string, pkg: LedgerPackage): CoordinatorEffect<LedgerPackage, DomainError> {
 		return Effect.gen({ self: this }, function*() {
+			const execution = yield* getExecution(id);
 			const metadata = execution.started?.force === true
 				|| (yield* this.gateSkips(execution)).some(skip => skip.gate.kind === 'metadata');
-			return metadata ? { ...view(record), force: true } : view(record);
+			return metadata ? { ...pkg, force: true } : pkg;
 		});
 	}
 	private gateSkips(
@@ -2940,7 +2661,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			// Classify GitHub first: ledger evidence must never override cancellation,
 			// action required, a startup failure, or incomplete/unknown job evidence.
 			if (!result.retry) return false;
-			const ledger = yield* (yield* DurableStorage).get(Keys.ledger, execution.id);
+			const ledger = yield* (yield* LedgerStore).get(execution.id);
 			if (ledger === undefined) return result.retry === 'runner-unassigned';
 			const open = ledger.records.filter(record =>
 				record.required && !released(record) && record.status.state !== 'uploaded'
@@ -3812,10 +3533,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				!['succeeded', 'failed', 'cancelled', 'pending'].includes(execution.state) || unresolved(execution)
 				|| publishedAfterFailure(execution)
 			) return true;
-			const ledger = yield* (yield* DurableStorage).get(Keys.ledger, execution.id);
-			if (ledger?.records.some(record => record.status.state === 'uploaded' || missingReceipt(execution, record))) {
-				return true;
-			}
+			if (yield* (yield* PublicationLedger).owesReceipts(execution)) return true;
 			return execution.state === 'succeeded'
 				&& ((yield* pendingContinuations(execution)).length > 0
 					|| (yield* this.releaseGroup(execution, history)) !== undefined);
@@ -3831,11 +3549,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
-			const ledger = yield* (yield* DurableStorage).get(Keys.ledger, execution.id);
-			if (ledger?.records.some(record => record.status.state === 'uploaded' || missingReceipt(execution, record))) {
-				yield* this.acceptedUploads(ledger);
-				return 'continue' as const;
-			}
+			if (yield* (yield* PublicationLedger).settleReceipts(execution)) return 'continue' as const;
 
 			if (unresolved(execution)) {
 				const context = (yield* this.gateway).verification(execution.repository, execution.repositoryId);
