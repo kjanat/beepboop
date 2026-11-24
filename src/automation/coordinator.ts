@@ -2,10 +2,14 @@ import { DurableObject } from 'cloudflare:workers';
 import { Clock, Effect, Layer, ManagedRuntime, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { ApprovalGate } from '@/automation/approval-gate.ts';
+import { Dispatcher } from '@/automation/dispatcher.ts';
 import { GitHubReleases } from '@/automation/github-releases.ts';
+import { ManagedPreparation } from '@/automation/managed-preparation.ts';
 import { restatePreparation } from '@/automation/preparation-pull-requests';
 import { PreparationWriter } from '@/automation/preparation-writer.ts';
+import { PublicationRecheck } from '@/automation/publication-recheck.ts';
 import type { PublishBudget } from '@/automation/publish-budget';
+import { Reconciler } from '@/automation/reconciler.ts';
 import { RefPublication } from '@/automation/ref-publication.ts';
 import { ReleaseCommits } from '@/automation/release-commits.ts';
 import { ReleaseEventOutbox } from '@/automation/release-event-outbox.ts';
@@ -25,18 +29,14 @@ import type { Edit } from '@/domain/inventory.ts';
 import type { RefPlan, RefState, TagSigner as SignerBinding } from '@/domain/refs.ts';
 import type { CheckChoice } from '@/domain/release-gates.ts';
 import { readiness } from '@/domain/repository';
-import type { WorkflowRun } from '@/github/resources.ts';
-import { dispatchSchema, releaseSchema, workflowRunSchema, workflowRunsSchema } from '@/github/resources.ts';
-import type { GitHubRunResult } from '@/github/run-state.ts';
-import { classifyJob, classifyRun, jobProgressState } from '@/github/run-state.ts';
+import { releaseSchema, workflowRunSchema } from '@/github/resources.ts';
+import { classifyJob, jobProgressState } from '@/github/run-state.ts';
 import { TagSigner } from '@/github/signing.ts';
-import { GitHubRejection } from '@/github/transport.ts';
 import type { InboxEvent } from '@/github/webhooks.ts';
-import { fromSync, recover } from '@/kernel/errors/classify.ts';
-import { decodeError } from '@/kernel/errors/decoding.ts';
+import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
-import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
+import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { matches, sha } from '@/kernel/schema/result.ts';
@@ -45,32 +45,15 @@ import { ProjectionStore } from '@/persistence/d1/projection';
 import { Journal, ProjectionSink } from '@/persistence/durable/journal.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
 import type { ClaimStep, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
-import { LedgerStore, PublicationLedger, RegistryVerification } from '@/publication/ledger/service.ts';
-import { released } from '@/publication/ledger.ts';
+import { PublicationLedger, RegistryVerification } from '@/publication/ledger/service.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { PublishPacing } from '@/publication/publish-pace.ts';
-import { verifiedPublication } from '@/publication/registries/verification.ts';
-import { canVerifyPublication, verifyPublication } from '@/publication/registries/verify.ts';
+import { verifyPublication } from '@/publication/registries/verify.ts';
 import { projectionRules } from '@/release/adapters/d1/completions.ts';
 import { Keys } from '@/release/adapters/do/keys.ts';
 import type { DistributionArtifact } from '@/release/distribution/artifact.ts';
 import type { DistributionFile } from '@/release/distribution/validation.ts';
-import {
-	dependenciesReady,
-	expectedRunTitle,
-	publishedAfterFailure,
-	recheckable,
-	rechecked,
-	recheckedPublication,
-	recoverable,
-	reopened,
-	runTitle,
-	settleRun,
-	unreported,
-	verifiableCancellation,
-} from '@/release/domain/execution/execution.ts';
-import { resolveInputs } from '@/release/domain/execution/outputs.ts';
-import { githubFailureReason } from '@/release/domain/execution/run-labels.ts';
+import { recoverable, reopened } from '@/release/domain/execution/execution.ts';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -78,19 +61,15 @@ import type {
 	PreparedRelease,
 	ReleaseStarted,
 } from '@/release/domain/execution/types.ts';
-import { ReleaseHistory } from '@/release/domain/history.ts';
 import { preparationBody } from '@/release/domain/managed.ts';
-import { landsByCommit, preparationRequest } from '@/release/domain/preparation-request.ts';
-import { referenceProbe } from '@/release/domain/reference-probe.ts';
 import { refsRequest } from '@/release/domain/refs-request.ts';
 import type { ReleaseOperation } from '@/release/domain/release-set.ts';
-import { AlarmPlanner, reconcileInterval } from '@/release/services/coordinator/alarm-planner.ts';
+import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
 import { Background } from '@/release/services/coordinator/background.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
 import { Executions, RepositoryRevisions } from '@/release/services/coordinator/executions.ts';
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
-import { ReconcileHistory } from '@/release/services/coordinator/reconcile-history.ts';
 import {
 	AuditTrail,
 	InboxQueue,
@@ -110,7 +89,6 @@ export interface CoordinatorBindings extends AutomationBindings {
 	PUBLISH_BUDGET: DurableObjectNamespace<PublishBudget>;
 	SIGNER?: SignerBinding;
 }
-const automaticRetries = 3;
 function freshRun(execution: Execution, workflow: Execution['workflow']): Execution {
 	return {
 		...execution,
@@ -138,6 +116,10 @@ function startedPreparation(prior: Execution, started: ReleaseStarted): Executio
 type CoordinatorContext =
 	| Infrastructure
 	| ApprovalGate
+	| Dispatcher
+	| ManagedPreparation
+	| PublicationRecheck
+	| Reconciler
 	| ReleaseEventOutbox
 	| RunObservation
 	| CoordinatorServices
@@ -169,7 +151,6 @@ const setupEditSource = Layer.effectDiscard(Effect.gen(function*() {
 	yield* planner.register({ due: () => readSetupEdit(storage).pipe(Effect.map(edit => [edit?.due])) });
 }));
 
-const journaled = Executions.use(service => service.read);
 const allExecutions = Executions.use(service => service.all);
 function storedExecution(id: string) {
 	return Executions.use(service => service.stored(id));
@@ -179,18 +160,6 @@ function getExecution(id: string) {
 }
 function putExecution(execution: Execution) {
 	return Executions.use(service => service.put(execution));
-}
-function isolateExecution(id: string, error: DomainError) {
-	return Executions.use(service => service.isolate(id, error));
-}
-function quarantineExecution(id: string, error: string) {
-	return Executions.use(service => service.quarantine(id, error));
-}
-function pendingContinuations(observed: Execution) {
-	return Executions.use(service => service.pendingContinuations(observed));
-}
-function continuationsOf(observed: Execution) {
-	return Executions.use(service => service.continuations(observed));
 }
 
 const repositoryRevisions = Layer.effect(
@@ -248,7 +217,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				jsonLogging,
 				RefPublication.packageTagSchedule.pipe(
 					Layer.provideMerge(
-						Layer.merge(ApprovalGate.layer, RunObservation.layer).pipe(
+						Reconciler.layer.pipe(
+							Layer.provideMerge(Layer.merge(Dispatcher.layer, ManagedPreparation.layer)),
+							Layer.provideMerge(Layer.mergeAll(ApprovalGate.layer, RunObservation.layer, PublicationRecheck.layer)),
 							Layer.provideMerge(GitHubReleases.layer),
 							Layer.provideMerge(ReleaseSets.layer),
 							Layer.provideMerge(RefPublication.layer),
@@ -379,9 +350,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			repositoryId,
 		});
 	}
-	private suspended(repositoryId: number): CoordinatorEffect<boolean, DomainError> {
-		return Effect.flatMap(Automation, automation => automation.suspended(repositoryId));
-	}
 	exportJournal(): Promise<{ key: string; value: unknown }[]> {
 		return this.run(
 			DurableStorage.use(storage => storage.dump),
@@ -423,7 +391,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	advanceReleaseOperation(preparationId: string, workflowId: string, id: string): Promise<Execution['state']> {
 		return this.serial(
-			ReleaseSets.use(sets => sets.advance(preparationId, workflowId, id, member => this.reconcile(member))),
+			Effect.flatMap(
+				Reconciler,
+				reconciler =>
+					ReleaseSets.use(sets => sets.advance(preparationId, workflowId, id, member => reconciler.reconcile(member))),
+			),
 			'coordinator.advanceReleaseOperation',
 			{ preparationId, workflowId, executionId: id },
 		);
@@ -518,7 +490,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private restartPreparation(prior: Execution, started: ReleaseStarted): CoordinatorEffect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const upgraded = startedPreparation(prior, prior.started?.force ? { ...started, force: true } : started);
-			yield* this.redispatch(upgraded, reopened(upgraded.publications), 'Start requested');
+			yield* (yield* Dispatcher).redispatch(upgraded, reopened(upgraded.publications), 'Start requested');
 			yield* this.supersedePending(upgraded);
 			yield* this.restatePreparation(prior, upgraded);
 			return yield* getExecution(upgraded.id);
@@ -578,31 +550,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	packagePublished(manager: string, name: string, version: string): Promise<void> {
 		return this.serial(
-			Effect.gen({ self: this }, function*() {
-				const gateway = yield* this.gateway;
-				const transport = (yield* Automation).dependencies.transport;
-				for (const execution of yield* allExecutions) {
-					const matches = (publication: Publication) =>
-						verifiableCancellation(publication) && publication.manager === manager && publication.name === name
-						&& publication.version === version;
-					if (!recoverable(execution) || !execution.publications.some(matches)) continue;
-					const publications = yield* Effect.forEach(
-						execution.publications,
-						publication =>
-							matches(publication)
-								? verifyPublication(
-									publication,
-									transport,
-									gateway.verification(execution.repository, execution.repositoryId),
-								).pipe(
-									Effect.map(checked => recheckedPublication(publication, verifiedPublication(publication, checked))),
-								)
-								: Effect.succeed(publication),
-					);
-					const next = rechecked({ ...execution, publications });
-					if (JSON.stringify(next) !== JSON.stringify(execution)) yield* putExecution(next);
-				}
-			}),
+			PublicationRecheck.use(recheck => recheck.packagePublished(manager, name, version)),
 			'coordinator.packagePublished',
 			{ manager, name, version },
 		);
@@ -791,95 +739,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ repositoryId, stream, version },
 		);
 	}
-	private redispatch(
-		execution: Execution,
-		publications: Publication[],
-		requested: string,
-	): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const gateway = yield* this.gateway;
-			const token = yield* gateway.token(execution.repository, execution.repositoryId, {
-				contents: 'read',
-				actions: 'write',
-			});
-			const run = execution.runId
-				? yield* gateway.read(
-					workflowRunSchema,
-					`/repos/${execution.repository}/actions/runs/${execution.runId}`,
-					token,
-				)
-				: null;
-			const moved = yield* (yield* ReleaseCommits).moved(
-				execution,
-				token,
-				typeof run?.head_branch === 'string' ? run.head_branch : undefined,
-			);
-			if (
-				moved
-				&& !(run !== null && run.head_sha === execution.sourceSha
-					&& (yield* RefPublication.use(publication => publication.versionTagged(execution))))
-			) return yield* precondition(moved);
-			if (run !== null && execution.eventId.startsWith('observed:') && run.conclusion === 'success') {
-				return yield* precondition(
-					`Workflow run ${run.id} succeeded, so it has no failed jobs to re-run. Fix the reported problem and re-run the workflow on GitHub`,
-				);
-			}
-			if (run !== null && (run.head_sha === execution.sourceSha || execution.currentWorkflow)) {
-				yield* gateway.call(
-					`/repos/${execution.repository}/actions/runs/${execution.runId}/rerun-failed-jobs`,
-					token,
-					'POST',
-				);
-				yield* putExecution({
-					...execution,
-					state: 'uncertain',
-					github: undefined,
-					cancelledBy: undefined,
-					runAttempt: run.run_attempt,
-					reason: `${requested}; re-running the failed jobs`,
-					publications,
-				});
-			} else {
-				yield* putExecution({
-					...execution,
-					state: 'ready',
-					cancelledBy: undefined,
-					supersededRuns: [...(execution.supersededRuns ?? []), ...(execution.runId ? [execution.runId] : [])],
-					runId: undefined,
-					runAttempt: undefined,
-					github: undefined,
-					workflowSha: undefined,
-					reason: `${requested}; dispatching a new run`,
-					publications,
-				});
-			}
-			yield* (yield* AlarmPlanner).requestReconcile(clock.currentTimeMillisUnsafe());
-		});
-	}
-	private retryable(
-		execution: Execution,
-		run: Pick<WorkflowRun, 'id' | 'run_attempt'>,
-		result: GitHubRunResult,
-	): CoordinatorEffect<boolean, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			// Classify GitHub first: ledger evidence must never override cancellation,
-			// action required, a startup failure, or incomplete/unknown job evidence.
-			if (!result.retry) return false;
-			const ledger = yield* (yield* LedgerStore).get(execution.id);
-			if (ledger === undefined) return result.retry === 'runner-unassigned';
-			const open = ledger.records.filter(record =>
-				record.required && !released(record) && record.status.state !== 'uploaded'
-			);
-			if (!open.length) return false;
-			const holder = `${run.id}:${run.run_attempt}`;
-			return open.every(record =>
-				(record.status.state === 'failed-retryable' && record.status.holder === holder)
-				|| (result.retry === 'runner-unassigned' && record.status.state === 'planned')
-			);
-		});
-	}
 
 	private restartRelease(prior: Execution, request: Execution): CoordinatorEffect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
@@ -895,7 +754,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (prior.state !== 'awaiting-approval' && (prior.attempts > 0 || prior.approvedAt !== undefined)) {
 				if (!force) return prior;
 				if (!prior.workflow) {
-					yield* this.redispatch(started, reopened(prior.publications), 'Forced restart');
+					yield* (yield* Dispatcher).redispatch(started, reopened(prior.publications), 'Forced restart');
 					return yield* getExecution(prior.id);
 				}
 				const rerun: Execution = {
@@ -981,7 +840,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						delete next.reason;
 						yield* putExecution(next);
 						yield* this.wakeUp();
-					} else yield* this.redispatch(execution, publications, 'Retry requested');
+					} else yield* (yield* Dispatcher).redispatch(execution, publications, 'Retry requested');
 				} else {
 					const published = yield* GitHubReleases.use(releases => releases.published(execution));
 					if (published !== execution) yield* putExecution(published);
@@ -1146,7 +1005,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							now,
 							event => observation.track(event).pipe(Effect.map(done => done ? undefined : trackLater(event, now))),
 						);
-						if (yield* (yield* AlarmPlanner).reconcileDue(now)) yield* this.reconcile();
+						if (yield* (yield* AlarmPlanner).reconcileDue(now)) yield* (yield* Reconciler).reconcile();
 					})),
 					lock.serialized(this.rebuildSetup()),
 				], { concurrency: 'unbounded' });
@@ -1155,374 +1014,5 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			'coordinator.alarm',
 			{},
 		);
-	}
-	private runManaged(execution: Execution): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const operation = execution.managed;
-			if (!operation || execution.workflow) return yield* precondition('Invalid managed operation');
-			yield* Effect.gen({ self: this }, function*() {
-				if (operation.result) {
-					yield* putExecution({ ...execution, state: 'succeeded' });
-					return;
-				}
-				if (operation.plan.requiresPreparation || operation.plan.sourceSha !== execution.sourceSha) {
-					return yield* precondition('Managed preparation plan is not executable');
-				}
-				const snapshot = yield* repositorySnapshot(
-					yield* this.gateway,
-					execution.repository,
-					execution.repositoryId,
-					execution.sourceSha,
-					operation.plan.edits.map(edit => edit.path),
-				);
-				execution.state = 'running';
-				execution.attempts++;
-				yield* putExecution(execution);
-				operation.result = yield* (yield* PreparationWriter).submit(
-					preparationRequest(execution, operation, snapshot, {
-						branch: operation.branch,
-						title: operation.title,
-						body: operation.body,
-						edits: operation.plan.edits,
-					}),
-				);
-				execution.state = 'succeeded';
-				delete execution.reason;
-				yield* putExecution(execution);
-			}).pipe(
-				recover(error =>
-					putExecution({
-						...execution,
-						state: landsByCommit(execution) && error.problem.code === 'precondition' ? 'failed' : 'uncertain',
-						reason: decodeError(error),
-					})
-				),
-			);
-		});
-	}
-	private dispatch(
-		execution: Execution,
-		executions: Execution[],
-		active: Execution[],
-		busy: Set<string>,
-	): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const workflow = execution.workflow;
-			if (!workflow) return yield* precondition('Execution has no runner');
-			const gateway = yield* this.gateway;
-			const token = yield* gateway.token(execution.repository, execution.repositoryId, {
-				contents: 'read',
-				actions: 'write',
-			});
-			if (execution.runId) {
-				const runId = execution.runId;
-				const run = yield* gateway.read(
-					workflowRunSchema,
-					`/repos/${execution.repository}/actions/runs/${runId}`,
-					token,
-				);
-				if (run.repository.id !== execution.repositoryId || run.path !== `.github/workflows/${workflow.file}`) {
-					return yield* precondition('Run identity changed');
-				}
-				const runAttempt = run.run_attempt;
-				if (
-					run.status === 'completed' && execution.state === 'uncertain' && !execution.github
-					&& runAttempt <= (execution.runAttempt ?? 0)
-					&& !execution.publications.some(recheckable)
-				) {
-					return;
-				}
-				const result = classifyRun(
-					run,
-					run.status === 'completed' ? yield* runJobs(gateway, execution.repository, run, token) : [],
-				);
-				if (result.observation.completed) {
-					for (let i = 0; i < execution.publications.length; i++) {
-						const publication = execution.publications[i];
-						if (
-							publication
-							&& (recheckable(publication)
-								|| verifiableCancellation(publication))
-						) {
-							const context = (yield* this.gateway).verification(execution.repository, execution.repositoryId);
-							const transport = (yield* Automation).dependencies.transport;
-							execution.publications[i] = recheckedPublication(
-								publication,
-								verifiedPublication(publication, yield* verifyPublication(publication, transport, context)),
-							);
-						}
-					}
-					for (const reference of unreported(execution)) {
-						const probe = execution.version ? referenceProbe(reference, execution.version) : undefined;
-						if (!probe || !canVerifyPublication(probe.manager)) continue;
-						const context = (yield* this.gateway).verification(execution.repository, execution.repositoryId);
-						const transport = (yield* Automation).dependencies.transport;
-						const checked = yield* verifyPublication(probe, transport, context);
-						if (checked._tag === 'Published') execution.publications.push(verifiedPublication(probe, checked));
-					}
-					const limited = execution.publications.flatMap(publication =>
-						publication.outcome === 'rate-limited' ? [Date.parse(publication.retryAfter)] : []
-					);
-					if (
-						limited.length && (result.retry || result.observation.kind === 'succeeded'
-							|| (!result.jobs.length && ['failed', 'timed-out'].includes(result.observation.kind)))
-					) {
-						yield* (yield* ReleaseSets).rateLimited(execution, runId, limited);
-						return;
-					}
-					const settled = settleRun(execution, result);
-					if (
-						settled.state === 'failed' && runAttempt <= automaticRetries
-						&& (yield* this.retryable(execution, run, result))
-					) {
-						const retried = yield* Effect.result(this.redispatch(
-							{ ...execution, runAttempt },
-							reopened(execution.publications),
-							`Attempt ${runAttempt}: ${githubFailureReason(result)}; retrying open publications`,
-						));
-						if (retried._tag === 'Success') return;
-					}
-					const ended = {
-						...settled,
-						runAttempt: execution.workflow?.refs?.distribution && !execution.refPlan
-							? execution.runAttempt
-							: runAttempt,
-					};
-					yield* putExecution(
-						yield* GitHubReleases.use(releases => releases.published(ended)).pipe(
-							recover(error =>
-								logFailure('release.recheck-failed', error, { executionId: ended.id }).pipe(Effect.as(ended))
-							),
-						),
-					);
-				} else {
-					const next = { ...settleRun(execution, result), runAttempt };
-					if (
-						next.state !== execution.state || next.reason !== execution.reason || runAttempt !== execution.runAttempt
-						|| JSON.stringify(next.github) !== JSON.stringify(execution.github)
-					) yield* putExecution(next);
-				}
-				return;
-			}
-			if (['dispatching', 'uncertain'].includes(execution.state)) {
-				const data = yield* gateway.read(
-					workflowRunsSchema,
-					`/repos/${execution.repository}/actions/workflows/${workflow.file}/runs?event=workflow_dispatch&per_page=100`,
-					token,
-				);
-				const matches = data.workflow_runs.filter(
-					(run) =>
-						run.display_title === expectedRunTitle(execution)
-						&& run.path === `.github/workflows/${workflow.file}`
-						&& run.head_branch === workflow.ref?.replace(/^refs\/(heads|tags)\//, '')
-						&& run.repository.id === execution.repositoryId
-						&& !execution.supersededRuns?.includes(run.id),
-				);
-				const run = matches.length === 1 ? matches[0] : undefined;
-				if (run) {
-					yield* putExecution({
-						...execution,
-						state: 'running',
-						runId: run.id,
-						runAttempt: run.run_attempt,
-						workflowSha: undefined,
-					});
-				} else {
-					yield* putExecution({
-						...execution,
-						state: 'uncertain',
-						reason: matches.length
-							? 'Multiple matching runs require review'
-							: 'Dispatch outcome awaiting reconciliation',
-					});
-				}
-				return;
-			}
-			if (!dependenciesReady(execution, executions) || (execution.notBefore ?? 0) > clock.currentTimeMillisUnsafe()) {
-				return;
-			}
-			if (busy.has(execution.stream)) {
-				const releaseId = execution.releaseSet?.workflowId;
-				// Independent operations within one frozen release may run together.
-				// Other releases and legacy executions still own the stream exclusively.
-				if (
-					!releaseId || active.some(other =>
-						other.stream === execution.stream
-						&& ['dispatching', 'running', 'uncertain'].includes(other.state)
-						&& other.releaseSet?.workflowId !== releaseId
-					)
-				) return;
-			}
-			const reason = yield* (yield* ReleaseCommits).moved(execution, token);
-			if (reason) {
-				yield* putExecution({ ...execution, state: 'failed', reason });
-				return;
-			}
-			execution.resolvedInputs = yield* resolveInputs(execution, executions);
-			const draftRelease = yield* GitHubReleases.use(releases => releases.draft(execution));
-			if (draftRelease) execution.draftRelease = draftRelease;
-			busy.add(execution.stream);
-			yield* putExecution({
-				...execution,
-				state: 'dispatching',
-				attempts: execution.attempts + 1,
-				dispatchedAt: clock.currentTimeMillisUnsafe(),
-			});
-			const dispatched = yield* Effect.result(gateway.read(
-				dispatchSchema,
-				`/repos/${execution.repository}/actions/workflows/${workflow.file}/dispatches`,
-				token,
-				'POST',
-				{
-					ref: workflow.ref,
-					inputs: {
-						...workflow.inputs,
-						...(execution.package ? { package: execution.package.id } : {}),
-						...(execution.titled ? { beepboop_title: runTitle(execution) } : {}),
-						beepboop_execution_id: execution.id,
-					},
-				},
-			));
-			if (dispatched._tag === 'Failure') {
-				const error = dispatched.failure;
-				if (!(error instanceof GitHubRejection)) return yield* error;
-				yield* putExecution({
-					...execution,
-					state: error.retryAt === undefined ? 'failed' : 'ready',
-					attempts: execution.attempts + 1,
-					notBefore: error.retryAt,
-					reason: `Dispatch rejected: ${decodeError(error)}`,
-				});
-				return;
-			}
-			const runId = dispatched.success?.workflow_run_id;
-			if (runId) {
-				yield* putExecution({ ...execution, state: 'running', attempts: execution.attempts + 1, runId });
-			}
-		}).pipe(
-			recover(error =>
-				Effect.gen({ self: this }, function*() {
-					const reason = `Beepboop could not continue: ${decodeError(error)}`;
-					const current = yield* getExecution(execution.id);
-					if (current.reason !== reason) yield* putExecution({ ...current, reason });
-				})
-			),
-		);
-	}
-	private hasAdvanceWork(
-		execution: Execution,
-		unresolved: (execution: Execution) => boolean,
-	): CoordinatorEffect<boolean, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (
-				!['succeeded', 'failed', 'cancelled', 'pending'].includes(execution.state) || unresolved(execution)
-				|| publishedAfterFailure(execution)
-			) return true;
-			if (yield* (yield* PublicationLedger).owesReceipts(execution)) return true;
-			return execution.state === 'succeeded'
-				&& ((yield* pendingContinuations(execution)).length > 0
-					|| (yield* (yield* ReleaseEventOutbox).owed(execution)));
-		});
-	}
-	private advance(
-		execution: Execution,
-		executions: Execution[],
-		active: Execution[],
-		busy: Set<string>,
-		unresolved: (execution: Execution) => boolean,
-	): CoordinatorEffect<'continue' | 'stop', DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (yield* (yield* PublicationLedger).settleReceipts(execution)) return 'continue' as const;
-
-			if (unresolved(execution)) {
-				const context = (yield* this.gateway).verification(execution.repository, execution.repositoryId);
-				const transport = (yield* Automation).dependencies.transport;
-				const publications = yield* Effect.forEach(
-					execution.publications,
-					publication =>
-						recheckable(publication)
-							? verifyPublication(publication, transport, context).pipe(
-								Effect.map(outcome => verifiedPublication(publication, outcome)),
-							)
-							: Effect.succeed(publication),
-					{ concurrency: 'unbounded' },
-				);
-				if (publications.some((publication, i) => publication.outcome !== execution.publications[i]?.outcome)) {
-					const checked = { ...execution, publications };
-					yield* putExecution(publishedAfterFailure(checked) ?? checked);
-					return 'continue' as const;
-				}
-			}
-			const published = publishedAfterFailure(execution);
-			if (published) {
-				yield* putExecution(published);
-				return 'continue' as const;
-			}
-			if (execution.state === 'succeeded') {
-				if ((yield* continuationsOf(execution)).length) yield* putExecution(execution);
-				else yield* (yield* ReleaseEventOutbox).capture(execution);
-			}
-			if (!active.includes(execution) || execution.state === 'pending') return 'continue' as const;
-			if (execution.state === 'awaiting-approval') return yield* (yield* ApprovalGate).review(execution, executions);
-			if (execution.managed) {
-				yield* this.runManaged(execution);
-				return 'continue' as const;
-			}
-			yield* this.dispatch(execution, executions, active, busy);
-			return 'continue' as const;
-		});
-	}
-	private reconcile(onlyExecution?: string): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const storage = yield* DurableStorage;
-			const planner = yield* AlarmPlanner;
-			const started = clock.currentTimeMillisUnsafe();
-			if (!onlyExecution) yield* planner.holdReconcile(started + reconcileInterval);
-			const journal = yield* journaled;
-			const quarantined = new Set(yield* storage.ids(Keys.quarantine));
-			for (const entry of journal.unreadable) {
-				if (!quarantined.has(entry.id)) yield* quarantineExecution(entry.id, entry.error);
-			}
-			const executions = journal.executions.filter(execution => !quarantined.has(execution.id)).sort((a, b) =>
-				a.createdAt - b.createdAt
-			);
-			if (executions[0] && (yield* this.suspended(executions[0].repositoryId))) {
-				return;
-			}
-			if (!onlyExecution) yield* planner.releaseReconcile;
-			const active = executions.filter(
-				(e) => !['succeeded', 'cancelled', 'failed'].includes(e.state),
-			);
-			const busy = new Set(
-				active
-					.filter((e) => ['dispatching', 'running', 'uncertain'].includes(e.state))
-					.map((e) => e.stream),
-			);
-			const unresolved = (execution: Execution) =>
-				(execution.state === 'succeeded' || recoverable(execution)) && execution.publications.some(recheckable);
-			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
-				yield* planner.requestReconcile(started + reconcileInterval);
-			}
-			const releaseHistory = new ReleaseHistory(journal.executions);
-			yield* (yield* ReconcileHistory).set(releaseHistory);
-			for (const execution of executions) {
-				if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
-				const work = yield* Effect.result(this.hasAdvanceWork(execution, unresolved));
-				if (work._tag === 'Success' && !work.success) continue;
-				if (yield* this.suspended(execution.repositoryId)) return;
-				if (work._tag === 'Failure') {
-					yield* isolateExecution(execution.id, work.failure);
-					continue;
-				}
-				const outcome = yield* this.advance(execution, executions, active, busy, unresolved).pipe(
-					recover(error => isolateExecution(execution.id, error).pipe(Effect.as('continue' as const))),
-				);
-				if (outcome === 'stop') return;
-			}
-		}).pipe(Effect.ensuring(ReconcileHistory.use(history => history.set(undefined))));
 	}
 }
