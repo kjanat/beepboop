@@ -284,6 +284,16 @@ test('a tag-versioned stream needs no preparation workflow once its publication 
 	expect(config.streams.main.prepare).toBeUndefined();
 	expect(config.streams.main.promote.workflow.refs).toEqual({ phase: 'version', prefix: 'v' });
 	expect(config.streams.main.promote.workflow.publications).toEqual(['github-release:octo/tagged']);
+	world.github.push(repository, {
+		'web/package.json': JSON.stringify({ name: 'tagged-web', version: '1.0.0' }),
+		'web/package-lock.json': '{}\n',
+	}, 'Add an npm package');
+	const mixed = stream({});
+	const [main] = mixed.streams;
+	if (!main) throw new Error('Missing stream');
+	main.packages = [...main.packages, 'pkg:npm/tagged-web'];
+	main.required = main.packages;
+	expect((await planned(mixed)).blockers).toEqual(['main: select a preparation workflow to regenerate lockfiles.']);
 });
 
 for (const versioning of ['workspace', 'independent', 'none'] as const) {

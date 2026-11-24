@@ -503,26 +503,24 @@ function drafted(
 						operation === 'prepare' && !resolved?.streams[selection.name]?.prepare.workflow
 						&& !object(object(current.prepare).workflow).file
 					) {
+						const versionFiles = selection.versionFiles
+							?? (Array.isArray(current.versionFiles)
+								? current.versionFiles
+								: resolved?.streams[selection.name]?.versionFiles ?? []);
+						const fileless = !versionsInFiles({ ...inventory, packages: selected }) && !versionFiles.length;
 						const promote = selection.promote;
-						const tagged = selection.versionSource?.kind === 'tags' && promote !== undefined
+						const tagged = fileless && selection.versionSource?.kind === 'tags' && promote !== undefined
 							&& (promote.binaries !== undefined || promote.tagPrefix !== undefined
 								|| selection.actionRelease !== undefined
 								|| object(object(object(current.promote).workflow).refs).phase === 'version');
 						if (!tagged && selected.length && snapshot.paths.some(isLockfile)) {
 							blockers.push(`${selection.name}: select a preparation workflow to regenerate lockfiles.`);
 						}
-						const versionFiles = selection.versionFiles
-							?? (Array.isArray(current.versionFiles)
-								? current.versionFiles
-								: resolved?.streams[selection.name]?.versionFiles ?? []);
 						const strategy = object(current.prepare).strategy ?? resolved?.streams[selection.name]?.prepare.strategy;
 						if (strategy === 'workflow') {
 							blockers.push(`${selection.name}: select a preparation workflow for the configured workflow strategy.`);
 						}
-						if (
-							!tagged && selected.length && !versionsInFiles({ ...inventory, packages: selected })
-							&& !versionFiles.length
-						) {
+						if (!tagged && selected.length && fileless) {
 							blockers.push(
 								`${selection.name}: select a preparation workflow; managed preparation needs a version stored in a file.`,
 							);
