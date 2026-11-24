@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { Clock, Effect, Layer, ManagedRuntime, Predicate, Result, Schema, Semaphore } from 'effect';
+import { Clock, Effect, Layer, ManagedRuntime, Predicate, Result, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
@@ -173,6 +173,7 @@ import {
 import { compileReleaseSet } from '@/release/domain/release-set.ts';
 import { manifestProblems, releasePaths } from '@/release/domain/version.ts';
 import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
+import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
 import { ReconcileHistory } from '@/release/services/coordinator/reconcile-history.ts';
@@ -378,19 +379,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			work.pipe(Effect.withSpan(operation, { attributes: fields }), Effect.annotateLogs(fields)),
 		);
 	}
-	private readonly lock = Semaphore.makeUnsafe(1);
-	private serialized<A>(work: CoordinatorEffect<A, DomainError>): CoordinatorEffect<A, DomainError> {
-		return Semaphore.withPermit(
-			this.lock,
-			Effect.exit(work).pipe(Effect.flatMap(exit => this.settle().pipe(Effect.andThen(exit)))),
-		);
-	}
 	private serial<A>(
 		work: CoordinatorEffect<A, DomainError>,
 		operation: string,
 		fields: Record<string, string | number>,
 	): Promise<A> {
-		return this.run(this.serialized(work), operation, fields);
+		return this.run(CoordinatorLock.use(lock => lock.serialized(work)), operation, fields);
 	}
 	private commit(
 		entries: readonly [Committed, ...Committed[]],
@@ -399,13 +393,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Journal.use(journal => journal.commit(entries, extra)).pipe(
 			Effect.andThen(ReconcileHistory.use(history => history.record(entries))),
 		);
-	}
-	private settle(): CoordinatorEffect<void, DomainError> {
-		return Effect.gen(function*() {
-			yield* (yield* Journal).project;
-			const planner = yield* AlarmPlanner;
-			yield* planner.arm(yield* planner.nextAlarm);
-		});
 	}
 	private readonly store = Effect.map(Automation, service => service.store);
 	private readonly gateway = Effect.map(Automation, service => service.gateway);
@@ -1291,6 +1278,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			?? execution.configuration.streams[execution.stream]?.prepare.versionPrMerge;
 		if (result.kind === 'commit' || result.autoMerge || !method || method === 'manual') return Effect.succeed(result);
 		return Effect.gen({ self: this }, function*() {
+			const lock = yield* CoordinatorLock;
 			const work = enableAutoMerge(
 				yield* this.gateway,
 				execution.repository,
@@ -1305,7 +1293,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						delay: 1000,
 						while: error => error.problem.code === 'upstream',
 					}),
-					Effect.flatMap(autoMerge => this.serialized(Effect.gen({ self: this }, function*() {
+					Effect.flatMap(autoMerge => lock.serialized(Effect.gen({ self: this }, function*() {
 						const current = yield* this.get(execution.id);
 						const preparation = current.prepared ?? current.managed;
 						if (preparation?.result?.head !== result.head) return;
@@ -3958,9 +3946,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const clock = yield* Clock.Clock;
 
 				const now = clock.currentTimeMillisUnsafe();
+				const lock = yield* CoordinatorLock;
 				yield* this.drainInbox(now);
 				yield* Effect.all([
-					this.serialized(Effect.gen({ self: this }, function*() {
+					lock.serialized(Effect.gen({ self: this }, function*() {
 						yield* this.deliverReleaseEvents(now);
 						yield* this.drainObservations(
 							now,
@@ -3974,7 +3963,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							yield* this.reconcile();
 						}
 					})),
-					this.serialized(this.rebuildSetup()),
+					lock.serialized(this.rebuildSetup()),
 				], { concurrency: 'unbounded' });
 				yield* (yield* AlarmPlanner).reschedule;
 			}),
