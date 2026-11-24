@@ -847,6 +847,16 @@ test('the configuration schema checks operation dependencies, schedules and WinG
 		'streams.main.workflows.a: Operation dependency cycle',
 		'streams.main.workflows.a.needs: Unknown dependency missing',
 	]);
+	const backfillDependency = safeDecode(
+		configurationSchema,
+		document({
+			build: { file: 'build.yml', needs: ['recovery'] },
+			recovery: { file: 'recovery.yml', mode: 'dispatch', backfill: true },
+		}),
+	);
+	expect(backfillDependency.success ? [] : schemaIssues(backfillDependency.error).map(issueMessage)).toEqual([
+		'streams.main.workflows.build.needs: Operation build cannot depend on backfill recovery',
+	]);
 	const unknown = safeDecode(configurationSchema, document({ build: { file: 'build.yml', needs: ['missing'] } }));
 	expect(unknown.success ? [] : schemaIssues(unknown.error).map(issueMessage)).toEqual([
 		'streams.main.workflows.build.needs: Unknown dependency missing',

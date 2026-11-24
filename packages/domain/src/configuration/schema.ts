@@ -514,6 +514,14 @@ function graph(stream: Stream, path: (string | number)[], ctx: ValidationContext
 	const approved = (name: string): boolean =>
 		name === 'promote' || (operationsOf.get(name)?.needs ?? []).some(approved);
 	for (const [name, operation] of operationsOf) {
+		for (const needed of operation.needs ?? []) {
+			if (operationsOf.get(needed)?.backfill) {
+				issue(ctx, 'reserved-operation', `Operation ${name} cannot depend on backfill ${needed}`, [
+					...where(name),
+					'needs',
+				]);
+			}
+		}
 		for (const input of operation.artifactInputs ?? []) {
 			if (!operationsOf.get(input.operation)?.outputs?.some(output => output.id === input.output)) {
 				issue(

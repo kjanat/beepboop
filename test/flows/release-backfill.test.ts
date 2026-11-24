@@ -31,7 +31,11 @@ test('an opted-in backfill dispatches current workflow code for a published hist
 				main: {
 					packages: ['pkg:npm/widget'],
 					promote: { workflow: { file: 'publish.yml' } },
-					workflows: { backfill: { ...backfill, backfill: true }, unrelated: backfill },
+					workflows: {
+						backfill: { ...backfill, backfill: true },
+						recovery: { ...backfill, backfill: true },
+						unrelated: backfill,
+					},
 				},
 			},
 		}),
@@ -79,6 +83,15 @@ test('an opted-in backfill dispatches current workflow code for a published hist
 	const request = { id: parent.id, repositoryId: repository.id, operation: 'backfill' };
 	expect((await api(routes.executionsBackfill.path, request)).status).toBe(422);
 	expect((await api(routes.executionsBackfill.path, { ...request, operation: 'unrelated' })).status).toBe(422);
+	world.github.recordTag(repository, 'v1.0.0', 'e'.repeat(40), commit, true);
+	const queued = await call(routes.executionsBackfill, { ...request, operation: 'recovery' }, transport);
+	world.github.recordTag(repository, 'v1.0.0', 'f'.repeat(40), current.sha, true);
+	await world.wait(16_000);
+	expect(await world.coordinator(repository).execution(queued.id)).toMatchObject({
+		state: 'failed',
+		reason: 'Release tag v1.0.0 no longer points to the backfill commit',
+	});
+	expect(repository.runs.some(run => run.inputs.beepboop_execution_id === queued.id)).toBe(false);
 	world.github.recordTag(repository, 'v1.0.0', 'e'.repeat(40), commit, true);
 	const started = await call(routes.executionsBackfill, request, transport);
 	expect(started.sourceSha).toBe(commit);
