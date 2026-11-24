@@ -134,13 +134,19 @@ function stringField(value: Record<string, unknown>, name: string): string {
 
 type Route = (match: RegExpExecArray, url: URL, body: Record<string, unknown>, token: string) => Response;
 
+interface Grant {
+	readonly permissions: Record<string, unknown>;
+	readonly repositories: 'all' | ReadonlySet<number>;
+	readonly expiresAt: number;
+}
+
 export class FakeGitHub {
 	readonly repositories = new Map<string, Repository>();
 	verifiesTags = true;
 	readonly unhandled: string[] = [];
 	readonly dispatches: { repository: string; file: string; ref: string; inputs: Record<string, string> }[] = [];
 	readonly tokenPermissions: unknown[] = [];
-	private readonly grants = new Map<string, Record<string, unknown>>();
+	private readonly grants = new Map<string, Grant>();
 	private nextId = 1000;
 	private readonly routes: [string, RegExp, Route][] = [];
 	private suspendedAt: string | null = null;
@@ -161,17 +167,21 @@ export class FakeGitHub {
 				if (this.suspendedAt) throw new HttpError(403, 'This installation has been suspended');
 				const ids = Array.isArray(body.repository_ids) ? body.repository_ids : [];
 				const names = Array.isArray(body.repositories) ? body.repositories : [];
-				const missing = [...this.repositories.values()].some(repository =>
-					this.uninstalled.has(repository.name)
-					&& (ids.includes(repository.id) || names.includes(repository.name.split('/')[1]))
+				const named = [...this.repositories.values()].filter(repository =>
+					ids.includes(repository.id) || names.includes(repository.name.split('/')[1])
 				);
-				if (missing) {
+				if (named.some(repository => this.uninstalled.has(repository.name))) {
 					throw new HttpError(422, 'There is at least one repository that does not exist or is not accessible');
 				}
 				this.tokenPermissions.push(body.permissions);
 				const token = `ghs_${this.id()}`;
-				this.grants.set(token, object(body.permissions));
-				return json({ token, expires_at: new Date(Date.now() + 3600_000).toISOString() }, 201);
+				const expiresAt = Date.now() + 3600_000;
+				this.grants.set(token, {
+					permissions: object(body.permissions),
+					repositories: ids.length || names.length ? new Set(named.map(repository => repository.id)) : 'all',
+					expiresAt,
+				});
+				return json({ token, expires_at: new Date(expiresAt).toISOString() }, 201);
 			},
 		);
 		this.route('GET', /^\/users\/([^/]+)$/, match => {
@@ -738,7 +748,7 @@ export class FakeGitHub {
 		this.route('GET', new RegExp(`^${repo}/releases/(\\d+)$`), (match, _url, _body, token) => {
 			const repository = this.repository(match[1]);
 			const release = this.release(repository, Number(match[2]));
-			if (release.draft && this.grants.get(token)?.contents !== 'write') {
+			if (release.draft && this.grants.get(token)?.permissions.contents !== 'write') {
 				throw new HttpError(403, 'Resource not accessible by integration');
 			}
 			return json(this.releaseJson(repository, release));
@@ -770,6 +780,13 @@ export class FakeGitHub {
 		const text = request.method === 'GET' ? '' : await request.text();
 		const body = text ? object(JSON.parse(text)) : {};
 		const token = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
+		const grant = this.grants.get(token);
+		if (grant && Date.now() >= grant.expiresAt) return json({ message: 'Bad credentials' }, 401);
+		const scope = /^\/repos\/([^/]+\/[^/]+)/.exec(url.pathname)?.[1];
+		const target = scope === undefined ? undefined : this.repositories.get(decodeURIComponent(scope));
+		if (grant && target && grant.repositories !== 'all' && !grant.repositories.has(target.id)) {
+			return json({ message: 'Not Found' }, 404);
+		}
 		for (const [method, pattern, handler] of this.routes) {
 			if (method !== request.method) continue;
 			const match = pattern.exec(url.pathname);
