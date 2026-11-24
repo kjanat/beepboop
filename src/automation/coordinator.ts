@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { Clock, Effect, Layer, ManagedRuntime, Predicate, Result, Schema } from 'effect';
+import { Clock, Context, Effect, Layer, ManagedRuntime, Predicate, Result, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
@@ -81,7 +81,7 @@ import { ProjectionStore } from '@/persistence/d1/projection';
 import type { Committed } from '@/persistence/durable/journal.ts';
 import { Journal, ProjectionSink } from '@/persistence/durable/journal.ts';
 import type { Write } from '@/persistence/durable/keyspace.ts';
-import { Keyspace, Singleton } from '@/persistence/durable/keyspace.ts';
+import { Keyspace } from '@/persistence/durable/keyspace.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
 import type { ClaimStep, LedgerPackage, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
 import type { Ledger, LedgerRecord } from '@/publication/ledger.ts';
@@ -118,7 +118,6 @@ import { readDistributionArtifact } from '@/release/distribution/artifact.ts';
 import { observedDistribution } from '@/release/distribution/observation.ts';
 import type { DistributionFile } from '@/release/distribution/validation.ts';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/release/distribution/validation.ts';
-import { identifyExecution } from '@/release/domain/execution/codec-v1.ts';
 import {
 	createExecution,
 	dependenciesReady,
@@ -174,6 +173,8 @@ import { compileReleaseSet } from '@/release/domain/release-set.ts';
 import { manifestProblems, releasePaths } from '@/release/domain/version.ts';
 import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
+import type { ExecutionCommitted } from '@/release/services/coordinator/executions.ts';
+import { Executions, RepositoryRevisions } from '@/release/services/coordinator/executions.ts';
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
 import { ReconcileHistory } from '@/release/services/coordinator/reconcile-history.ts';
@@ -203,7 +204,6 @@ interface ReleaseOperation {
 	dependencies: string[];
 }
 const reconcileInterval = 60_000;
-const settleInterval = 15_000;
 const automaticRetries = 3;
 const defaultRetryAfter = 60_000;
 const metadataReason = gateReasons.metadata;
@@ -243,11 +243,6 @@ function startedPreparation(prior: Execution, started: ReleaseStarted): Executio
 		};
 	}
 	return upgraded;
-}
-function wakeMembers(wake: ReleaseWake | undefined, member: string): string[] | undefined {
-	if (wake === undefined) return [member];
-	if (wake === true || wake.members === undefined) return undefined;
-	return [...new Set([...wake.members, member])];
 }
 function githubRelease(execution: Execution): { tag: string; prerelease: boolean } | undefined {
 	if (!execution.version) return undefined;
@@ -344,6 +339,41 @@ const setupEditSource = Layer.effectDiscard(Effect.gen(function*() {
 	yield* planner.register({ due: () => readSetupEdit(storage).pipe(Effect.map(edit => [edit?.due])) });
 }));
 
+const journaled = Executions.use(service => service.read);
+const allExecutions = Executions.use(service => service.all);
+function storedExecution(id: string) {
+	return Executions.use(service => service.stored(id));
+}
+function getExecution(id: string) {
+	return Executions.use(service => service.get(id));
+}
+function putExecution(execution: Execution) {
+	return Executions.use(service => service.put(execution));
+}
+function commitEntries(entries: readonly [Committed, ...Committed[]], extra?: readonly Write[]) {
+	return Executions.use(service => service.commit(entries, extra));
+}
+function isolateExecution(id: string, error: DomainError) {
+	return Executions.use(service => service.isolate(id, error));
+}
+function quarantineExecution(id: string, error: string) {
+	return Executions.use(service => service.quarantine(id, error));
+}
+function pendingContinuations(observed: Execution) {
+	return Executions.use(service => service.pendingContinuations(observed));
+}
+function continuationsOf(observed: Execution) {
+	return Executions.use(service => service.continuations(observed));
+}
+
+const repositoryRevisions = Layer.effect(
+	RepositoryRevisions,
+	Effect.gen(function*() {
+		const automation = yield* Automation;
+		return RepositoryRevisions.of({ get: repositoryId => automation.store.repositories.get(repositoryId) });
+	}),
+);
+
 const auditTrail = Layer.effect(
 	AuditTrail,
 	Effect.gen(function*() {
@@ -371,12 +401,21 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		infrastructure?: Layer.Layer<Infrastructure, DomainError>,
 	) {
 		super(ctx, env);
+		const committed = Layer.effectDiscard(Effect.gen({ self: this }, function*() {
+			const context = yield* Effect.context<Infrastructure | CoordinatorServices | AuditTrail>();
+			yield* (yield* Executions).onCommitted(change =>
+				this.committed(change).pipe(
+					Effect.updateContext((current: Context.Context<never>) => Context.merge(context, current)),
+				)
+			);
+		}));
 		this.#runtime = ManagedRuntime.make(
 			Layer.mergeAll(
 				jsonLogging,
-				setupEditSource.pipe(
+				committed.pipe(
+					Layer.provideMerge(setupEditSource),
 					Layer.provideMerge(coordinatorLayer(ctx.storage)),
-					Layer.provide(projectionSink),
+					Layer.provide(Layer.merge(projectionSink, repositoryRevisions)),
 					Layer.provideMerge(auditTrail),
 					Layer.provideMerge(infrastructure ?? applicationLayer(env, work => ctx.waitUntil(work))),
 				),
@@ -402,129 +441,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<A> {
 		return this.run(CoordinatorLock.use(lock => lock.serialized(work)), operation, fields);
 	}
-	private commit(
-		entries: readonly [Committed, ...Committed[]],
-		extra?: readonly Write[],
-	): CoordinatorEffect<void, DomainError> {
-		return Journal.use(journal => journal.commit(entries, extra)).pipe(
-			Effect.andThen(ReconcileHistory.use(history => history.record(entries))),
-		);
-	}
 	private readonly store = Effect.map(Automation, service => service.store);
 	private readonly gateway = Effect.map(Automation, service => service.gateway);
-	private readJournal(): CoordinatorEffect<
-		{ executions: Execution[]; unreadable: { id: string; error: string }[] },
-		DomainError
-	> {
-		return DurableStorage.use(storage => storage.entries(Keys.execution)).pipe(Effect.map(entries => {
-			const executions: Execution[] = [];
-			const unreadable: { id: string; error: string }[] = [];
-			for (const entry of entries) {
-				if (entry.kind === 'readable') executions.push(entry.value);
-				else unreadable.push({ id: entry.id, error: entry.error });
-			}
-			return { executions, unreadable };
-		}));
-	}
-	private executions(): CoordinatorEffect<Execution[], DomainError> {
-		return this.readJournal().pipe(Effect.map(journal => journal.executions));
-	}
-	private quarantine(id: string, error: string): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			yield* (yield* DurableStorage).put(Keys.quarantine, id, { error, at: clock.currentTimeMillisUnsafe() });
-			yield* (yield* AuditTrail).record('execution.quarantined', `${id}: ${error}`, 'quarantine.audit-failed');
-		});
-	}
-	private isolate(id: string, error: DomainError): CoordinatorEffect<void, DomainError> {
-		const reason = `Beepboop could not continue: ${decodeError(error)}`;
-		return Effect.gen({ self: this }, function*() {
-			const current = yield* this.get(id);
-			if (current.reason !== reason) yield* this.put({ ...current, reason });
-		}).pipe(recover(failure => this.quarantine(id, decodeError(failure))));
-	}
-	private stored(id: string): CoordinatorEffect<Execution | undefined, DomainError> {
-		return DurableStorage.use(storage => storage.get(Keys.execution, id));
-	}
 	private releaseSet(preparationId: string): CoordinatorEffect<ReleaseSetRecord | undefined, DomainError> {
 		return DurableStorage.use(storage => storage.get(Keys.releaseSet, preparationId));
 	}
-	private pendingContinuations(
-		observed: Execution,
-	): CoordinatorEffect<string[], DomainError> {
+	private committed({ execution, previous }: ExecutionCommitted): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			if (observed.state !== 'succeeded' || !observed.eventId.startsWith('observed:')) return [];
-			const bindings = Object.entries(observed.configuration.streams[observed.stream]?.workflows ?? {}).filter((
-				[, binding],
-			) => binding.mode !== 'observe' && binding.needs?.includes(observed.operation));
-			const missing: string[] = [];
-			for (const [operation] of bindings) {
-				const id = yield* executionId(observed.repositoryId, observed.stream, operation, observed.eventId);
-				if (!(yield* this.stored(id))) missing.push(operation);
-			}
-			return missing;
-		});
-	}
-	private continuations(observed: Execution): CoordinatorEffect<Execution[], DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const missing = yield* this.pendingContinuations(observed);
-			if (!missing.length) return [];
-			const record = yield* (yield* this.store).repositories.get(observed.repositoryId);
-			if (!record) return yield* precondition('Repository unavailable while completing observed operation');
-			const next: Execution[] = [];
-			for (const operation of missing) {
-				const execution = yield* deriveExecution(observed, record, {
-					stream: observed.stream,
-					operation,
-					eventId: observed.eventId,
-					sourceSha: observed.sourceSha,
-					...(observed.version ? { version: observed.version } : {}),
-				});
-				next.push(identifyExecution(execution));
-			}
-			return next;
-		});
-	}
-	private put(execution: Execution): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			Object.assign(execution, identifyExecution(execution));
-			const previous = yield* this.stored(execution.id);
-			const continuations = yield* this.continuations(execution);
-			if (
-				previous && previous.state !== execution.state && ['running', 'succeeded'].includes(execution.state)
-				&& execution.reason === previous.reason
-			) {
-				delete execution.reason;
-			}
-			const now = clock.currentTimeMillisUnsafe();
-			execution.updatedAt = now;
-			const extra: Write[] = [];
-			const set = execution.releaseSet;
-			if (!set?.workflowId) {
-				const current = yield* (yield* AlarmPlanner).reconcileAt;
-				extra.push(
-					Singleton.write(Keys.reconcileAt, Math.min(current ?? Number.POSITIVE_INFINITY, now + settleInterval)),
-				);
-			} else if (JSON.stringify({ ...previous, updatedAt: 0 }) !== JSON.stringify({ ...execution, updatedAt: 0 })) {
-				const wake = yield* (yield* DurableStorage).find(Keys.releaseWake, set.preparationId);
-				const members = wakeMembers(wake?.kind === 'readable' ? wake.value : undefined, execution.id);
-				extra.push(Keyspace.write(Keys.releaseWake, set.preparationId, { ...(members ? { members } : {}), due: now }));
-			}
-			yield* this.commit(
-				[
-					{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution },
-					...continuations.map((next): Committed => ({
-						entity: 'execution',
-						id: next.id,
-						repositoryId: next.repositoryId,
-						value: next,
-					})),
-				],
-				extra,
-			);
 			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
 			if (execution.state === 'succeeded' && previous?.state !== 'succeeded') yield* this.tagPackagesLater(execution);
 		});
@@ -535,7 +458,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				? execution
 				: execution.version === undefined
 				? undefined
-				: (yield* this.executions()).find(other =>
+				: (yield* allExecutions).find(other =>
 					other.operation === 'promote' && other.state === 'succeeded' && other.stream === execution.stream
 					&& other.version === execution.version
 				);
@@ -700,8 +623,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private putReleaseSet(preparationId: string, record: ReleaseSetRecord): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const preparation = yield* this.get(preparationId);
-			yield* this.commit([
+			const preparation = yield* getExecution(preparationId);
+			yield* commitEntries([
 				{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
 			]);
 		});
@@ -711,7 +634,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		history: CoordinatorEffect<ReleaseHistory, DomainError> = ReconcileHistory.use(active => active.current).pipe(
 			Effect.filterOrElse(
 				Predicate.isNotUndefined,
-				() => this.executions().pipe(Effect.map(entries => new ReleaseHistory(entries))),
+				() => allExecutions.pipe(Effect.map(entries => new ReleaseHistory(entries))),
 			),
 		),
 	): CoordinatorEffect<Execution[] | undefined, DomainError> {
@@ -754,14 +677,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				version: execution.version,
 				release,
 			};
-			yield* this.commit(
+			yield* commitEntries(
 				[{ entity: 'release', id, repositoryId: execution.repositoryId, value: event }],
 				[Keyspace.write(Keys.releaseEvent, id, event), Keyspace.write(Keys.releaseEmitted, id, true)],
 			);
 		});
 	}
 	execution(id: string): Promise<Execution | undefined> {
-		return this.run(this.stored(id), 'coordinator.execution', { executionId: id });
+		return this.run(storedExecution(id), 'coordinator.execution', { executionId: id });
 	}
 	openSubscriptionIssue(
 		repository: string,
@@ -782,7 +705,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	preparationVersions(stream: string): Promise<string[]> {
 		return this.run(
-			this.executions().pipe(
+			allExecutions.pipe(
 				Effect.map(
 					executions => [
 						...new Set(
@@ -802,7 +725,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	preparationResults(stream: string, version: string): Promise<PreparedRelease[]> {
 		return this.run(
-			this.executions().pipe(Effect.map(executions =>
+			allExecutions.pipe(Effect.map(executions =>
 				executions.flatMap(execution => {
 					const result = execution.prepared?.result ?? execution.managed?.result;
 					return result && execution.stream === stream && execution.version === version
@@ -817,7 +740,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	promotions(stream: string, version: string): Promise<Execution[]> {
 		return this.run(
-			this.executions().pipe(Effect.map(executions =>
+			allExecutions.pipe(Effect.map(executions =>
 				executions
 					.filter(execution =>
 						execution.operation === 'promote' && execution.stream === stream && execution.version === version
@@ -885,7 +808,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const binding = this.env.RELEASE_WORKFLOW;
 			const workflowId = release.workflowId;
 			if (!release.started) {
-				const preparation = yield* this.get(preparationId);
+				const preparation = yield* getExecution(preparationId);
 				yield* fromPromise(() =>
 					binding.create({
 						id: workflowId,
@@ -955,7 +878,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return yield* precondition('Release Workflow identity mismatch');
 			}
 			return yield* Effect.forEach(release.ids, id =>
-				this.get(id).pipe(Effect.map(execution => ({
+				getExecution(id).pipe(Effect.map(execution => ({
 					id,
 					operation: execution.package ? `${execution.operation} ${execution.package.id}` : execution.operation,
 					paced: execution.package?.manager === 'cargo',
@@ -978,7 +901,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (!operations.some(operation => operation.id === id && operation.paced)) {
 					return yield* precondition('Operation is not a paced publication in this release');
 				}
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				const target = execution.package;
 				if (!target) return yield* precondition('Paced operation has no package');
 				if (!execution.reservation) {
@@ -986,13 +909,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						execution.repositoryId,
 						pkg => matchesPackage(target.id, pkg),
 					);
-					yield* this.put({
+					yield* putExecution({
 						...execution,
 						reservation: kind,
 						notBefore: Math.max(execution.notBefore ?? 0, allowedAt),
 					});
 				}
-				return Math.max(0, ((yield* this.get(id)).notBefore ?? 0) - clock.currentTimeMillisUnsafe());
+				return Math.max(0, ((yield* getExecution(id)).notBefore ?? 0) - clock.currentTimeMillisUnsafe());
 			}),
 			'coordinator.reservePublication',
 			{ preparationId, workflowId, executionId: id },
@@ -1007,7 +930,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (!operations.some(operation => operation.id === id)) {
 					return yield* precondition('Operation is not in this release');
 				}
-				return Math.max(0, ((yield* this.get(id)).notBefore ?? 0) - clock.currentTimeMillisUnsafe());
+				return Math.max(0, ((yield* getExecution(id)).notBefore ?? 0) - clock.currentTimeMillisUnsafe());
 			}),
 			'coordinator.operationDelay',
 			{ preparationId, workflowId, executionId: id },
@@ -1021,7 +944,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					return yield* precondition('Operation is not in this release');
 				}
 				yield* this.reconcile(id);
-				return (yield* this.get(id)).state;
+				return (yield* getExecution(id)).state;
 			}),
 			'coordinator.advanceReleaseOperation',
 			{ preparationId, workflowId, executionId: id },
@@ -1041,12 +964,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			for (const operation of yield* this.operations(preparationId, workflowId)) {
-				const execution = yield* this.get(operation.id);
+				const execution = yield* getExecution(operation.id);
 				if (!execution.releaseSet) continue;
 				execution.releaseSet.workflowError = interrupted
 					? 'Release coordination interrupted. Check coordination to resume.'
 					: undefined;
-				yield* this.commit([
+				yield* commitEntries([
 					{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution },
 				]);
 			}
@@ -1057,7 +980,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.gen({ self: this }, function*() {
 				const operations = yield* this.operations(preparationId, workflowId);
 				for (const operation of operations) {
-					if ((yield* this.get(operation.id)).state !== 'succeeded') {
+					if ((yield* getExecution(operation.id)).state !== 'succeeded') {
 						return yield* precondition('Release is incomplete');
 					}
 				}
@@ -1074,14 +997,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.gen({ self: this }, function*() {
 				const clock = yield* Clock.Clock;
 
-				const preparation = yield* this.get(preparationId);
+				const preparation = yield* getExecution(preparationId);
 				if (yield* this.suspended(preparation.repositoryId)) {
 					return yield* precondition('Repository is suspended');
 				}
 				const prior = yield* this.releaseSet(preparationId);
 				if (prior) {
 					if (prior.target !== target) return yield* precondition('Release set already targets another revision');
-					return yield* Effect.forEach(prior.ids, id => this.get(id), { concurrency: 'unbounded' });
+					return yield* Effect.forEach(prior.ids, id => getExecution(id), { concurrency: 'unbounded' });
 				}
 				const result = preparation.managed?.result ?? preparation.prepared?.result;
 				const plan = preparation.managed?.plan ?? preparation.plan;
@@ -1115,7 +1038,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					repositoryId: execution.repositoryId,
 					value: execution,
 				}));
-				yield* this.commit(
+				yield* commitEntries(
 					[
 						{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
 						...members,
@@ -1134,7 +1057,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (Boolean(execution.workflow) === Boolean(execution.managed)) {
 					return yield* precondition('Execution needs exactly one runner');
 				}
-				const prior = yield* this.stored(execution.id);
+				const prior = yield* storedExecution(execution.id);
 				if (prior?.operation === 'prepare' && prior.versionPrMerge !== execution.versionPrMerge) {
 					return yield* precondition(
 						`${execution.version} of ${execution.stream} is already being prepared with versionPrMerge ${
@@ -1151,7 +1074,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						...(execution.started ? { started: execution.started } : {}),
 						...(execution.initiatedBy ? { initiatedBy: execution.initiatedBy } : {}),
 					};
-					yield* this.put(started);
+					yield* putExecution(started);
 					return started;
 				}
 				if (prior?.operation === 'promote' && execution.approvedBy === 'start') {
@@ -1165,31 +1088,23 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					&& (!prior.started || (execution.started.force && !prior.started.force))
 				) {
 					const upgraded = startedPreparation(prior, execution.started);
-					yield* this.put(upgraded);
+					yield* putExecution(upgraded);
 					yield* this.restatePreparation(prior, upgraded);
 					return upgraded;
 				}
 				if (prior) return prior;
 				yield* this.supersedePending(execution);
-				yield* this.put(execution);
+				yield* putExecution(execution);
 				return execution;
 			}),
 			'coordinator.enqueue',
 			{ executionId: execution.id, repositoryId: execution.repositoryId },
 		);
 	}
-	private get(id: string): CoordinatorEffect<Execution, DomainError> {
-		return this.stored(id).pipe(
-			Effect.filterOrFail(
-				(execution): execution is Execution => execution !== undefined,
-				() => precondition('Unknown execution'),
-			),
-		);
-	}
 	prepared(id: string, identity: RunIdentity, edits: Edit[]): Promise<{ url: string; head: string }> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				if (!execution.workflow || execution.managed || execution.operation !== 'prepare' || !execution.plan) {
 					return yield* precondition('Preparation run identity mismatch');
 				}
@@ -1204,7 +1119,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (execution.prepared?.result) return execution.prepared.result;
 				const prepared = execution.prepared ?? { edits: ordered };
 				execution.prepared = prepared;
-				yield* this.put(execution);
+				yield* putExecution(execution);
 				const gateway = yield* this.gateway;
 				const source = yield* repositorySnapshot(
 					gateway,
@@ -1221,7 +1136,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const result = committed(execution)
 					? yield* commitVersion(gateway, source, versionMessage(execution), ordered, prepared.head, head => {
 						prepared.head = head;
-						return this.put(execution);
+						return putExecution(execution);
 					})
 					: prepared.head
 					? yield* resumePreparation(gateway, source, branch, title, body, prepared.head)
@@ -1233,13 +1148,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						edits: ordered,
 						checkpoint: head => {
 							prepared.head = head;
-							return this.put(execution);
+							return putExecution(execution);
 						},
 						coAuthored: execution.initiatedBy !== undefined,
 					});
 				const merged = yield* this.autoMerged(execution, result);
 				prepared.result = merged;
-				yield* this.put(execution);
+				yield* putExecution(execution);
 				return merged;
 			}),
 			'coordinator.prepared',
@@ -1249,12 +1164,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private supersedePending(execution: Execution): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (execution.configuration.streams[execution.stream]?.concurrency !== 'supersede-pending') return;
-			for (const old of yield* this.executions()) {
+			for (const old of yield* allExecutions) {
 				if (
 					old.id !== execution.id && old.stream === execution.stream && old.operation === execution.operation
 					&& ['pending', 'ready'].includes(old.state)
 				) {
-					yield* this.put({ ...old, state: 'cancelled', reason: 'Superseded before dispatch' });
+					yield* putExecution({ ...old, state: 'cancelled', reason: 'Superseded before dispatch' });
 				}
 			}
 		});
@@ -1265,7 +1180,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			yield* this.redispatch(upgraded, reopened(upgraded.publications), 'Start requested');
 			yield* this.supersedePending(upgraded);
 			yield* this.restatePreparation(prior, upgraded);
-			return yield* this.get(upgraded.id);
+			return yield* getExecution(upgraded.id);
 		});
 	}
 	private restatePreparation(prior: Execution, upgraded: Execution): CoordinatorEffect<void, DomainError> {
@@ -1309,11 +1224,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						while: error => error.problem.code === 'upstream',
 					}),
 					Effect.flatMap(autoMerge => lock.serialized(Effect.gen({ self: this }, function*() {
-						const current = yield* this.get(execution.id);
+						const current = yield* getExecution(execution.id);
 						const preparation = current.prepared ?? current.managed;
 						if (preparation?.result?.head !== result.head) return;
 						preparation.result = { ...result, autoMerge };
-						yield* this.put(current);
+						yield* putExecution(current);
 					}))),
 					logRecovered('preparation.auto-merge-failed', { executionId: execution.id, url: result.url }),
 				);
@@ -1326,10 +1241,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	register(id: string, identity: RunIdentity): Promise<Execution> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				const workflow = execution.workflow;
 				if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
-				const dependencies = yield* Effect.forEach(execution.dependencies, id => this.get(id), {
+				const dependencies = yield* Effect.forEach(execution.dependencies, id => getExecution(id), {
 					concurrency: 'unbounded',
 				});
 				if (!dependenciesReady(execution, dependencies)) {
@@ -1394,7 +1309,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						...new Set([...(execution.helperShas ?? []), identity.helperSha ?? identity.workflowSha]),
 					],
 				};
-				yield* this.put(next);
+				yield* putExecution(next);
 				return next;
 			}),
 			'coordinator.register',
@@ -1410,7 +1325,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<RefPlan> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				const workflow = execution.workflow;
 				if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
 				yield* WorkflowRunGuard.require(execution, identity, {
@@ -1487,7 +1402,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 								Effect.gen({ self: this }, function*() {
 									if (visited.has(id)) return;
 									visited.add(id);
-									const dependency = yield* this.get(id);
+									const dependency = yield* getExecution(id);
 									if (
 										dependency.state !== 'succeeded' || dependency.sourceSha !== execution.sourceSha
 										|| dependency.configurationSha !== execution.configurationSha
@@ -1517,7 +1432,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						changes,
 						...(distribution ? { distribution } : {}),
 					});
-					yield* this.put(execution);
+					yield* putExecution(execution);
 				}
 				const plan = execution.refPlan;
 				if (!complete && plan.distribution && policy.distribution) {
@@ -1568,7 +1483,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						outcome: 'succeeded',
 						required: true,
 					}]);
-					yield* this.put(execution);
+					yield* putExecution(execution);
 				}
 				return plan;
 			}),
@@ -1660,11 +1575,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				visited.add(current.id);
 				if (current.state !== 'succeeded' || current.sourceSha !== execution.sourceSha) return false;
 				if (current.operation === 'promote') return true;
-				for (const dependency of current.dependencies) if (yield* approved(yield* this.get(dependency))) return true;
+				for (const dependency of current.dependencies) {
+					if (yield* approved(yield* getExecution(dependency))) return true;
+				}
 				return false;
 			});
 		return Effect.gen({ self: this }, function*() {
-			for (const dependency of execution.dependencies) if (yield* approved(yield* this.get(dependency))) return true;
+			for (const dependency of execution.dependencies) {
+				if (yield* approved(yield* getExecution(dependency))) return true;
+			}
 			return false;
 		});
 	}
@@ -1673,7 +1592,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private releasePublication(id: string, identity: RunIdentity): CoordinatorEffect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const execution = yield* this.get(id);
+			const execution = yield* getExecution(id);
 			if (!execution.workflow || execution.managed) return yield* precondition('Operation is not a workflow');
 			yield* WorkflowRunGuard.require(execution, identity, {
 				_tag: 'SameRunAndName',
@@ -1746,7 +1665,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			yield* verifyImmutableRelease(release, execution.workflow?.refs?.immutable);
 			const released = yield* this.released(execution, release, tag);
-			yield* this.put(released);
+			yield* putExecution(released);
 			return released;
 		});
 	}
@@ -1778,11 +1697,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	releasePublished(tag: string): Promise<void> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				for (const execution of yield* this.executions()) {
+				for (const execution of yield* allExecutions) {
 					if (!recoverable(execution) || !execution.version) continue;
 					if ((yield* fromSync(() => githubRelease(execution)))?.tag !== tag) continue;
 					const next = yield* this.publishedRelease(execution);
-					if (next !== execution) yield* this.put(next);
+					if (next !== execution) yield* putExecution(next);
 				}
 			}),
 			'coordinator.releasePublished',
@@ -1794,7 +1713,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.gen({ self: this }, function*() {
 				const gateway = yield* this.gateway;
 				const transport = (yield* Automation).dependencies.transport;
-				for (const execution of yield* this.executions()) {
+				for (const execution of yield* allExecutions) {
 					const matches = (publication: Publication) =>
 						verifiableCancellation(publication) && publication.manager === manager && publication.name === name
 						&& publication.version === version;
@@ -1813,7 +1732,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 								: Effect.succeed(publication),
 					);
 					const next = rechecked({ ...execution, publications });
-					if (JSON.stringify(next) !== JSON.stringify(execution)) yield* this.put(next);
+					if (JSON.stringify(next) !== JSON.stringify(execution)) yield* putExecution(next);
 				}
 			}),
 			'coordinator.packagePublished',
@@ -2037,7 +1956,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const { execution, holder } = yield* this.publishing(id, identity);
 				let ledger = yield* this.ledgerOf(execution);
 				const now = clock.currentTimeMillisUnsafe();
-				const ledgers = yield* this.ledgers(), executions = yield* this.executions();
+				const ledgers = yield* this.ledgers(), executions = yield* allExecutions;
 				const waits: { until: number; reason: string }[] = [];
 				for (const purl of ledger.records.map(record => record.purl)) {
 					const record = ledger.records.find(entry => entry.purl === purl);
@@ -2095,7 +2014,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						record,
 						holder,
 						yield* this.ledgers(),
-						yield* this.executions(),
+						yield* allExecutions,
 						now,
 					);
 					if (blocked?.kind === 'failed') {
@@ -2188,7 +2107,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		identity: RunIdentity,
 	): CoordinatorEffect<{ execution: Execution; holder: string }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const execution = yield* this.get(id);
+			const execution = yield* getExecution(id);
 			yield* WorkflowRunGuard.require(execution, identity, {
 				_tag: 'SameRun',
 				mismatch: 'Publication identity mismatch',
@@ -2206,7 +2125,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const clock = yield* Clock.Clock;
 
 			let next = ledger;
-			const execution = yield* this.get(ledger.executionId);
+			const execution = yield* getExecution(ledger.executionId);
 			for (const record of ledger.records) {
 				if (record.status.state === 'uploaded') {
 					next = yield* this.settleRecord(
@@ -2310,9 +2229,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		publication: Publication,
 	): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const execution = yield* this.get(executionId);
+			const execution = yield* getExecution(executionId);
 			const identity = yield* Effect.fromResult(parseReleaseIdentity(record.purl)).pipe(Effect.mapError(toDomainError));
-			yield* this.put({
+			yield* putExecution({
 				...execution,
 				publications: yield* mergePublications(execution.publications, [{ ...publication, identity }]),
 			});
@@ -2337,7 +2256,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
-			const execution = yield* this.get(id);
+			const execution = yield* getExecution(id);
 			const workflow = execution.workflow;
 			if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
 			yield* WorkflowRunGuard.require(execution, identity, { _tag: 'SameRun', mismatch: 'Report identity mismatch' });
@@ -2389,20 +2308,20 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				publications: yield* mergePublications(execution.publications, accepted),
 				artifacts: merged,
 			};
-			yield* this.put(next);
+			yield* putExecution(next);
 			return next;
 		});
 	}
 	private supersedeVersion(execution: Execution): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (execution.operation !== 'promote' || !execution.version) return;
-			for (const other of yield* this.executions()) {
+			for (const other of yield* allExecutions) {
 				if (
 					other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
 					&& other.version === execution.version
 					&& ['awaiting-approval', 'blocked', 'pending', 'ready', 'failed'].includes(other.state)
 				) {
-					yield* this.put({ ...other, state: 'cancelled', reason: `Superseded by ${execution.id}` });
+					yield* putExecution({ ...other, state: 'cancelled', reason: `Superseded by ${execution.id}` });
 				}
 			}
 		});
@@ -2417,17 +2336,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				&& !['succeeded', 'cancelled', 'failed'].includes(other.state)
 			);
 			if (newer) {
-				yield* this.put({ ...execution, state: 'cancelled', reason: `Superseded by ${newer.id}` });
+				yield* putExecution({ ...execution, state: 'cancelled', reason: `Superseded by ${newer.id}` });
 				return true;
 			}
 			const conflict = yield* this.tagProblem(execution, true);
 			if (conflict) {
-				yield* this.put({ ...execution, state: 'cancelled', reason: conflict });
+				yield* putExecution({ ...execution, state: 'cancelled', reason: conflict });
 				return true;
 			}
 			const waiting = (yield* this.ungranted(execution)) ?? (yield* this.upstream(execution, executions));
 			if (waiting) {
-				if (execution.reason !== waiting) yield* this.put({ ...execution, reason: waiting });
+				if (execution.reason !== waiting) yield* putExecution({ ...execution, reason: waiting });
 				return false;
 			}
 			const forced = execution.started?.force === true;
@@ -2435,13 +2354,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				? { pending: [], failed: [], skipped: [] }
 				: yield* this.commitChecks(execution);
 			if (execution.approvedBy === 'start' && failed.length) {
-				yield* this.put({ ...execution, state: 'failed', reason: failed.join('; ') });
+				yield* putExecution({ ...execution, state: 'failed', reason: failed.join('; ') });
 				return true;
 			}
 			const problems = [...failed, ...pending];
 			if (problems.length) {
 				const reason = problems.join('; ');
-				if (execution.reason !== reason) yield* this.put({ ...execution, reason });
+				if (execution.reason !== reason) yield* putExecution({ ...execution, reason });
 				return false;
 			}
 			yield* (yield* this.store).audit(
@@ -2454,7 +2373,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const next: Execution = { ...execution, state: 'ready', approvedAt: clock.currentTimeMillisUnsafe() };
 			delete next.reason;
 			yield* this.supersedeVersion(next);
-			yield* this.put(next);
+			yield* putExecution(next);
 			return true;
 		});
 	}
@@ -2519,7 +2438,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.gen({ self: this }, function*() {
 				const clock = yield* Clock.Clock;
 
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				const reference = yield* Effect.fromResult(matches(commitSha, approvalShaPattern));
 				const commit = yield* Effect.fromResult(sha(execution.sourceSha));
 				if (execution.state !== 'awaiting-approval' || !commit.startsWith(reference)) {
@@ -2552,7 +2471,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const next: Execution = { ...execution, state: 'ready', approvedAt: clock.currentTimeMillisUnsafe() };
 				delete next.reason;
 				yield* this.supersedeVersion(next);
-				yield* this.put(next);
+				yield* putExecution(next);
 				return next;
 			}),
 			'coordinator.approve',
@@ -2562,7 +2481,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	binaryProgress(id: string): Promise<BinaryProgress> {
 		return this.run(
 			Effect.gen({ self: this }, function*() {
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				const release = execution.workflow?.setup?.binaries;
 				if (!release || !execution.version) return { legs: [], assets: [] };
 				const legs = binaryLegs(release, execution.version);
@@ -2615,7 +2534,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	approvalReadiness(id: string): Promise<{ problems: string[]; blocked: string[] }> {
 		return this.run(
 			Effect.gen({ self: this }, function*() {
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				if (execution.state !== 'awaiting-approval') {
 					return { problems: [], blocked: ['This release is not waiting for you to publish it'] };
 				}
@@ -2640,7 +2559,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (!record || !configuration || !Object.hasOwn(configuration.streams, stream)) {
 					return yield* notFound('stream', `Unknown stream ${stream}`, stream);
 				}
-				const release = gatedRelease(yield* this.executions(), stream);
+				const release = gatedRelease(yield* allExecutions, stream);
 				const subject: GateSubject = release
 					?? { repository: record.name, repositoryId, sourceSha: record.sha, configuration, stream };
 				const [{ outcomes }, skips, metadata] = yield* Effect.all([
@@ -2684,7 +2603,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const clock = yield* Clock.Clock;
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				if (execution.operation !== 'promote' || !['failed', 'awaiting-approval'].includes(execution.state)) {
 					return yield* precondition('Only a release that waits on its checks or stopped on them takes this choice');
 				}
@@ -2708,7 +2627,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				delete next.reason;
 				if (!stopping.length) {
 					if (execution.state !== 'failed') return yield* precondition('No check stops this release');
-					yield* this.put(next);
+					yield* putExecution(next);
 					yield* this.wakeUp();
 					return next;
 				}
@@ -2732,7 +2651,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					for (const [run, attempt] of runs) {
 						yield* gateway.call(`/repos/${execution.repository}/actions/runs/${run}/rerun-failed-jobs`, token, 'POST');
 						next.reruns = [...(next.reruns ?? []).filter(rerun => rerun.id !== run), { id: run, attempt }];
-						yield* this.put(next);
+						yield* putExecution(next);
 						yield* store.audit(actor, 'promotion.checks.rerun', `${id}: ${run}`);
 					}
 				} else if (choice === 'skip') {
@@ -2757,7 +2676,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						);
 					}
 				}
-				yield* this.put(next);
+				yield* putExecution(next);
 				yield* this.wakeUp();
 				return next;
 			}),
@@ -2832,7 +2751,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const version = release.version;
 			if (!version || !conflicts.length || conflicts.some(tag => tag.name !== primary)) return [];
-			const releases = (yield* this.executions()).filter(execution =>
+			const releases = (yield* allExecutions).filter(execution =>
 				execution.operation === 'promote' && execution.stream === release.stream
 				&& execution.version === version && execution.id !== release.id
 			);
@@ -3158,7 +3077,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			if (sha === execution.sourceSha) return true;
 			if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) {
-				const executions = yield* this.executions();
+				const executions = yield* allExecutions;
 				let promotion = execution.operation === 'promote'
 					? execution
 					: executions.find(other => other.operation === 'promote' && other.dependencies.includes(execution.id));
@@ -3197,7 +3116,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const paths = releasePaths(record.inventory.packages, stream);
 			const kept = (commit: string) =>
 				unchangedSince(gateway, execution.repository, execution.repositoryId, commit, sha, paths);
-			const newer = (yield* this.executions()).filter(other =>
+			const newer = (yield* allExecutions).filter(other =>
 				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
 				&& other.version === execution.version && other.createdAt > execution.createdAt
 				&& other.state !== 'cancelled' && other.state !== 'failed'
@@ -3265,7 +3184,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					token,
 					'POST',
 				);
-				yield* this.put({
+				yield* putExecution({
 					...execution,
 					state: 'uncertain',
 					github: undefined,
@@ -3275,7 +3194,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					publications,
 				});
 			} else {
-				yield* this.put({
+				yield* putExecution({
 					...execution,
 					state: 'ready',
 					cancelledBy: undefined,
@@ -3329,19 +3248,19 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (!force) return prior;
 				if (!prior.workflow) {
 					yield* this.redispatch(started, reopened(prior.publications), 'Forced restart');
-					return yield* this.get(prior.id);
+					return yield* getExecution(prior.id);
 				}
 				const rerun: Execution = {
 					...freshRun(started, prior.workflow),
 					reason: `Dispatching ${prior.workflow.file} again for ${prior.sourceSha.slice(0, 12)}`,
 				};
-				yield* this.put(rerun);
+				yield* putExecution(rerun);
 				yield* this.wakeUp();
 				return rerun;
 			}
 			const waiting: Execution = { ...started, state: 'awaiting-approval', publications: reopened(prior.publications) };
 			delete waiting.reason;
-			yield* this.put(waiting);
+			yield* putExecution(waiting);
 			yield* this.wakeUp();
 			return waiting;
 		});
@@ -3368,7 +3287,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}; retry the operation instead`,
 				);
 			}
-			yield* this.put({
+			yield* putExecution({
 				...freshRun(execution, workflow),
 				currentWorkflow: true,
 				reason: `Dispatching the current ${execution.workflow?.file ?? 'workflow'} for ${
@@ -3384,10 +3303,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const clock = yield* Clock.Clock;
 
 				if (action === 'reconcile') yield* (yield* DurableStorage).remove(Keys.quarantine, id);
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				const takeover = action === 'reconcile' || execution.operation !== 'promote'
 					? undefined
-					: (yield* this.executions()).find(other =>
+					: (yield* allExecutions).find(other =>
 						other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
 						&& other.version === execution.version && (other.reclaims?.length ?? 0) > 0
 						&& !['failed', 'cancelled'].includes(other.state)
@@ -3412,12 +3331,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
 						const next: Execution = { ...execution, state: 'awaiting-approval', publications };
 						delete next.reason;
-						yield* this.put(next);
+						yield* putExecution(next);
 						yield* this.wakeUp();
 					} else yield* this.redispatch(execution, publications, 'Retry requested');
 				} else {
 					const published = yield* this.publishedRelease(execution);
-					if (published !== execution) yield* this.put(published);
+					if (published !== execution) yield* putExecution(published);
 					yield* this.wakeUp();
 				}
 				const releaseSet = execution.releaseSet;
@@ -3431,7 +3350,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}
 				}
 				yield* (yield* this.store).audit(actor, `execution.${action}`, id);
-				return yield* this.get(id);
+				return yield* getExecution(id);
 			}),
 			'coordinator.recover',
 			{ executionId: id },
@@ -3440,7 +3359,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	cancel(id: string, actor: string): Promise<Execution> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				const execution = yield* this.get(id);
+				const execution = yield* getExecution(id);
 				if (execution.state === 'succeeded' || (execution.state === 'cancelled' && !recoverable(execution))) {
 					return yield* precondition('Execution has already finished');
 				}
@@ -3473,7 +3392,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					cancelledBy: actor,
 					reason: `Cancelled by ${actor}`,
 				};
-				yield* this.put(next);
+				yield* putExecution(next);
 				yield* (yield* this.store).audit(actor, 'execution.cancel', id);
 				return next;
 			}),
@@ -3606,7 +3525,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					for (const [needed, required] of Object.entries(binding.needsJobs ?? {})) {
 						if (run.path !== `.github/workflows/${stream.workflows[needed]?.file}`) continue;
 						const id = yield* executionId(repository.id, streamName, operation, `observed:${run.id}`);
-						if (yield* this.stored(id)) continue;
+						if (yield* storedExecution(id)) continue;
 						if (workflow === undefined) {
 							const source = yield* (yield* this.gateway).file(repository.name, run.path, run.head_sha, token);
 							workflow = (source === null ? undefined : workflowJobs(source)) ?? null;
@@ -3633,7 +3552,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					sourceSha: parent.sourceSha,
 					...(parent.version ? { version: parent.version } : {}),
 				});
-				yield* this.put({ ...next, dependencies: next.dependencies.filter(id => id !== parent.id) });
+				yield* putExecution({ ...next, dependencies: next.dependencies.filter(id => id !== parent.id) });
 			}
 			return waiting;
 		});
@@ -3649,7 +3568,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const observedExecutions: Execution[] = [];
 			const settle = (execution: Execution) =>
 				Effect.gen({ self: this }, function*() {
-					if (record) yield* this.put(execution);
+					if (record) yield* putExecution(execution);
 					observedExecutions.push(execution);
 				});
 			if (typeof run.head_branch !== 'string') return observedExecutions;
@@ -3709,7 +3628,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					const eventId = `observed:${run.id}`;
 					const id = yield* executionId(repository.id, streamName, operation, eventId);
 					if (yield* (yield* DurableStorage).has(Keys.execution, id)) {
-						const previous = yield* this.get(id);
+						const previous = yield* getExecution(id);
 						if (previous.state === 'succeeded' || (previous.runAttempt ?? 0) >= run.run_attempt) continue;
 					}
 					const snapshot = yield* repositorySnapshot(gateway, repository.name, repository.id, run.head_sha);
@@ -3727,7 +3646,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.runAttempt = run.run_attempt;
 					execution.refNamespace = tagged ? 'tags' : 'heads';
 					execution.state = 'running';
-					execution.dependencies = (yield* this.executions()).filter(other =>
+					execution.dependencies = (yield* allExecutions).filter(other =>
 						other.stream === streamName && other.operation === 'promote' && other.state === 'succeeded'
 						&& version !== undefined && other.version === version && other.sourceSha === snapshot.sha
 					).map(other => other.id);
@@ -3907,7 +3826,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (!operation || execution.workflow) return yield* precondition('Invalid managed operation');
 			yield* Effect.gen({ self: this }, function*() {
 				if (operation.result) {
-					yield* this.put({ ...execution, state: 'succeeded' });
+					yield* putExecution({ ...execution, state: 'succeeded' });
 					return;
 				}
 				if (operation.plan.requiresPreparation || operation.plan.sourceSha !== execution.sourceSha) {
@@ -3923,10 +3842,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				);
 				execution.state = 'running';
 				execution.attempts++;
-				yield* this.put(execution);
+				yield* putExecution(execution);
 				const checkpoint = (head: string) => {
 					operation.head = head;
-					return this.put(execution);
+					return putExecution(execution);
 				};
 				const result = committed(execution)
 					? yield* commitVersion(
@@ -3958,10 +3877,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				operation.result = yield* this.autoMerged(execution, result);
 				execution.state = 'succeeded';
 				delete execution.reason;
-				yield* this.put(execution);
+				yield* putExecution(execution);
 			}).pipe(
 				recover(error =>
-					this.put({
+					putExecution({
 						...execution,
 						state: committed(execution) && error.problem.code === 'precondition' ? 'failed' : 'uncertain',
 						reason: decodeError(error),
@@ -4043,7 +3962,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						if (execution.package?.manager === 'cargo') {
 							yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until));
 						}
-						yield* this.put({
+						yield* putExecution({
 							...execution,
 							state: 'ready',
 							supersededRuns: [...(execution.supersededRuns ?? []), runId],
@@ -4077,13 +3996,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							? execution.runAttempt
 							: runAttempt,
 					};
-					yield* this.put(yield* this.publishedRelease(ended).pipe(Effect.orElseSucceed(() => ended)));
+					yield* putExecution(yield* this.publishedRelease(ended).pipe(Effect.orElseSucceed(() => ended)));
 				} else {
 					const next = { ...settleRun(execution, result), runAttempt };
 					if (
 						next.state !== execution.state || next.reason !== execution.reason || runAttempt !== execution.runAttempt
 						|| JSON.stringify(next.github) !== JSON.stringify(execution.github)
-					) yield* this.put(next);
+					) yield* putExecution(next);
 				}
 				return;
 			}
@@ -4103,7 +4022,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				);
 				const run = matches.length === 1 ? matches[0] : undefined;
 				if (run) {
-					yield* this.put({
+					yield* putExecution({
 						...execution,
 						state: 'running',
 						runId: run.id,
@@ -4111,7 +4030,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						workflowSha: undefined,
 					});
 				} else {
-					yield* this.put({
+					yield* putExecution({
 						...execution,
 						state: 'uncertain',
 						reason: matches.length
@@ -4138,14 +4057,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const reason = yield* this.headMoved(execution, token);
 			if (reason) {
-				yield* this.put({ ...execution, state: 'failed', reason });
+				yield* putExecution({ ...execution, state: 'failed', reason });
 				return;
 			}
 			execution.resolvedInputs = yield* resolveInputs(execution, executions);
 			const draftRelease = yield* this.draftRelease(execution);
 			if (draftRelease) execution.draftRelease = draftRelease;
 			busy.add(execution.stream);
-			yield* this.put({
+			yield* putExecution({
 				...execution,
 				state: 'dispatching',
 				attempts: execution.attempts + 1,
@@ -4169,7 +4088,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (dispatched._tag === 'Failure') {
 				const error = dispatched.failure;
 				if (!(error instanceof GitHubRejection)) return yield* error;
-				yield* this.put({
+				yield* putExecution({
 					...execution,
 					state: error.retryAt === undefined ? 'failed' : 'ready',
 					attempts: execution.attempts + 1,
@@ -4180,14 +4099,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const runId = dispatched.success?.workflow_run_id;
 			if (runId) {
-				yield* this.put({ ...execution, state: 'running', attempts: execution.attempts + 1, runId });
+				yield* putExecution({ ...execution, state: 'running', attempts: execution.attempts + 1, runId });
 			}
 		}).pipe(
 			recover(error =>
 				Effect.gen({ self: this }, function*() {
 					const reason = `Beepboop could not continue: ${decodeError(error)}`;
-					const current = yield* this.get(execution.id);
-					if (current.reason !== reason) yield* this.put({ ...current, reason });
+					const current = yield* getExecution(execution.id);
+					if (current.reason !== reason) yield* putExecution({ ...current, reason });
 				})
 			),
 		);
@@ -4207,7 +4126,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return true;
 			}
 			return execution.state === 'succeeded'
-				&& ((yield* this.pendingContinuations(execution)).length > 0
+				&& ((yield* pendingContinuations(execution)).length > 0
 					|| (yield* this.releaseGroup(execution, history)) !== undefined);
 		});
 	}
@@ -4242,17 +4161,17 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				);
 				if (publications.some((publication, i) => publication.outcome !== execution.publications[i]?.outcome)) {
 					const checked = { ...execution, publications };
-					yield* this.put(publishedAfterFailure(checked) ?? checked);
+					yield* putExecution(publishedAfterFailure(checked) ?? checked);
 					return 'continue' as const;
 				}
 			}
 			const published = publishedAfterFailure(execution);
 			if (published) {
-				yield* this.put(published);
+				yield* putExecution(published);
 				return 'continue' as const;
 			}
 			if (execution.state === 'succeeded') {
-				if ((yield* this.continuations(execution)).length) yield* this.put(execution);
+				if ((yield* continuationsOf(execution)).length) yield* putExecution(execution);
 				else yield* this.captureReleaseEvent(execution);
 			}
 			if (!active.includes(execution) || execution.state === 'pending') return 'continue' as const;
@@ -4263,10 +4182,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (blocked !== execution.reason && (blocked || execution.reason?.startsWith(metadataReason))) {
 					current = { ...execution, ...(blocked ? { reason: blocked } : {}) };
 					if (!blocked) delete current.reason;
-					yield* this.put(current);
+					yield* putExecution(current);
 				}
 				if (blocked && current.approvedBy === 'start') {
-					yield* this.put({ ...current, state: 'failed', reason: blocked });
+					yield* putExecution({ ...current, state: 'failed', reason: blocked });
 					return 'continue' as const;
 				}
 				if (blocked) return 'continue' as const;
@@ -4285,7 +4204,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					recover(error =>
 						Effect.gen({ self: this }, function*() {
 							const reason = `commit check error: ${decodeError(error)}`;
-							if (current.reason !== reason) yield* this.put({ ...current, reason });
+							if (current.reason !== reason) yield* putExecution({ ...current, reason });
 							return 'continue' as const;
 						})
 					),
@@ -4306,10 +4225,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const storage = yield* DurableStorage;
 			const started = clock.currentTimeMillisUnsafe();
 			if (!onlyExecution) yield* storage.write(Keys.reconcileAt, started + reconcileInterval);
-			const journal = yield* this.readJournal();
+			const journal = yield* journaled;
 			const quarantined = new Set(yield* storage.ids(Keys.quarantine));
 			for (const entry of journal.unreadable) {
-				if (!quarantined.has(entry.id)) yield* this.quarantine(entry.id, entry.error);
+				if (!quarantined.has(entry.id)) yield* quarantineExecution(entry.id, entry.error);
 			}
 			const executions = journal.executions.filter(execution => !quarantined.has(execution.id)).sort((a, b) =>
 				a.createdAt - b.createdAt
@@ -4340,11 +4259,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (work._tag === 'Success' && !work.success) continue;
 				if (yield* this.suspended(execution.repositoryId)) return;
 				if (work._tag === 'Failure') {
-					yield* this.isolate(execution.id, work.failure);
+					yield* isolateExecution(execution.id, work.failure);
 					continue;
 				}
 				const outcome = yield* this.advance(execution, executions, active, busy, unresolved).pipe(
-					recover(error => this.isolate(execution.id, error).pipe(Effect.as('continue' as const))),
+					recover(error => isolateExecution(execution.id, error).pipe(Effect.as('continue' as const))),
 				);
 				if (outcome === 'stop') return;
 			}
