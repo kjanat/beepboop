@@ -120,7 +120,7 @@
 		"specifier": "@/contract/changes"
 	},
 	{
-		"file": "packages/persistence/src/journal.ts",
+		"file": "packages/persistence/src/durable/journal.ts",
 		"specifier": "@/contract/changes"
 	},
 	{

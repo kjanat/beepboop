@@ -2,9 +2,9 @@ import { Schema } from 'effect';
 import { inboxEvent } from '@/github/webhooks.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import type { JournalLayout } from '@/persistence/durable/journal.ts';
+import { journalSequence, outboxEntry } from '@/persistence/durable/journal.ts';
 import { Keyspace, Singleton } from '@/persistence/durable/keyspace.ts';
-import type { JournalLayout } from '@/persistence/journal.ts';
-import { journalSequence, outboxEntry } from '@/persistence/journal.ts';
 import { ledgerSchema } from '@/publication/ledger.ts';
 import { decodeEventV1, decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 
