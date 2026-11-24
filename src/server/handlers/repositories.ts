@@ -9,7 +9,7 @@ import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { gateLabel } from '@/domain/release-gates.ts';
 import { repositoryName, repositoryReference } from '@/domain/repository-name.ts';
-import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
+import { fromJson } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, domainError, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
@@ -40,20 +40,11 @@ export const repositoryEndpoints = {
 	repositoriesPackageTags: admin(
 		routes.repositoriesPackageTags,
 		(input, { service, actor }) =>
-			fromPromise(() =>
-				service.coordinator(input.repositoryId).packageTags(
-					input.repositoryId,
-					input.stream,
-					input.apply,
-					input.after,
-					actor,
-				)
-			),
+			service.coordinators.packageTags(input.repositoryId, input.stream, input.apply, input.after, actor),
 	),
 	repositoriesGates: admin(
 		routes.repositoriesGates,
-		(input, { service }) =>
-			fromPromise(() => service.coordinator(input.repositoryId).gates(input.repositoryId, input.stream)),
+		(input, { service }) => service.coordinators.gates(input.repositoryId, input.stream),
 	),
 	repositoriesGateSkip: admin(routes.repositoriesGateSkip, (input, { service, actor }) =>
 		Effect.gen(function*() {
@@ -70,9 +61,8 @@ export const repositoryEndpoints = {
 				input.skip ? 'stream.gate.skip' : 'stream.gate.restore',
 				`${repository.name}:${input.stream}:${gateLabel(input.gate)}`,
 			);
-			const coordinator = service.coordinator(repository.id);
-			yield* fromPromise(() => coordinator.wake());
-			return yield* fromPromise(() => coordinator.gates(repository.id, input.stream));
+			yield* service.coordinators.wake(repository.id);
+			return yield* service.coordinators.gates(repository.id, input.stream);
 		})),
 	repositoriesList: admin(
 		routes.repositoriesList,

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect';
 import { TestClock } from 'effect/testing';
 import { SessionStore } from '@/auth/adapters/d1/sessions.ts';
+import { CoordinatorClient } from '@/automation/coordinator-client.ts';
 import {
 	ApplicationConfiguration,
 	ApplicationSecrets,
@@ -269,6 +270,9 @@ test('the application layer uses explicitly supplied database, GitHub, HTTP and 
 		Layer.succeed(HttpTransport, { fetch: http }),
 		Layer.effect(GitHubApp, makeGitHubApp({ GITHUB_APP_ID: 'test', GITHUB_APP_PRIVATE_KEY: '' }, 1)),
 		Layer.succeed(ApplicationSecrets, vault),
+		CoordinatorClient.layer(() => {
+			throw new Error('Unused durable binding');
+		}),
 		Layer.succeed(ApplicationConfiguration, {
 			env: {
 				get DB(): never {

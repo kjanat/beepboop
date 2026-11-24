@@ -5,6 +5,7 @@ import type { SessionStore } from '@/auth/adapters/d1/sessions.ts';
 import type { AuthBindings, AuthenticationDependencies } from '@/auth/service.ts';
 import { Authentication, authentication } from '@/auth/service.ts';
 import type { AutomationCoordinator } from '@/automation/coordinator';
+import { CoordinatorClient } from '@/automation/coordinator-client.ts';
 import type { Credentials } from '@/automation/gateway.ts';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { preparationMerge } from '@/automation/preparation-pull-requests';
@@ -37,7 +38,7 @@ import { workflowRunsSchema } from '@/github/resources.ts';
 import { GitHubTransport, gitHubTransportLayer } from '@/github/transport.ts';
 import type { InboxEvent, SetupPullEdit, SetupPullMerge } from '@/github/webhooks.ts';
 import { inboxEvent, verifySignature } from '@/github/webhooks.ts';
-import { fromJson, fromPromise, fromSync, recover } from '@/kernel/errors/classify.ts';
+import { fromJson, fromSync, recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -149,10 +150,10 @@ export class AutomationService {
 	get changes() {
 		return this.dependencies.changes;
 	}
-
-	coordinator(id: number) {
-		return this.env.AUTOMATION.getByName(String(id));
+	get coordinators() {
+		return this.dependencies.coordinators;
 	}
+
 	suspended(repositoryId: number): Effect.Effect<boolean, DomainError> {
 		return this.store.repositories.enrollment(repositoryId).pipe(
 			Effect.map(enrollment => enrollment?.access.kind !== 'active'),
@@ -163,10 +164,9 @@ export class AutomationService {
 			if (execution.repositoryId !== repository.id) {
 				return yield* precondition('Execution belongs to another repository');
 			}
-			const coordinator = this.coordinator(repository.id);
-			if (execution.managed) return yield* fromPromise(() => coordinator.enqueue(execution));
-			const existing = yield* fromPromise(() => coordinator.execution(execution.id));
-			if (existing) return yield* fromPromise(() => coordinator.enqueue(execution));
+			if (execution.managed) return yield* this.coordinators.enqueue(repository.id, execution);
+			const existing = yield* this.coordinators.execution(repository.id, execution.id);
+			if (existing) return yield* this.coordinators.enqueue(repository.id, execution);
 			const stream = execution.configuration.streams[execution.stream];
 			if (
 				execution.operation === 'prepare'
@@ -210,7 +210,7 @@ export class AutomationService {
 					'Dispatch requires an exact workflow ref; wildcard bindings support observation only',
 				);
 			}
-			return yield* fromPromise(() => coordinator.enqueue(execution));
+			return yield* this.coordinators.enqueue(repository.id, execution);
 		}).pipe(
 			Effect.withSpan('release.enqueue', { attributes: { repositoryId: repository.id, executionId: execution.id } }),
 			Effect.annotateLogs({ repositoryId: repository.id, executionId: execution.id }),
@@ -263,7 +263,7 @@ export class AutomationService {
 			setupPullOpen: (name, id) => openSetupPull(this.gateway, name, id).pipe(Effect.map(Boolean)),
 			resolvePublished: (inventory, name, id) =>
 				resolvePublished(inventory, this.dependencies.transport, this.gateway.verification(name, id)),
-			wake: id => fromPromise(() => this.coordinator(id).wake()),
+			wake: id => this.coordinators.wake(id),
 			refreshed: (name, repository, saved, snapshot) =>
 				Effect.gen({ self: this }, function*() {
 					yield* this.releaseFromManifest(repository, saved).pipe(
@@ -283,7 +283,7 @@ export class AutomationService {
 		target: string,
 	): Effect.Effect<{ sha: string; started: ReleaseStarted } | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const results = yield* fromPromise(() => this.coordinator(repository.id).preparationResults(stream, version));
+			const results = yield* this.coordinators.preparationResults(repository.id, stream, version);
 			for (const { started, ...result } of results) {
 				if (!started) continue;
 				const merge = result.kind === 'commit'
@@ -309,7 +309,7 @@ export class AutomationService {
 		target: string,
 	): Effect.Effect<string | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const results = yield* fromPromise(() => this.coordinator(repository.id).preparationResults(stream, version));
+			const results = yield* this.coordinators.preparationResults(repository.id, stream, version);
 			for (const result of results) {
 				if (result.kind === 'commit') continue;
 				const merge = yield* preparationMerge(this.gateway, repository.name, repository.id, result, target).pipe(
@@ -331,7 +331,7 @@ export class AutomationService {
 		target: string,
 	): Effect.Effect<string | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const results = yield* fromPromise(() => this.coordinator(repository.id).preparationResults(stream, version));
+			const results = yield* this.coordinators.preparationResults(repository.id, stream, version);
 			for (const result of results) {
 				if (result.kind !== 'commit') continue;
 				if (yield* this.gateway.contains(repository.name, repository.id, result.head, target)) return result.head;
@@ -503,7 +503,7 @@ export class AutomationService {
 					})
 				);
 				if (reclaims.length) promotion.reclaims = reclaims;
-				if (yield* fromPromise(() => this.coordinator(repository.id).execution(promotion.id))) continue;
+				if (yield* this.coordinators.execution(repository.id, promotion.id)) continue;
 				setupMerge ??= (yield* this.setupMerge(repository)) ?? null;
 				if (setupMerge?.sha === plan.sourceSha && !releaseAfterMerge(setupMerge.body)) continue;
 				if (started && held) {
@@ -523,8 +523,7 @@ export class AutomationService {
 	): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (!hasTagPromotion(stream, prefix)) return;
-			const coordinator = this.coordinator(repository.id);
-			const versions = yield* fromPromise(() => coordinator.preparationVersions(name));
+			const versions = yield* this.coordinators.preparationVersions(repository.id, name);
 			if (!versions.length) return;
 			const tags = yield* this.gateway.tagRefs(repository.name, repository.id);
 			const latest = latestTag(tags.map(ref => ref.name), prefix);
@@ -551,7 +550,7 @@ export class AutomationService {
 					sourceSha: snapshot.sha,
 					version,
 				});
-				if (yield* fromPromise(() => coordinator.execution(promotion.id))) continue;
+				if (yield* this.coordinators.execution(repository.id, promotion.id)) continue;
 				const claim = yield* this.tagClaims(repository, name, stream, version, snapshot.sha, tags);
 				if (claim.conflict) continue;
 				promotion.reclaims = claim.reclaims;
@@ -583,7 +582,7 @@ export class AutomationService {
 		return Effect.gen({ self: this }, function*() {
 			const started = yield* this.startedPreparation(repository, name, version, repository.sha);
 			const merge = started ? undefined : yield* this.mergedPreparation(repository, name, version, repository.sha);
-			const promotions = yield* fromPromise(() => this.coordinator(repository.id).promotions(name, version));
+			const promotions = yield* this.coordinators.promotions(repository.id, name, version);
 			const prepared = started?.sha ?? merge;
 			const retired = promotions.some(promotion =>
 				promotion.sourceSha === prepared && retiredStates.includes(promotion.state)
@@ -624,14 +623,12 @@ export class AutomationService {
 			);
 			const [conflict] = conflicts;
 			if (!conflict) return { reclaims: [] };
-			const owned = yield* fromPromise(() =>
-				this.coordinator(repository.id).reclaimable(
-					repository.id,
-					name,
-					version,
-					`${policy.prefix}${version}`,
-					conflicts,
-				)
+			const owned = yield* this.coordinators.reclaimable(
+				repository.id,
+				name,
+				version,
+				`${policy.prefix}${version}`,
+				conflicts,
 			);
 			return owned.length === conflicts.length ? { reclaims: owned } : { reclaims: [], conflict };
 		});
@@ -693,10 +690,9 @@ export class AutomationService {
 					)
 					.sort((left, right) => right.id - left.id)[0];
 				if (!run) continue;
-				const coordinator = this.coordinator(repository.id);
 				const observed = yield* executionId(repository.id, streamName, operation, `observed:${run.id}`);
-				if (!(yield* fromPromise(() => coordinator.execution(observed)))) {
-					yield* fromPromise(() => coordinator.observeRun(repository.id, run.id));
+				if (!(yield* this.coordinators.execution(repository.id, observed))) {
+					yield* this.coordinators.observeRun(repository.id, run.id);
 					yield* this.store.audit('beepboop', 'release.backfill', `${repository.name}:${tag.name}:${run.id}`);
 				}
 				return { run: run.id, file: binding.file, covered };
@@ -744,7 +740,7 @@ export class AutomationService {
 							? yield* this.catalog.access(repository.name)
 							: undefined;
 					if (access) yield* this.catalog.setAccess(repository.id, access);
-					else yield* fromPromise(() => this.coordinator(repository.id).wake());
+					else yield* this.coordinators.wake(repository.id);
 				}
 				return new Response(null, { status: 202 });
 			}
@@ -762,7 +758,7 @@ export class AutomationService {
 			const received = safeDecode(inboxEvent, yield* Effect.fromResult(this.inbound(event, payload)));
 			if (received.success) {
 				const data = received.data;
-				yield* fromPromise(() => this.coordinator(repository.id).receive(delivery, repository.id, data));
+				yield* this.coordinators.receive(repository.id, delivery, data);
 			}
 			return new Response(null, { status: 202 });
 		}).pipe(
@@ -812,7 +808,7 @@ export class AutomationService {
 			if (event.kind === 'release') {
 				if (event.action !== 'published') return;
 				const tag = event.tag;
-				if (tag) yield* fromPromise(() => this.coordinator(repository.id).releasePublished(tag));
+				if (tag) yield* this.coordinators.releasePublished(repository.id, tag);
 				yield* this.winget().automatic(repository);
 				return;
 			}
@@ -823,9 +819,8 @@ export class AutomationService {
 				return;
 			}
 			const { action, run } = event;
-			const coordinator = this.coordinator(repository.id);
-			if (action !== 'completed') return yield* fromPromise(() => coordinator.trackRun(repository.id, run.id));
-			yield* fromPromise(() => coordinator.observeRun(repository.id, run.id));
+			if (action !== 'completed') return yield* this.coordinators.trackRun(repository.id, run.id);
+			yield* this.coordinators.observeRun(repository.id, run.id);
 			if (
 				run.conclusion === 'success' && ['push', 'release', 'workflow_dispatch', 'schedule'].includes(run.event)
 				&& run.headRepositoryId === repository.id
@@ -920,7 +915,7 @@ export class AutomationService {
 					granted.push(grant);
 				}
 			}
-			yield* fromPromise(() => this.coordinator(repository.id).wake());
+			yield* this.coordinators.wake(repository.id);
 		});
 	}
 	private setupEdited(repository: RepositoryRecord, edit: SetupPullEdit): Effect.Effect<void, DomainError> {
@@ -954,11 +949,10 @@ export class AutomationService {
 					)
 				),
 			);
-			const scheduled = yield* fromPromise(() =>
-				this.coordinator(repository.id).setupEdited(
-					{ repositoryId: repository.id, number: pull.number, head: pull.head.sha, body, choices },
-					JSON.stringify(choices) !== JSON.stringify(base),
-				)
+			const scheduled = yield* this.coordinators.setupEdited(
+				repository.id,
+				{ repositoryId: repository.id, number: pull.number, head: pull.head.sha, body, choices },
+				JSON.stringify(choices) !== JSON.stringify(base),
 			);
 			if (scheduled) {
 				yield* setupStatus(this.gateway, repository.name, repository.id, pull.number, rebuildingStatus(body));
@@ -974,9 +968,9 @@ export class AutomationService {
 			repositories: this.store.repositories.readable(),
 			repository: id => this.store.repositories.get(id),
 			packagePublished: (repositoryId, registry, name, version) =>
-				fromPromise(() => this.coordinator(repositoryId).packagePublished(registry, name, version)),
+				this.coordinators.packagePublished(repositoryId, registry, name, version),
 			openIssue: (ready, deliveryId, issue) =>
-				fromPromise(() => this.coordinator(ready.id).openSubscriptionIssue(ready.name, ready.id, deliveryId, issue)),
+				this.coordinators.openSubscriptionIssue(ready.id, ready.name, deliveryId, issue),
 			enqueue: (ready, execution) => this.enqueue(ready, execution),
 		};
 	}
@@ -1028,11 +1022,10 @@ export class AutomationService {
 			yield* this.winget().automatic(refreshed).pipe(
 				this.store.auditFailure('winget', 'winget.failed', repository.name),
 			);
-			const coordinator = this.coordinator(repository.id);
-			yield* fromPromise(() => coordinator.wake());
-			for (const event of yield* fromPromise(() => coordinator.releaseEvents())) {
+			yield* this.coordinators.wake(repository.id);
+			for (const event of yield* this.coordinators.releaseEvents(repository.id)) {
 				yield* this.event(event);
-				yield* fromPromise(() => coordinator.acknowledgeReleaseEvent(event.id));
+				yield* this.coordinators.acknowledgeReleaseEvent(repository.id, event.id);
 			}
 			const state = readiness(refreshed);
 			if (state.kind !== 'ready') return;
@@ -1079,6 +1072,7 @@ export interface AutomationDependencies {
 	readonly onboarding: OnboardingStore;
 	readonly changes: ChangeLog;
 	readonly transport: Fetcher;
+	readonly coordinators: CoordinatorClient['Service'];
 }
 
 export class ApplicationConfiguration extends Context.Service<ApplicationConfiguration, {
@@ -1102,6 +1096,7 @@ export const makeAutomation = Effect.gen(function*() {
 	const github = yield* GitHubTransport;
 	const app = yield* GitHubApp;
 	const { fetch: transport } = yield* HttpTransport;
+	const coordinators = yield* CoordinatorClient;
 	return new AutomationService(env, {
 		authentication: auth,
 		store: new Store(db),
@@ -1116,6 +1111,7 @@ export const makeAutomation = Effect.gen(function*() {
 		onboarding: new OnboardingStore(db),
 		changes: new ChangeLog(db),
 		transport,
+		coordinators,
 	}, defer);
 });
 
@@ -1142,6 +1138,7 @@ export function applicationLayer(
 		databaseLayer(env.DB),
 		gitHubTransportLayer(transport),
 		Layer.sync(GitHubApp, () => isolateGitHubApp(transport, env, Number(env.OWNER_ID))),
+		CoordinatorClient.layer(id => env.AUTOMATION.getByName(String(id))),
 	);
 	const secrets = Layer.effect(
 		ApplicationSecrets,

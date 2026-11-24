@@ -1,6 +1,5 @@
 import { Effect } from 'effect';
 import { routes } from '@/contract/routes';
-import { fromPromise } from '@/kernel/errors/classify.ts';
 import { notFound } from '@/kernel/errors/domain-error.ts';
 import { admin, elevated } from '@/server/handlers/kit';
 
@@ -17,7 +16,7 @@ export const changeEndpoints = {
 			const targets = input.repositoryId === undefined ? known : [input.repositoryId];
 			return {
 				commit: Effect.gen(function*() {
-					const counts = yield* Effect.forEach(targets, id => fromPromise(() => service.coordinator(id).reindex(id)));
+					const counts = yield* Effect.forEach(targets, id => service.coordinators.reindex(id));
 					yield* service.store.audit(actor, 'admin.reindex', targets.join(','));
 					return { queued: counts.reduce((sum, count) => sum + count, 0) };
 				}),

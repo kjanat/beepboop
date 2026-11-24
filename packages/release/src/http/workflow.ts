@@ -9,12 +9,10 @@ import { matchesRef } from '@/domain/ref-policy.ts';
 import { startsFrom } from '@/domain/release-start.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { requireReady } from '@/domain/repository';
-import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, decodeRequest, forbidden, precondition } from '@/kernel/errors/domain-error.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { mutableStruct } from '@/kernel/schema/structs.ts';
-import type { ClaimStep, NextStep, ReportStep } from '@/publication/contract.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { createExecution, dispatchedExecution } from '@/release/domain/execution/execution.ts';
 import type { Artifact, Execution } from '@/release/domain/execution/types.ts';
@@ -60,9 +58,7 @@ const artifact: Schema.Codec<Artifact, unknown> = mutableStruct({
 
 function owned(context: EnrolledContext, id: string): Effect.Effect<Execution, DomainError> {
 	return Effect.gen(function*() {
-		const execution = yield* fromPromise(() =>
-			context.service.coordinator(context.identity.repositoryId).execution(id)
-		);
+		const execution = yield* context.service.coordinators.execution(context.identity.repositoryId, id);
 		if (!execution || execution.repositoryId !== context.identity.repositoryId) {
 			return yield* forbidden('Execution repository mismatch');
 		}
@@ -108,7 +104,7 @@ function observed(context: EnrolledContext, stream: string, operation: string, v
 		}
 		if (identity.ref.startsWith('refs/tags/')) execution.refNamespace = 'tags';
 		else if (identity.ref.startsWith('refs/heads/')) execution.refNamespace = 'heads';
-		yield* fromPromise(() => service.coordinator(identity.repositoryId).enqueue(execution));
+		yield* service.coordinators.enqueue(identity.repositoryId, execution);
 		return execution.id;
 	});
 }
@@ -120,7 +116,7 @@ export const workflowEndpoints = {
 			issueWorkflowToken(identity, input, Number(env.OWNER_ID), service.gateway, {
 				audit: (actor, action, target) => service.store.audit(actor, action, target),
 				execution: id =>
-					fromPromise(() => service.coordinator(identity.repositoryId).execution(id)).pipe(
+					service.coordinators.execution(identity.repositoryId, id).pipe(
 						Effect.map(execution => execution && dispatchedExecution(execution)),
 					),
 			}),
@@ -176,8 +172,10 @@ export const workflowEndpoints = {
 			}));
 			const execution = yield* owned(context, id);
 			if (execution.operation === 'promote') yield* context.service.prepareJsr(execution);
-			const registered = yield* fromPromise(() =>
-				context.service.coordinator(context.identity.repositoryId).register(id, context.identity)
+			const registered = yield* context.service.coordinators.register(
+				context.identity.repositoryId,
+				id,
+				context.identity,
 			);
 			return {
 				id: registered.id,
@@ -199,25 +197,24 @@ export const workflowEndpoints = {
 	workflowRefsPlan: workflow(
 		routes.workflowRefsPlan,
 		(input, { identity, service }) =>
-			fromPromise(() =>
-				service.coordinator(identity.repositoryId).refs(
-					input.executionId,
-					identity,
-					false,
-					input.files ?? [],
-					input.artifact,
-				)
+			service.coordinators.refs(
+				identity.repositoryId,
+				input.executionId,
+				identity,
+				false,
+				input.files ?? [],
+				input.artifact,
 			),
 	),
 	workflowRefsComplete: workflow(
 		routes.workflowRefsComplete,
 		(input, { identity, service }) =>
-			fromPromise(() => service.coordinator(identity.repositoryId).refs(input.executionId, identity, true)),
+			service.coordinators.refs(identity.repositoryId, input.executionId, identity, true),
 	),
 	workflowRelease: workflow(
 		routes.workflowRelease,
 		(input, { identity, service }) =>
-			fromPromise(() => service.coordinator(identity.repositoryId).publishRelease(input.executionId, identity)),
+			service.coordinators.publishRelease(identity.repositoryId, input.executionId, identity),
 	),
 	workflowPrepared: workflow(routes.workflowPrepared, (input, context) =>
 		Effect.gen(function*() {
@@ -257,8 +254,11 @@ export const workflowEndpoints = {
 				return yield* precondition('Prepared release is missing a planned edit');
 			}
 			if (!edits.length) return { unchanged: true };
-			const result = yield* fromPromise(() =>
-				context.service.coordinator(execution.repositoryId).prepared(execution.id, context.identity, edits)
+			const result = yield* context.service.coordinators.prepared(
+				execution.repositoryId,
+				execution.id,
+				context.identity,
+				edits,
 			);
 			const audit = store.audit(`run:${context.identity.runId}`, 'release.prepared', result.url)
 				.pipe(logRecovered('release.prepared-audit-failed', { executionId: execution.id }));
@@ -271,35 +271,28 @@ export const workflowEndpoints = {
 			yield* bound(context, input.executionId);
 			const publications = yield* Effect.forEach(input.publications ?? [], publication);
 			const artifacts = yield* Effect.forEach(input.artifacts ?? [], raw => decodeRequest(artifact, raw));
-			return yield* fromPromise(() =>
-				context.service.coordinator(context.identity.repositoryId).report(
-					input.executionId,
-					context.identity,
-					publications,
-					artifacts,
-				)
+			return yield* context.service.coordinators.report(
+				context.identity.repositoryId,
+				input.executionId,
+				context.identity,
+				publications,
+				artifacts,
 			);
 		})),
 	workflowPublishNext: workflow(
 		routes.workflowPublishNext,
 		(input, { identity, service }) =>
-			fromPromise((): Promise<NextStep> =>
-				service.coordinator(identity.repositoryId).publishNext(input.executionId, identity)
-			),
+			service.coordinators.publishNext(identity.repositoryId, input.executionId, identity),
 	),
 	workflowPublishClaim: workflow(
 		routes.workflowPublishClaim,
 		(input, { identity, service }) =>
-			fromPromise((): Promise<ClaimStep> =>
-				service.coordinator(identity.repositoryId).publishClaim(input.executionId, identity, input.purl, input.digest)
-			),
+			service.coordinators.publishClaim(identity.repositoryId, input.executionId, identity, input.purl, input.digest),
 	),
 	workflowPublishReport: workflow(
 		routes.workflowPublishReport,
 		(input, { identity, service }) =>
-			fromPromise((): Promise<ReportStep> =>
-				service.coordinator(identity.repositoryId).publishReport(input.executionId, identity, input)
-			),
+			service.coordinators.publishReport(identity.repositoryId, input.executionId, identity, input),
 	),
 	workflowCredentials: workflow(routes.workflowCredentials, (input, context) =>
 		Effect.gen(function*() {

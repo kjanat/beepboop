@@ -12,7 +12,6 @@ import { semver } from '@/domain/semver.ts';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
 import { nextVersion, parseVersionRequest } from '@/domain/version-request.ts';
 import { latestTag, tagPrefix, versionsInFiles } from '@/domain/version-tags.ts';
-import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { capabilitySentence, releasable, releaseCapability, startRefusal } from '@/release/domain/capability.ts';
@@ -329,8 +328,10 @@ export const releaseEndpoints = {
 		Effect.gen(function*() {
 			const preparation = yield* service.store.execution(input.preparationId);
 			if (!preparation) return yield* notFound('execution', 'Unknown preparation', input.preparationId);
-			const executions = yield* fromPromise(() =>
-				service.coordinator(preparation.repositoryId).startReleaseSet(preparation.id, input.sourceSha)
+			const executions = yield* service.coordinators.startReleaseSet(
+				preparation.repositoryId,
+				preparation.id,
+				input.sourceSha,
 			);
 			yield* service.store.audit(actor, 'release.start-set', preparation.id);
 			return executions;
