@@ -10,6 +10,7 @@ const random = new RegExp(
 		'\\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\b',
 		'(?<![0-9a-f])(?:[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}){2}(?![0-9a-f])',
 		'\\bbeepboop-[\\w.-]+-[A-Za-z0-9]{6}\\b',
+		'\\b([0-9a-f]{40,})\\b',
 	].join('|'),
 	'g',
 );
@@ -47,18 +48,23 @@ const worlds = Effect.fn('worlds')(function*(directory: string) {
 	return found;
 });
 
-function renamer(): (text: string) => string {
+function renamer(fixed: ReadonlySet<string> | undefined): (text: string) => string {
 	const names = new Map<string, string>();
 	return text =>
-		text.replaceAll(random, token => {
+		text.replaceAll(random, (token, digest: string | undefined) => {
+			if (fixed ? fixed.has(token) : digest !== undefined) return token;
 			const name = names.get(token) ?? `<random ${names.size + 1}>`;
 			names.set(token, name);
 			return name;
 		});
 }
 
-function canonical(lines: readonly string[]): string[] {
-	return lines.map(renamer());
+function canonical(lines: readonly string[], fixed?: ReadonlySet<string>): string[] {
+	return lines.map(renamer(fixed));
+}
+
+function tokens(lines: readonly string[]): Set<string> {
+	return new Set(lines.flatMap(line => line.match(random) ?? []));
 }
 
 function same(left: readonly string[], right: readonly string[]): boolean {
@@ -108,9 +114,12 @@ function diff(left: readonly string[], right: readonly string[]): string[] {
 }
 
 function changes(left: readonly string[], right: readonly string[], baseline: readonly string[] | undefined): string[] {
-	const written = canonical(right);
-	if (baseline && same(canonical(baseline), written)) return [];
-	return diff(canonical(left), written);
+	if (!baseline) return diff(canonical(left), canonical(right));
+	const known = tokens(baseline);
+	const fixed = new Set([...tokens(left)].filter(token => known.has(token)));
+	const written = canonical(right, fixed);
+	if (same(canonical(baseline, fixed), written)) return [];
+	return diff(canonical(left, fixed), written);
 }
 
 await main(Effect.gen(function*() {
