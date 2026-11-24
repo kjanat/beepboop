@@ -38,6 +38,7 @@ import { GitHubTransport, gitHubTransportLayer } from '@/github/transport.ts';
 import type { InboxEvent, SetupPullEdit, SetupPullMerge } from '@/github/webhooks.ts';
 import { inboxEvent, verifySignature } from '@/github/webhooks.ts';
 import { fromJson, fromPromise, fromSync, recover } from '@/kernel/errors/classify.ts';
+import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -937,7 +938,17 @@ export class AutomationService {
 				this.publishingAccess(repository),
 			);
 			const body = pull.body ?? '';
-			const choices = yield* fromSync(() => decodeSync(setupChoicesSchema, bodyChoices(body, options, base)));
+			const choices = yield* fromSync(() => decodeSync(setupChoicesSchema, bodyChoices(body, options, base))).pipe(
+				Effect.tapError(error =>
+					setupStatus(
+						this.gateway,
+						repository.name,
+						repository.id,
+						pull.number,
+						`Beepboop kept the earlier proposal. This edit is invalid: ${decodeError(error)}`,
+					)
+				),
+			);
 			const scheduled = yield* fromPromise(() =>
 				this.coordinator(repository.id).setupEdited(
 					{ repositoryId: repository.id, number: pull.number, head: pull.head.sha, body, choices },

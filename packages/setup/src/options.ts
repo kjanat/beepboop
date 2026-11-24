@@ -1,4 +1,5 @@
-import { binaryTargets, defaultBinaryTargets } from '@/domain/binary-platforms.ts';
+import type { BinaryBuild, BinaryTarget } from '@/domain/binary-platforms.ts';
+import { binaryTargets, defaultBinaryTargets, supportedTargets } from '@/domain/binary-platforms.ts';
 import { publishable } from '@/domain/package-publication.ts';
 import { configurableStarts, versionBumps } from '@/domain/release-start.ts';
 import { versionPrMerges } from '@/domain/setup-terms.ts';
@@ -73,8 +74,16 @@ function binaryOptions(plan: SetupPlan, stream: SetupChoices['streams'][number])
 	if (!builds.length) return [];
 	return [
 		...builds.map(({ build, targets }): SetupOption => ({ kind: 'binary', stream: stream.name, build, targets })),
-		...binaryTargets.map((target): SetupOption => ({ kind: 'target', stream: stream.name, target })),
+		...offeredTargets(builds.map(({ build }) => build)).map((target): SetupOption => ({
+			kind: 'target',
+			stream: stream.name,
+			target,
+		})),
 	];
+}
+export function offeredTargets(builds: readonly BinaryBuild[]): BinaryTarget[] {
+	const buildable = new Set(builds.flatMap(build => supportedTargets(build.toolchain)));
+	return binaryTargets.filter(target => buildable.has(target));
 }
 export function optionId(option: SetupOption): string {
 	const parts = option.kind === 'workflow'
