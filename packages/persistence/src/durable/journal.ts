@@ -37,11 +37,6 @@ export interface JournalLayout {
 }
 const projectedExecution = looseStruct({ state: Schema.String, updatedAt: Schema.Finite });
 
-export function earliest(times: readonly (number | undefined)[]): number | undefined {
-	const due = times.filter(time => time !== undefined);
-	return due.length ? Math.min(...due) : undefined;
-}
-
 function projection(entry: OutboxEntry, value: unknown, now: number): Projection | undefined {
 	if (value === undefined) return undefined;
 	const document = JSON.stringify(value);
