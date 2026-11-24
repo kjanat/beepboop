@@ -35,6 +35,9 @@ const releaseWake = Schema.Union([
 	mutableStruct({ members: Schema.optional(mutableArray(Schema.String)), due: Schema.Finite }),
 ]);
 export type ReleaseWake = Decoded<typeof releaseWake>;
+export function wakeDue(wake: ReleaseWake): number {
+	return wake === true ? 0 : wake.due;
+}
 const inboxEntry = mutableStruct({
 	delivery: Schema.String.check(Schema.isMinLength(1)),
 	repositoryId: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),

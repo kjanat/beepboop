@@ -79,7 +79,7 @@ import { decodeSync, mutableArray, safeDecode } from '@/kernel/schema/structs.ts
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
 import type { Committed } from '@/persistence/durable/journal.ts';
-import { earliest, Journal, ProjectionSink } from '@/persistence/durable/journal.ts';
+import { Journal, ProjectionSink } from '@/persistence/durable/journal.ts';
 import type { Write } from '@/persistence/durable/keyspace.ts';
 import { Keyspace, Singleton } from '@/persistence/durable/keyspace.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
@@ -112,7 +112,7 @@ import {
 } from '@/publication/registries/verify.ts';
 import { projectionRules } from '@/release/adapters/d1/completions.ts';
 import type { Observation, ReleaseSetRecord, ReleaseWake } from '@/release/adapters/do/keys.ts';
-import { Keys } from '@/release/adapters/do/keys.ts';
+import { Keys, wakeDue } from '@/release/adapters/do/keys.ts';
 import type { DistributionArtifact } from '@/release/distribution/artifact.ts';
 import { readDistributionArtifact } from '@/release/distribution/artifact.ts';
 import { observedDistribution } from '@/release/distribution/observation.ts';
@@ -172,6 +172,7 @@ import {
 } from '@/release/domain/refs.ts';
 import { compileReleaseSet } from '@/release/domain/release-set.ts';
 import { manifestProblems, releasePaths } from '@/release/domain/version.ts';
+import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
 import { ReconcileHistory } from '@/release/services/coordinator/reconcile-history.ts';
@@ -237,9 +238,6 @@ function startedPreparation(prior: Execution, started: ReleaseStarted): Executio
 		};
 	}
 	return upgraded;
-}
-function wakeDue(wake: ReleaseWake): number {
-	return wake === true ? 0 : wake.due;
 }
 function wakeMembers(wake: ReleaseWake | undefined, member: string): string[] | undefined {
 	if (wake === undefined) return [member];
@@ -329,6 +327,18 @@ function skippedNote(gate: ReleaseGate, fact: string, skip: GateSkip): string {
 
 export type Infrastructure = Automation;
 
+function readSetupEdit(storage: DurableStorage['Service']): Effect.Effect<SetupEdit | undefined, DomainError> {
+	return storage.read(Keys.setupEdit).pipe(
+		Effect.flatMap(value => value === undefined ? Effect.undefined : fromSync(() => decodeSetupEditV1(value))),
+	);
+}
+
+const setupEditSource = Layer.effectDiscard(Effect.gen(function*() {
+	const planner = yield* AlarmPlanner;
+	const storage = yield* DurableStorage;
+	yield* planner.register({ due: () => readSetupEdit(storage).pipe(Effect.map(edit => [edit?.due])) });
+}));
+
 const projectionSink = Layer.effect(
 	ProjectionSink,
 	Effect.gen(function*() {
@@ -348,7 +358,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		this.#runtime = ManagedRuntime.make(
 			Layer.mergeAll(
 				jsonLogging,
-				coordinatorLayer(ctx.storage).pipe(
+				setupEditSource.pipe(
+					Layer.provideMerge(coordinatorLayer(ctx.storage)),
 					Layer.provide(projectionSink),
 					Layer.provideMerge(infrastructure ?? applicationLayer(env, work => ctx.waitUntil(work))),
 				),
@@ -389,58 +400,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Effect.andThen(ReconcileHistory.use(history => history.record(entries))),
 		);
 	}
-	private arm(at: number | undefined): CoordinatorEffect<void, DomainError> {
-		return Effect.gen(function*() {
-			if (at === undefined) return;
-			const storage = yield* DurableStorage;
-			const current = yield* storage.alarm;
-			if (current === null || current > at) yield* storage.setAlarm(at);
-		});
-	}
 	private settle(): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
+		return Effect.gen(function*() {
 			yield* (yield* Journal).project;
-			yield* this.arm(yield* this.nextAlarm());
-		});
-	}
-	private nextAlarm(): CoordinatorEffect<number | undefined, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const storage = yield* DurableStorage;
-			const now = clock.currentTimeMillisUnsafe();
-			const wakes = (yield* storage.entries(Keys.releaseWake)).map(wake =>
-				wake.kind === 'readable' ? wakeDue(wake.value) : now
-			);
-			const observations = [
-				...(yield* storage.entries(Keys.observe)),
-				...(yield* storage.entries(Keys.track)),
-			].map(entry => entry.kind === 'readable' ? (entry.value.due ?? now) : now);
-			const inbox = (yield* storage.entries(Keys.inbox)).map(entry =>
-				entry.kind === 'readable' ? entry.value.due : now
-			);
-			const projection = yield* (yield* Journal).due(now);
-			const reconcileAt = yield* this.reconcileAt();
-			const setupEdit = yield* this.setupEdit();
-			return earliest([
-				projection,
-				reconcileAt,
-				setupEdit?.due,
-				...wakes,
-				...observations,
-				...inbox,
-			]);
-		});
-	}
-	private reconcileAt(): CoordinatorEffect<number | undefined, DomainError> {
-		return DurableStorage.use(storage => storage.peek(Keys.reconcileAt)).pipe(
-			Effect.map(stored => stored?.kind === 'readable' ? (stored.value ?? undefined) : undefined),
-		);
-	}
-	private requestReconcile(at: number): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const current = yield* this.reconcileAt();
-			if (current === undefined || current > at) yield* (yield* DurableStorage).write(Keys.reconcileAt, at);
+			const planner = yield* AlarmPlanner;
+			yield* planner.arm(yield* planner.nextAlarm);
 		});
 	}
 	private readonly store = Effect.map(Automation, service => service.store);
@@ -542,7 +506,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const extra: Write[] = [];
 			const set = execution.releaseSet;
 			if (!set?.workflowId) {
-				const current = yield* this.reconcileAt();
+				const current = yield* (yield* AlarmPlanner).reconcileAt;
 				extra.push(
 					Singleton.write(Keys.reconcileAt, Math.min(current ?? Number.POSITIVE_INFINITY, now + settleInterval)),
 				);
@@ -3319,7 +3283,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					publications,
 				});
 			}
-			yield* this.requestReconcile(clock.currentTimeMillisUnsafe());
+			yield* (yield* AlarmPlanner).requestReconcile(clock.currentTimeMillisUnsafe());
 		});
 	}
 	private retryable(
@@ -3406,7 +3370,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.sourceSha.slice(0, 12)
 				}`,
 			});
-			yield* this.requestReconcile(clock.currentTimeMillisUnsafe());
+			yield* (yield* AlarmPlanner).requestReconcile(clock.currentTimeMillisUnsafe());
 		});
 	}
 	recover(id: string, action: 'reconcile' | 'retry' | 'redispatch', actor: string): Promise<Execution> {
@@ -3517,8 +3481,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const clock = yield* Clock.Clock;
 
 			yield* this.wakeReleaseWorkflows();
-			yield* this.requestReconcile(clock.currentTimeMillisUnsafe());
-			yield* this.arm(clock.currentTimeMillisUnsafe());
+			yield* (yield* AlarmPlanner).requestReconcile(clock.currentTimeMillisUnsafe());
+			yield* (yield* AlarmPlanner).arm(clock.currentTimeMillisUnsafe());
 		});
 	}
 	wake(): Promise<void> {
@@ -3533,7 +3497,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (yield* storage.has(Keys.inbox, delivery)) return;
 				const now = clock.currentTimeMillisUnsafe();
 				yield* storage.put(Keys.inbox, delivery, { delivery, repositoryId, event, attempts: 0, due: now });
-				yield* this.arm(now);
+				yield* (yield* AlarmPlanner).arm(now);
 			}),
 			'coordinator.receive',
 			{ repositoryId, deliveryId: delivery },
@@ -3946,9 +3910,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		});
 	}
 	private setupEdit(): CoordinatorEffect<SetupEdit | undefined, DomainError> {
-		return DurableStorage.use(storage => storage.read(Keys.setupEdit)).pipe(
-			Effect.flatMap(value => value === undefined ? Effect.undefined : fromSync(() => decodeSetupEditV1(value))),
-		);
+		return DurableStorage.use(readSetupEdit);
 	}
 	setupEdited(edit: Omit<SetupEdit, 'due'>, changed: boolean): Promise<boolean> {
 		return this.run(
@@ -3959,7 +3921,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return false;
 				const due = clock.currentTimeMillisUnsafe() + 5000;
 				yield* (yield* DurableStorage).write(Keys.setupEdit, { ...edit, due });
-				yield* this.arm(due);
+				yield* (yield* AlarmPlanner).arm(due);
 				return true;
 			}),
 			'coordinator.setupEdited',
@@ -4008,14 +3970,13 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						);
 						yield* this.drainObservations(now, 'track', jobPollInterval, event => this.track(event));
 						const due = yield* (yield* DurableStorage).peek(Keys.reconcileAt);
-						if (due === undefined || ((yield* this.reconcileAt()) ?? Number.POSITIVE_INFINITY) <= now) {
+						if (due === undefined || ((yield* (yield* AlarmPlanner).reconcileAt) ?? Number.POSITIVE_INFINITY) <= now) {
 							yield* this.reconcile();
 						}
 					})),
 					this.serialized(this.rebuildSetup()),
 				], { concurrency: 'unbounded' });
-				const next = yield* this.nextAlarm();
-				if (next !== undefined) yield* (yield* DurableStorage).setAlarm(next);
+				yield* (yield* AlarmPlanner).reschedule;
 			}),
 			'coordinator.alarm',
 			{},
@@ -4397,7 +4358,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return yield* this.approveFromPush(current, executions).pipe(
 					Effect.flatMap(approved =>
 						approved
-							? this.requestReconcile(clock.currentTimeMillisUnsafe()).pipe(Effect.as('stop' as const))
+							? AlarmPlanner.use(planner => planner.requestReconcile(clock.currentTimeMillisUnsafe())).pipe(
+								Effect.as('stop' as const),
+							)
 							: Effect.succeed('continue' as const)
 					),
 					recover(error =>
@@ -4447,7 +4410,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const unresolved = (execution: Execution) =>
 				(execution.state === 'succeeded' || recoverable(execution)) && execution.publications.some(recheckable);
 			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
-				yield* this.requestReconcile(started + reconcileInterval);
+				yield* (yield* AlarmPlanner).requestReconcile(started + reconcileInterval);
 			}
 			const releaseHistory = new ReleaseHistory(journal.executions);
 			yield* (yield* ReconcileHistory).set(releaseHistory);
