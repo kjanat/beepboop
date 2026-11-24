@@ -7,8 +7,8 @@ import { attempt, main, refuse } from '@/tooling/runtime';
 const random = new RegExp(
 	[
 		'-----BEGIN PGP [A-Z ]+-----.*?-----END PGP [A-Z ]+-----',
-		'\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b',
-		'\\b[0-9a-f]{40,}\\b',
+		'\\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\b',
+		'(?<![0-9a-f])(?:[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}){2}(?![0-9a-f])',
 		'\\bbeepboop-[\\w.-]+-[A-Za-z0-9]{6}\\b',
 	].join('|'),
 	'g',
@@ -16,13 +16,28 @@ const random = new RegExp(
 
 type Worlds = Map<string, string[]>;
 
+const operation =
+	/^\S+ (?:put|setAlarm) "(?:[^"\\]|\\.)*" \S.*$|^\S+ (?:delete|deleteAll|deleteAlarm|rollback) "(?:[^"\\]|\\.)*"$/s;
+
+function parse(file: string, text: string): [string, string[]][] | string {
+	if (!text.startsWith('## world ') || !text.endsWith('\n')) return `${file} is not a complete storage trace`;
+	const blocks: [string, string[]][] = [];
+	for (const [index, line] of text.slice(0, -1).split('\n').entries()) {
+		if (/^## world [1-9][0-9]*$/.test(line)) blocks.push([line.slice(3), []]);
+		else if (!operation.test(line)) return `${file}:${index + 1} is not a storage trace line: ${line}`;
+		else blocks.at(-1)?.[1].push(line);
+	}
+	return blocks;
+}
+
 const worlds = Effect.fn('worlds')(function*(directory: string) {
 	if (!(yield* attempt(() => existsSync(directory)))) return yield* refuse(`${directory} does not exist`);
 	const found: Worlds = new Map();
 	for (const file of yield* attempt(() => readdirSync(directory))) {
 		const text = yield* attempt(() => readFileSync(join(directory, file), 'utf8'));
-		for (const block of text.split(/^## /m).filter(Boolean)) {
-			const [title = '', ...lines] = block.split('\n').filter(Boolean);
+		const blocks = parse(file, text);
+		if (typeof blocks === 'string') return yield* refuse(blocks);
+		for (const [title, lines] of blocks) {
 			const world = `${file} ${title}`;
 			if (found.has(world)) return yield* refuse(`${directory} holds ${world} twice; trace into an empty directory`);
 			found.set(world, lines);
@@ -50,7 +65,16 @@ function same(left: readonly string[], right: readonly string[]): boolean {
 	return left.length === right.length && left.every((line, index) => line === right[index]);
 }
 
-function diff(left: readonly string[], right: readonly string[]): string[] {
+const alignable = 4_000_000;
+
+function align(left: readonly string[], right: readonly string[]): string[] {
+	if ((left.length + 1) * (right.length + 1) > alignable) {
+		return [
+			`~ ${left.length} before lines and ${right.length} after lines are too many to align`,
+			...left.map(line => `- ${line}`),
+			...right.map(line => `+ ${line}`),
+		];
+	}
 	const width = right.length + 1;
 	const common = new Int32Array((left.length + 1) * width);
 	const at = (i: number, j: number) => common[i * width + j] ?? 0;
@@ -70,6 +94,17 @@ function diff(left: readonly string[], right: readonly string[]): string[] {
 		} else lines.push(`+ ${right[j++]}`);
 	}
 	return lines;
+}
+
+function diff(left: readonly string[], right: readonly string[]): string[] {
+	let head = 0;
+	while (head < left.length && head < right.length && left[head] === right[head]) head++;
+	let tail = 0;
+	while (
+		tail < left.length - head && tail < right.length - head
+		&& left[left.length - 1 - tail] === right[right.length - 1 - tail]
+	) tail++;
+	return align(left.slice(head, left.length - tail), right.slice(head, right.length - tail));
 }
 
 function changes(left: readonly string[], right: readonly string[], baseline: readonly string[] | undefined): string[] {

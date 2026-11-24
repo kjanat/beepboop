@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { durableObjectState, MemoryStorage } from '@root/test/support/do-storage.ts';
+import { durableObjectState } from '@root/test/support/do-storage.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Layer } from 'effect';
@@ -25,7 +25,7 @@ test('a coordinator builds its infrastructure once and releases it when disposed
 		)),
 	);
 	const coordinator = new AutomationCoordinator(
-		durableObjectState('runtime', new MemoryStorage()),
+		durableObjectState('runtime', world.storage('AutomationCoordinator:runtime')),
 		world.env,
 		infrastructure,
 	);

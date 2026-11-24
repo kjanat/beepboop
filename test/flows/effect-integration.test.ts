@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from 'bun:test';
 import { call, cliTransport, discoveredWidget } from '@root/test/support/client';
-import { durableObjectState, MemoryStorage } from '@root/test/support/do-storage';
+import { durableObjectState } from '@root/test/support/do-storage';
 import { widget } from '@root/test/support/repositories';
 import type { World } from '@root/test/support/world';
 import { adminSubject, eachWorld, epoch, issuer, origin } from '@root/test/support/world';
@@ -333,7 +333,7 @@ test('failure logs preserve causes and use the supplied application logger', asy
 });
 
 test('durable inbox timestamps and alarms use the supplied clock across RPC calls', async () => {
-	const storage = new MemoryStorage();
+	const storage = world.storage('AutomationCoordinator:1');
 	await Effect.runPromise(
 		Effect.gen(function*() {
 			const clock = yield* Clock.Clock;
