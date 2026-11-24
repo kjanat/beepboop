@@ -235,6 +235,67 @@ for (const preparation of ['run: npm install', 'uses: octo/build-artifacts@v1'])
 	});
 }
 
+test('a tag-versioned stream needs no preparation workflow once its publication pushes the version tag', async () => {
+	const repository = world.github.create('octo/tagged', {
+		'go.mod': 'module github.com/octo/tagged\n\ngo 1.26\n',
+		'go.sum': '',
+		'cmd/tool/main.go': 'package main\n\nfunc main() {}\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	const stream = (promote: Partial<NonNullable<SetupChoices['streams'][number]['promote']>>): SetupChoices => ({
+		streams: [{
+			name: 'main',
+			packages: ['pkg:golang/github.com/octo/tagged'],
+			required: ['pkg:golang/github.com/octo/tagged'],
+			versioning: 'workspace',
+			versionSource: { kind: 'tags', prefix: 'v' },
+			promote: {
+				file: 'publish.yml',
+				job: 'publish',
+				triggers: 'dispatchOnly',
+				commands: 'beepboop publish',
+				publicationSteps: {},
+				...promote,
+			},
+		}],
+	});
+	const planned = async (choices: SetupChoices) =>
+		Effect.runPromise(
+			parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+		);
+	const plain = await planned(stream({}));
+	expect(plain.blockers).toEqual([]);
+	expect(plain.choices.streams[0]?.promote?.tagPrefix).toBe('v');
+	const plan = await planned(stream({
+		binaries: {
+			builds: [{
+				toolchain: 'go',
+				name: 'tool',
+				module: '.',
+				package: './cmd/tool',
+				asset: '{name}-{go.os}-{go.arch}{ext}',
+			}],
+			targets: ['linux-amd64'],
+		},
+	}));
+	expect(plan.blockers).toEqual([]);
+	const config = JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}');
+	expect(config.streams.main.workflows).toBeUndefined();
+	expect(config.streams.main.prepare).toBeUndefined();
+	expect(config.streams.main.promote.workflow.refs).toEqual({ phase: 'version', prefix: 'v' });
+	expect(config.streams.main.promote.workflow.publications).toEqual(['github-release:octo/tagged']);
+	world.github.push(repository, {
+		'web/package.json': JSON.stringify({ name: 'tagged-web', version: '1.0.0' }),
+		'web/package-lock.json': '{}\n',
+	}, 'Add an npm package');
+	const mixed = stream({});
+	const [main] = mixed.streams;
+	if (!main) throw new Error('Missing stream');
+	main.packages = [...main.packages, 'pkg:npm/tagged-web'];
+	main.required = main.packages;
+	expect((await planned(mixed)).blockers).toEqual(['main: select a preparation workflow to regenerate lockfiles.']);
+});
+
 for (const versioning of ['workspace', 'independent', 'none'] as const) {
 	test(`tag-only packages need a preparation workflow (versioning=${versioning})`, async () => {
 		const repository = world.github.create('octo/tagged', { 'go.mod': 'module github.com/octo/tagged\n\ngo 1.26\n' });
