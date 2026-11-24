@@ -80,10 +80,11 @@ function cycles(edges: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
 }
 
 function resolvedTargets(targets: readonly string[], rest: string, files: ReadonlySet<string>): string[] {
-	return targets.flatMap(target => {
-		const found = candidatePaths(target.replaceAll('*', rest)).find(candidate => files.has(candidate));
-		return found === undefined ? [] : [found];
+	const found = targets.flatMap(target => {
+		const path = candidatePaths(target.replaceAll('*', rest)).find(candidate => files.has(candidate));
+		return path === undefined ? [] : [path];
 	});
+	return [...new Set(found)];
 }
 
 function shadowed(specifier: string, paths: readonly string[]): Violation[] {
@@ -122,7 +123,7 @@ function shadows(aliases: readonly Alias[], files: readonly string[]): Violation
 		for (const target of alias.targets) {
 			const [head = '', tail = ''] = target.split('*');
 			const base = repositoryPath(head);
-			const start = base ? `${base}/` : '';
+			const start = base && head.endsWith('/') ? `${base}/` : base;
 			for (const file of files) {
 				if (file.startsWith(start) && file.endsWith(tail) && file.length > start.length + tail.length) {
 					rests.add(file.slice(start.length, file.length - tail.length));

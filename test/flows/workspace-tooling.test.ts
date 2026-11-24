@@ -933,6 +933,8 @@ describe('boundaries', () => {
 					'"@/server/special/*": ["./special/*"]',
 					'"@server": ["./packages/server/src/main.ts", "./src/server/main.ts"]',
 					'"@/widget/*": ["./packages/server/src/widgets/*/widget.ts", "./src/widgets/*.ts"]',
+					'"@x/*": ["./a/pre*", "./b/pre*"]',
+					'"@entry": ["./src/entry", "./src/entry.ts"]',
 				].join(',\n\t\t\t'),
 			),
 			'packages/server/package.json': '{ "name": "@beepboop/server", "exports": { "./*": "./src/*" } }',
@@ -953,6 +955,9 @@ describe('boundaries', () => {
 			'src/widgets/knob.ts': 'export const knob = 1;\n',
 			'packages/server/src/esm.mts': 'export const esm = 1;\n',
 			'src/server/esm.d.mts': 'export declare const esm: number;\n',
+			'a/prefile.ts': 'export const file = 1;\n',
+			'b/prefile.ts': 'export const file = 2;\n',
+			'src/entry.ts': 'export const entry = 1;\n',
 		});
 		const report = await Effect.runPromise(checkBoundaries(root));
 
@@ -964,8 +969,9 @@ describe('boundaries', () => {
 			'@/server/view resolves to packages/server/src/view.ts and hides src/server/view.tsx',
 			'@server resolves to packages/server/src/main.ts and hides src/server/main.ts',
 			'@/widget/dial resolves to packages/server/src/widgets/dial/widget.ts and hides src/widgets/dial.ts',
+			'@x/file.ts resolves to a/prefile.ts and hides b/prefile.ts',
 		]);
-		expect(await refusal(boundariesCommand(root))).toContain('7 package boundary violations');
+		expect(await refusal(boundariesCommand(root))).toContain('8 package boundary violations');
 	});
 
 	test('the boundaries script exits non-zero on violations', () => {
