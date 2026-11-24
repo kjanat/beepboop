@@ -93,7 +93,7 @@ test('a test World traces each coordinator under its namespace and instance name
 				await world.coordinators.instance('42').storage.put('reconcile-at', null);
 				await world.budgets.instance('crates-io').storage.setAlarm(7);
 			} finally {
-				world.dispose();
+				await world.dispose();
 			}
 		});
 

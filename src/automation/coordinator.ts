@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { Clock, Effect, Layer, Result, Schema, Semaphore } from 'effect';
+import { Clock, Effect, Layer, ManagedRuntime, Result, Schema, Semaphore } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
@@ -325,26 +325,34 @@ function skippedNote(gate: ReleaseGate, fact: string, skip: GateSkip): string {
 	return `${gateLabel(gate)} ${fact}, skipped by ${skip.actor}`;
 }
 
+export type Infrastructure = Automation;
+
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
-	private readonly application: Layer.Layer<Automation | DurableStorage, DomainError>;
-	constructor(ctx: DurableObjectState, env: CoordinatorBindings, application?: Layer.Layer<Automation, DomainError>) {
+	readonly #runtime: ManagedRuntime.ManagedRuntime<Infrastructure | DurableStorage, DomainError>;
+	constructor(
+		ctx: DurableObjectState,
+		env: CoordinatorBindings,
+		infrastructure?: Layer.Layer<Infrastructure, DomainError>,
+	) {
 		super(ctx, env);
-		this.application = Layer.merge(
-			application ?? applicationLayer(env, work => ctx.waitUntil(work)),
-			DurableStorage.layer(ctx.storage),
+		this.#runtime = ManagedRuntime.make(
+			Layer.mergeAll(
+				jsonLogging,
+				infrastructure ?? applicationLayer(env, work => ctx.waitUntil(work)),
+				DurableStorage.layer(ctx.storage),
+			),
 		);
+	}
+	static dispose(coordinator: AutomationCoordinator): Promise<void> {
+		return coordinator.#runtime.dispose();
 	}
 	private run<A, E>(
 		work: CoordinatorEffect<A, E>,
 		operation: string,
 		fields: Record<string, string | number>,
 	): Promise<A> {
-		return Effect.runPromise(
-			work.pipe(
-				Effect.withSpan(operation, { attributes: fields }),
-				Effect.annotateLogs(fields),
-				Effect.provide(Layer.merge(jsonLogging, this.application)),
-			),
+		return this.#runtime.runPromise(
+			work.pipe(Effect.withSpan(operation, { attributes: fields }), Effect.annotateLogs(fields)),
 		);
 	}
 	private readonly lock = Semaphore.makeUnsafe(1);

@@ -281,12 +281,12 @@ test('release without the check also skips running checks, and always switches o
 	const once = await stopped(running);
 	expect((await once.api('/api/executions/checks', { id: once.id, choice: 'skip' })).status).toBe(200);
 	expect((await audit('promotion.checks.skip')).map(row => row.target)).toEqual([`${once.id}: check test, check lint`]);
-	world.dispose();
+	await world.dispose();
 	world = await World.create();
 	const always = await stopped(running);
 	expect((await always.api('/api/executions/checks', { id: always.id, choice: 'always' })).status).toBe(200);
 	expect((await audit('stream.gate.skip')).map(row => row.target)).toEqual(['octo/widget:main:check test']);
-	world.dispose();
+	await world.dispose();
 	world = await World.create();
 	const pending = await stopped({
 		checks: [{ name: 'lint', status: 'in_progress', conclusion: null, runId: 7 }],
