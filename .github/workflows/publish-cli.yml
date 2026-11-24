@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: jdx/mise-action@v5
+      - uses: kjanat/mise-action@v6
       - uses: kjanat/beepboop/actions/begin@v1
         id: release
         with:
