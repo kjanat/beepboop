@@ -7,6 +7,7 @@ import { Journal, ProjectionSink } from '@/persistence/durable/journal.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
 import { Keys } from '@/release/adapters/do/keys.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
+import { RepositoryRevisions } from '@/release/services/coordinator/executions.ts';
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
 import { AuditTrail } from '@/release/services/coordinator/retry-queue.ts';
@@ -19,8 +20,9 @@ function run<A, E>(memory: MemoryStorage, projected: Projection[], work: Effect.
 			}),
 	});
 	const audit = Layer.succeed(AuditTrail, { record: () => Effect.void });
+	const revisions = Layer.succeed(RepositoryRevisions, { get: () => Effect.undefined });
 	return Effect.runPromiseExit(
-		work.pipe(Effect.provide(coordinatorLayer(memory).pipe(Layer.provide(Layer.merge(sink, audit))))),
+		work.pipe(Effect.provide(coordinatorLayer(memory).pipe(Layer.provide(Layer.mergeAll(sink, audit, revisions))))),
 	);
 }
 
