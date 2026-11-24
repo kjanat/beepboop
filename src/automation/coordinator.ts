@@ -96,7 +96,8 @@ import {
 } from '@/publication/ledger.ts';
 import { dependencyBlocker, planLedger, publicationDeadlock } from '@/publication/ledger-plan.ts';
 import type { Publication } from '@/publication/publication.ts';
-import type { PublishKind } from '@/publication/publish-pace.ts';
+import type { PacedManager, PublishKind } from '@/publication/publish-pace.ts';
+import { PublishPacing, paced } from '@/publication/publish-pace.ts';
 import { verifiedPublication } from '@/publication/registries/verification.ts';
 import {
 	canVerifyPublication,
@@ -284,6 +285,7 @@ type CoordinatorContext =
 	| AuditTrail
 	| Background
 	| PreparationWriter
+	| PublishPacing
 	| ReleaseCommits
 	| RunCallbacks;
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, CoordinatorContext>;
@@ -411,6 +413,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					Layer.provideMerge(RunCallbacks.layer),
 					Layer.provideMerge(Layer.merge(PreparationWriter.layer, ReleaseCommits.layer)),
 					Layer.provideMerge(Background.layer(work => ctx.waitUntil(work))),
+					Layer.provideMerge(PublishPacing.layer(name => env.PUBLISH_BUDGET.getByName(name))),
 					Layer.provideMerge(setupEditSource),
 					Layer.provideMerge(coordinatorLayer(ctx.storage)),
 					Layer.provide(Layer.merge(projectionSink, repositoryRevisions)),
@@ -877,7 +880,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				getExecution(id).pipe(Effect.map(execution => ({
 					id,
 					operation: execution.package ? `${execution.operation} ${execution.package.id}` : execution.operation,
-					paced: execution.package?.manager === 'cargo',
+					paced: paced(execution.package?.manager),
 					dependencies: execution.dependencies,
 				}))), { concurrency: 'unbounded' });
 		});
@@ -894,15 +897,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const clock = yield* Clock.Clock;
 
 				const operations = yield* this.operations(preparationId, workflowId);
-				if (!operations.some(operation => operation.id === id && operation.paced)) {
+				const execution = operations.some(operation => operation.id === id) ? yield* getExecution(id) : undefined;
+				const target = execution?.package;
+				if (!execution || !target || !paced(target.manager)) {
 					return yield* precondition('Operation is not a paced publication in this release');
 				}
-				const execution = yield* getExecution(id);
-				const target = execution.package;
-				if (!target) return yield* precondition('Paced operation has no package');
 				if (!execution.reservation) {
-					const { kind, allowedAt } = yield* this.reserveCrate(
+					const { kind, allowedAt } = yield* this.reserveBudget(
 						execution.repositoryId,
+						target.manager,
 						pkg => matchesPackage(target.id, pkg),
 					);
 					yield* putExecution({
@@ -1871,9 +1874,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							reason: `${registries[record.manager]} could not confirm whether it has ${label(record)}`,
 						};
 					}
-					if (record.manager === 'cargo' && !record.reservation) {
-						const { kind, allowedAt } = yield* this.reserveCrate(
+					if (paced(record.manager) && !record.reservation) {
+						const { kind, allowedAt } = yield* this.reserveBudget(
 							execution.repositoryId,
+							record.manager,
 							pkg => packageId(pkg) === record.id,
 						);
 						record = { ...record, reservation: kind, notBefore: allowedAt };
@@ -1912,9 +1916,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (open.kind !== 'held') return yield* precondition(`This run does not hold ${label(record)}`);
 				if (report.outcome === 'rate-limited') {
 					const until = parseRetryAfter(report.retryAfter ?? '', now) ?? now + defaultRetryAfter;
-					if (record.manager === 'cargo') {
-						yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until));
-					}
+					yield* PublishPacing.use(pacing => pacing.defer(record.manager, until));
 					return yield* this.settled(ledger, rateLimit(record, holder, until, now));
 				}
 				if (report.outcome === 'published') {
@@ -2033,14 +2035,15 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		}
 		return Effect.undefined;
 	}
-	private reserveCrate(
+	private reserveBudget(
 		repositoryId: number,
+		manager: PacedManager,
 		matches: (pkg: Package) => boolean,
 	): CoordinatorEffect<{ kind: PublishKind; allowedAt: number }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			const inventory = (yield* (yield* this.store).repositories.get(repositoryId))?.inventory;
 			const kind = reservation(inventory?.packages.find(matches)?.publicationStatus);
-			const allowedAt = yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').reserve(kind));
+			const allowedAt = yield* PublishPacing.use(pacing => pacing.reserve(manager, kind));
 			return { kind, allowedAt };
 		});
 	}
@@ -3649,9 +3652,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							|| (!result.jobs.length && ['failed', 'timed-out'].includes(result.observation.kind)))
 					) {
 						const until = Math.max(clock.currentTimeMillisUnsafe(), ...limited);
-						if (execution.package?.manager === 'cargo') {
-							yield* fromPromise(() => this.env.PUBLISH_BUDGET.getByName('crates-io').defer(until));
-						}
+						yield* PublishPacing.use(pacing => pacing.defer(execution.package?.manager, until));
 						yield* putExecution({
 							...execution,
 							state: 'ready',

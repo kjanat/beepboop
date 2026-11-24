@@ -2268,3 +2268,108 @@ for (const state of ['uploaded', 'published'] as const) {
 		expect(world.network.since(calls).filter(call => call.host === 'crates.io')).toEqual([]);
 	}, 60_000);
 }
+
+function budgetCalls(from: number) {
+	return world.budgets.calls.slice(from).map(call => [call.object, call.method]);
+}
+
+async function arrivals() {
+	const budget = world.budgets.instance('crates-io').storage;
+	return [await budget.get('arrival:new'), await budget.get('arrival:update')];
+}
+
+test('each crate claims a crates.io slot, and a 429 defers both crates.io budgets past its Retry-After', async () => {
+	const { repository, begun } = await released({ main: [core, cli] });
+	const { execution, identity } = started(begun, 'main');
+	world.advance(Date.parse('2026-11-09T09:58:00.000Z') - Date.now());
+	const claimedAt = Date.now(), until = Date.parse('2026-11-09T10:00:00.000Z');
+	const from = world.budgets.calls.length;
+	const { result } = await publishing(identity, execution.id, {
+		commands: [],
+		outcomes: { 'lint-core': ['429', 'ok'] },
+	});
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(budgetCalls(from)).toEqual([
+		['PublishBudget:crates-io', 'reserve'],
+		['PublishBudget:crates-io', 'defer'],
+		['PublishBudget:crates-io', 'reserve'],
+	]);
+	expect(await arrivals()).toEqual([until + 4 * 600_000, until + 30 * 60_000]);
+	const ledger = await ledgerOf(repository, execution.id);
+	expect(ledger.records.map(record => [record.reservation, record.notBefore])).toEqual([
+		['update', claimedAt],
+		['update', until],
+	]);
+}, 60_000);
+
+test('a PyPI rate limit never touches the crates.io budget', async () => {
+	servePypi();
+	world.npm.publish(npm, '1.0.0');
+	const { begun } = await released({ main: [pypiId] }, bindingsLayout);
+	const { execution, identity } = started(begun, 'main');
+	const from = world.budgets.calls.length;
+	const { result } = await publishing(identity, execution.id, { run: bindings({ commands: [], limited: 1 }, '1.1.0') });
+	if (result._tag === 'Failure') throw new Error(result.failure.message);
+	expect(states(result.success)).toEqual([['pkg:pypi/lint-py@1.1.0', 'published']]);
+	expect(budgetCalls(from)).toEqual([]);
+}, 60_000);
+
+test('a paced crate operation in a release set reserves its crates.io slot once', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution } = started(begun, 'main');
+	const storage = world.coordinators.instance(String(repository.id)).storage;
+	const coordinator = world.coordinator(repository);
+	await storage.put('release-set:preparation', { target: 'main', ids: [execution.id], workflowId: 'workflow' });
+	const stored = await executionOf(repository, execution.id);
+	await storage.put(`execution:${execution.id}`, { ...stored, package: { id: core, manager: 'npm' } });
+	expect((await coordinator.releaseOperations('preparation', 'workflow')).map(operation => operation.paced)).toEqual([
+		false,
+	]);
+	await expect(coordinator.reservePublication('preparation', 'workflow', execution.id)).rejects.toThrow(
+		'Operation is not a paced publication in this release',
+	);
+	await storage.put(`execution:${execution.id}`, { ...stored, package: { id: core, manager: 'cargo' } });
+	expect((await coordinator.releaseOperations('preparation', 'workflow')).map(operation => operation.paced)).toEqual([
+		true,
+	]);
+	const now = Date.now();
+	await world.budgets.instance('crates-io').storage.put('arrival:update', now + 40 * 60_000);
+	const from = world.budgets.calls.length;
+	expect(await coordinator.reservePublication('preparation', 'workflow', execution.id)).toBe(11 * 60_000);
+	world.advance(60_000);
+	expect(await coordinator.reservePublication('preparation', 'workflow', execution.id)).toBe(10 * 60_000);
+	expect(budgetCalls(from)).toEqual([['PublishBudget:crates-io', 'reserve']]);
+	expect(await arrivals()).toEqual([undefined, now + 41 * 60_000]);
+	const reserved = await executionOf(repository, execution.id);
+	expect([reserved.reservation, reserved.notBefore]).toEqual(['update', now + 11 * 60_000]);
+}, 60_000);
+
+for (const [manager, deferrals] of [['cargo', 2], ['npm', 1]] as const) {
+	test(
+		`a ${manager} package operation whose run ends rate limited defers the crates.io budget ${deferrals} times`,
+		async () => {
+			const { repository, begun } = await released({ main: [core] });
+			const { execution, identity } = started(begun, 'main');
+			const from = world.budgets.calls.length;
+			await publishing(identity, execution.id, { commands: [], outcomes: { 'lint-core': ['tomorrow'] } });
+			const storage = world.coordinators.instance(String(repository.id)).storage;
+			const stored = await executionOf(repository, execution.id);
+			await storage.put(`execution:${execution.id}`, { ...stored, package: { id: core, manager } });
+			const run = repository.runs.find(entry => entry.id === identity.runId);
+			if (!run) throw new Error('Missing run');
+			run.status = 'completed';
+			run.conclusion = 'failure';
+			await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+			await world.wait(2_000);
+			expect(budgetCalls(from)).toEqual([
+				['PublishBudget:crates-io', 'reserve'],
+				...Array.from({ length: deferrals }, () => ['PublishBudget:crates-io', 'defer']),
+			]);
+			const until = Date.parse('2026-11-10T10:00:00.000Z');
+			expect(await arrivals()).toEqual([until + 4 * 600_000, until + 29 * 60_000]);
+			const waiting = await executionOf(repository, execution.id);
+			expect([waiting.state, waiting.notBefore]).toEqual(['ready', until]);
+		},
+		60_000,
+	);
+}
