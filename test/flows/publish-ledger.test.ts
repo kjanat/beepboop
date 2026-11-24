@@ -1,5 +1,4 @@
 import { expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1727,27 +1726,27 @@ test('node loads or excludes exactly the npm exports the publisher accepts', () 
 	const cases = exportFallbacks.filter(([, exports]) => nodeConditioned(exports));
 	const root = mkdtempSync(join(tmpdir(), 'beepboop-node-exports-'));
 	try {
-		const loaded = spawnSync('node', ['--input-type=module', '--eval', nodeLoader], {
-			input: JSON.stringify({
+		const loaded = Bun.spawnSync(['node', '--input-type=module', '--eval', nodeLoader], {
+			env: { PATH: process.env.PATH, HOME: process.env.HOME, NO_COLOR: '1' },
+			stdin: Buffer.from(JSON.stringify({
 				root,
 				cases: cases.map(([, exports, , added, request]) => ({
 					exports,
 					files: ['index.js', ...added ?? []],
 					specifier: request ?? (exports !== null && typeof exports === 'object' && './*' in exports ? 'pkg/x' : 'pkg'),
 				})),
-			}),
-			encoding: 'utf8',
+			})),
+			stdout: 'pipe',
+			stderr: 'pipe',
 			timeout: 30_000,
 		});
-		expect({ error: loaded.error, signal: loaded.signal, status: loaded.status, stderr: loaded.stderr }).toEqual({
-			error: undefined,
-			signal: null,
-			status: 0,
+		expect({ success: loaded.success, stderr: loaded.stderr.toString() }).toEqual({
+			success: true,
 			stderr: '',
 		});
 		const outcomes = decodeSync(
 			mutableArray(mutableStruct({ require: Schema.String, import: Schema.String })),
-			JSON.parse(loaded.stdout),
+			JSON.parse(loaded.stdout.toString()),
 		);
 		expect(outcomes.length).toBe(cases.length);
 		expect(cases.flatMap(([scenario, , missing]) => missing !== undefined && !nodeOutcomes[scenario] ? [scenario] : []))
