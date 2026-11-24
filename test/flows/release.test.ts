@@ -1927,6 +1927,8 @@ test('the parent publishes a companion tag and the module stream reuses it only 
 		return execution;
 	};
 	const same = await create(parent.sourceSha);
+	await expect(coordinator.refs(same.id, identity, false, [], { id: 1, digest: `sha256:${'d'.repeat(64)}` })).rejects
+		.toThrow('Unexpected distribution artifact');
 	const plan = await coordinator.refs(same.id, identity);
 	expect(plan.changes).toHaveLength(1);
 	expect(plan.changes[0]).toMatchObject({ name: 'go/v1.1.0', expected: original, commit: parent.sourceSha });
