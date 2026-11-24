@@ -148,13 +148,19 @@ test('Go files outside the main package build do not decide main.version, and al
 			['main.go', 'package main\n\nvar version string\n'],
 		]),
 	).toBeUndefined();
-	expect(unsettableVersion([['version_linux.go', `// +build linux\n\n${declared}`]])).toBeUndefined();
+	expect(unsettableVersion([['version.go', `// +build linux\n\n${declared}`]])).toBeUndefined();
 	expect(
 		unsettableVersion([
 			['main.go', 'package main\n\nvar version V\n'],
-			['types_windows.go', '//go:build windows\n\npackage main\n\ntype V struct{}\n'],
+			['types.go', '//go:build windows\n\npackage main\n\ntype V struct{}\n'],
 		]),
 	).toBeUndefined();
+	for (const file of ['version_windows.go', 'v_linux_arm64.go', 'cmd/x/version_amd64.go']) {
+		expect([file, unsettableVersion([[file, declared]])]).toEqual([file, undefined]);
+	}
+	for (const file of ['linux.go', 'version_tools.go', 'cmd/x_windows/version.go']) {
+		expect([file, unsettableVersion([[file, declared]])]).toEqual([file, { kind: 'var', type: 'int', file }]);
+	}
 	expect(unsettableVersion([['doc.go', 'package other\n\nvar version = 1\n']])).toBeUndefined();
 	expect(unsettableVersion([['main.go', declared]])).toEqual({ kind: 'var', type: 'int', file: 'main.go' });
 	expect(

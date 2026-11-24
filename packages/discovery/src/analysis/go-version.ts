@@ -78,8 +78,62 @@ function declared(constant: boolean, spec: string): Found | undefined {
 	return type === undefined ? undefined : { kind: 'var', type, stated: false };
 }
 
-function built(source: string): string[] | undefined {
-	if (/^\/\/(?:go:build|\s*\+build)\s/m.test(source)) return undefined;
+// KnownOS and KnownArch from Go's src/internal/syslist/syslist.go, which go/build uses for file-name constraints.
+const knownOS = new Set([
+	'aix',
+	'android',
+	'darwin',
+	'dragonfly',
+	'freebsd',
+	'hurd',
+	'illumos',
+	'ios',
+	'js',
+	'linux',
+	'nacl',
+	'netbsd',
+	'openbsd',
+	'plan9',
+	'solaris',
+	'wasip1',
+	'windows',
+	'zos',
+]);
+const knownArch = new Set([
+	'386',
+	'amd64',
+	'amd64p32',
+	'arm',
+	'armbe',
+	'arm64',
+	'arm64be',
+	'loong64',
+	'mips',
+	'mipsle',
+	'mips64',
+	'mips64le',
+	'mips64p32',
+	'mips64p32le',
+	'ppc',
+	'ppc64',
+	'ppc64le',
+	'riscv',
+	'riscv64',
+	's390',
+	's390x',
+	'sparc',
+	'sparc64',
+	'wasm',
+]);
+
+function constrainedName(file: string): boolean {
+	const stem = file.slice(file.lastIndexOf('/') + 1).split('.')[0] ?? '';
+	const last = stem.includes('_') ? stem.slice(stem.lastIndexOf('_') + 1) : '';
+	return knownOS.has(last) || knownArch.has(last);
+}
+
+function built(file: string, source: string): string[] | undefined {
+	if (constrainedName(file) || /^\/\/(?:go:build|\s*\+build)\s/m.test(source)) return undefined;
 	const list = statements(code(source));
 	return list[0] === 'package main' ? list : undefined;
 }
@@ -149,7 +203,7 @@ function notString(
 
 export function unsettableVersion(files: readonly (readonly [string, string])[]): UnsettableVersion | undefined {
 	const parsed = files.flatMap(([file, source]) => {
-		const list = built(source);
+		const list = built(file, source);
 		return list ? [{ file, list }] : [];
 	});
 	const types = new Map(parsed.flatMap(({ list }) => typeDeclarations(list)));

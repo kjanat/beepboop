@@ -139,6 +139,9 @@ export function candidateOf(
 			: build.toolchain === 'cargo' && found.manifest === build.manifest && found.name === build.name
 	);
 }
+export function configured(builds: readonly BinaryBuild[], candidate: BinaryCandidate): boolean {
+	return builds.some(build => build.name === candidate.build.name || candidateOf([candidate], build) !== undefined);
+}
 export function failsOn(
 	candidates: readonly BinaryCandidate[] | undefined,
 	build: BinaryBuild,

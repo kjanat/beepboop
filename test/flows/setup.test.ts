@@ -14,6 +14,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { parse, parseDocument } from 'yaml';
 import { discover } from '@/discovery/discover.ts';
+import type { BinaryBuild } from '@/domain/binary-platforms.ts';
 import { failsOn } from '@/domain/binary-platforms.ts';
 import { mergeConfiguration } from '@/domain/configuration/presets.ts';
 import { onboardingBranch, updateBranch } from '@/domain/setup-branches.ts';
@@ -705,6 +706,17 @@ test('a configured binary takes its problems only from the candidate that builds
 			.includes('windows-amd64'),
 		offeredBinaries(withCrate, ['pkg:cargo/a'], stream.promote).find(entry => entry.build.name === 'tool')?.candidate,
 	]).toEqual([false, false, true, undefined]);
+	const client = 'pkg:golang/github.com/octo/signer/client';
+	const withClient = { ...plan, choices: { streams: [{ ...stream, packages: [client] }] } };
+	const offered = (builds: readonly BinaryBuild[]) =>
+		builds.map(build => [build.name, 'package' in build && build.package]);
+	expect([
+		offered(setupOptions(withClient).flatMap(option => option.kind === 'binary' ? [option.build] : [])),
+		offered(offeredBinaries(withClient, [client], stream.promote).map(entry => entry.build)),
+	]).toEqual([
+		[['signer', './cmd/good'], ['tool', false]],
+		[['signer', './cmd/good'], ['tool', false]],
+	]);
 });
 
 test('binary builds join an existing publication workflow and stay stable on a rerun', async () => {
