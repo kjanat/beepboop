@@ -321,6 +321,15 @@ function tomlObject(source: string): Record<string, unknown> | undefined {
 		return undefined;
 	}
 }
+function miseTaskNames(entry: unknown): string[] {
+	if (typeof entry === 'string') return [entry];
+	if (Array.isArray(entry)) return typeof entry[0] === 'string' ? [entry[0]] : [];
+	const { task, tasks } = object(entry);
+	return [task, ...(Array.isArray(tasks) ? tasks : [])].filter(name => typeof name === 'string');
+}
+function miseRunLines(entry: unknown): string[] {
+	return typeof entry === 'string' ? [entry] : miseTaskNames(entry).map(name => `mise run ${name}`);
+}
 function taskTable(snapshot: Snapshot, directory: string): TaskTable {
 	const cached = taskTables.get(snapshot) ?? new Map<string, TaskTable>();
 	taskTables.set(snapshot, cached);
@@ -374,10 +383,10 @@ function taskTable(snapshot: Snapshot, directory: string): TaskTable {
 			const run = typeof definition === 'string' ? definition : object(definition).run;
 			const depends = ['depends', 'depends_post'].flatMap(key => {
 				const value = object(definition)[key];
-				return Array.isArray(value) ? value.map(String) : typeof value === 'string' ? [value] : [];
+				return Array.isArray(value) ? value.flatMap(miseTaskNames) : typeof value === 'string' ? [value] : [];
 			});
 			const body = [
-				Array.isArray(run) ? run.map(String).join('\n') : typeof run === 'string' ? run : '',
+				Array.isArray(run) ? run.flatMap(miseRunLines).join('\n') : typeof run === 'string' ? run : '',
 				...depends.map(dependency => `mise run ${dependency}`),
 			].filter(Boolean).join('\n');
 			const dir = object(definition).dir;

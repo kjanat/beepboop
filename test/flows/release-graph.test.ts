@@ -1310,6 +1310,18 @@ describe('release streams', () => {
 		})).toEqual(['npm']);
 		expect(single({
 			'package.json': tool,
+			'mise.toml':
+				'[tasks.release]\nrun = [{ task = "build" }, "echo done", { tasks = ["lint", "publish"] }]\n\n[tasks.build]\nrun = "echo build"\n\n[tasks.lint]\nrun = "echo lint"\n\n[tasks.publish]\nrun = "npm publish"\n',
+			'.github/workflows/release.yml': runWorkflow("{ push: { tags: ['v*'] } }", 'mise run release'),
+		})).toEqual(['npm']);
+		expect(single({
+			'package.json': tool,
+			'mise.toml':
+				'[tasks.release]\nrun = "echo release"\ndepends = [["build", "--fast"], { task = "publish" }]\n\n[tasks.build]\nrun = "echo build"\n\n[tasks.publish]\nrun = "npm publish"\n',
+			'.github/workflows/release.yml': runWorkflow("{ push: { tags: ['v*'] } }", 'mise run release'),
+		})).toEqual(['npm']);
+		expect(single({
+			'package.json': tool,
 			justfile:
 				'release version: build (publish version)\n\nbuild:\n\techo build\n\npublish version:\n\tnpm publish --tag {{version}}\n',
 			'.github/workflows/release.yml': runWorkflow("{ push: { tags: ['v*'] } }", 'just release 1.2.3'),
