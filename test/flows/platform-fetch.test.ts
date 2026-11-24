@@ -54,6 +54,14 @@ test('the global fetch stored on an object fails when called as a method', () =>
 	expect(() => holder.transport('https://www.githubstatus.com/api/v2/summary.json')).toThrow('Illegal invocation');
 });
 
+test('a World reads GitHub status as operational through its own network', async () => {
+	expect(await world.run(githubOutage)).toBeUndefined();
+});
+
+test('a World reads GitHub status as operational through the default application transport', async () => {
+	expect(await Effect.runPromise(githubOutage.pipe(Effect.provide(applicationLayer(world.env))))).toBeUndefined();
+});
+
 test('the dashboard reads GitHub status through the default application transport', async () => {
 	const calls = workerdFetch();
 	const outage = await Effect.runPromise(githubOutage.pipe(Effect.provide(applicationLayer(world.env))));
