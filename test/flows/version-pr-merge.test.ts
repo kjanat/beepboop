@@ -391,3 +391,20 @@ test('the prepared call answers before GitHub turns on auto-merge, and disposing
 	const stored = await world.coordinators.instance(String(repository.id)).storage.get(`execution:${executionId}`);
 	expect(decodeExecutionV1(stored).prepared?.result?.autoMerge).toEqual({ method: 'squash', state: 'enabled' });
 });
+
+test('a managed version PR whose branch GitHub refused once opens later from the commit it recorded', async () => {
+	let refused = 0;
+	intercept((path, body) => {
+		if (refused || path !== '/repos/octo/widget/git/refs' || !body) return undefined;
+		refused++;
+		return Response.json({ message: 'Reference update failed' }, { status: 422 });
+	});
+	const { repository, api } = await managed('manual');
+	expect(refused).toBe(1);
+	const stopped = await only(api, 'prepare');
+	const head = stopped.managed?.head;
+	expect([stopped.state, typeof head, repository.pulls]).toEqual(['uncertain', 'string', []]);
+	await world.wait(61_000);
+	expect(await only(api, 'prepare')).toMatchObject({ state: 'succeeded', managed: { head, result: { head } } });
+	expect(one(repository.pulls, 'version PR').head.sha).toBe(head ?? '');
+});

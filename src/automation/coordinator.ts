@@ -3,14 +3,8 @@ import { Clock, Context, Effect, Layer, ManagedRuntime, Predicate, Result, Schem
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
-import {
-	commitVersion,
-	enableAutoMerge,
-	preparedSnapshot,
-	pullRequest,
-	restatePreparation,
-	resumePreparation,
-} from '@/automation/preparation-pull-requests';
+import { preparedSnapshot, restatePreparation } from '@/automation/preparation-pull-requests';
+import { PreparationWriter } from '@/automation/preparation-writer.ts';
 import type { PublishBudget } from '@/automation/publish-budget';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import type { AutomationBindings } from '@/automation/service';
@@ -70,7 +64,6 @@ import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { parseRetryAfter } from '@/kernel/http/http-date.ts';
-import { retryTransient } from '@/kernel/http/retry.ts';
 import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { approvalShaPattern, sha256DigestPattern } from '@/kernel/schema/ids.ts';
@@ -142,7 +135,6 @@ import type {
 	Artifact,
 	AutomationEvent,
 	Execution,
-	PreparationResult,
 	PreparedRelease,
 	ReleaseReference,
 	ReleaseStarted,
@@ -160,6 +152,7 @@ import {
 	taggedReleases,
 } from '@/release/domain/package-tags.ts';
 import { observedVersion, placeholderVersion } from '@/release/domain/planning/managers.ts';
+import { landsByCommit, preparationRequest } from '@/release/domain/preparation-request.ts';
 import {
 	conflictMessage,
 	planRefs,
@@ -257,12 +250,6 @@ function publishesGithubRelease(execution: Execution): boolean {
 	const key = selectorKey(`github-release:${execution.repository}`);
 	return execution.workflow?.publications?.some(id => selectorKey(id) === key) ?? false;
 }
-function committed(execution: Execution): boolean {
-	return execution.configuration.streams[execution.stream]?.prepare.bump === 'commit';
-}
-function versionMessage(execution: Execution): string {
-	return `chore(release): ${execution.version ?? 'release set'}`;
-}
 function moved(execution: Execution, head: { ref: string; sha: string }): string {
 	const release = execution.operation === 'prepare' || execution.operation === 'promote' || execution.releaseSet;
 	return `${head.ref} is at ${head.sha.slice(0, 12)} but this execution builds ${execution.sourceSha.slice(0, 12)}; ${
@@ -292,7 +279,7 @@ function referenceProbe(reference: string, version: string): Publication | undef
 		required: true,
 	};
 }
-type CoordinatorContext = Infrastructure | CoordinatorServices | AuditTrail | Background;
+type CoordinatorContext = Infrastructure | CoordinatorServices | AuditTrail | Background | PreparationWriter;
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, CoordinatorContext>;
 type GateSubject =
 	& Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>
@@ -415,6 +402,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Layer.mergeAll(
 				jsonLogging,
 				committed.pipe(
+					Layer.provideMerge(PreparationWriter.layer),
 					Layer.provideMerge(Background.layer(work => ctx.waitUntil(work))),
 					Layer.provideMerge(setupEditSource),
 					Layer.provideMerge(coordinatorLayer(ctx.storage)),
@@ -1134,29 +1122,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const body = `Source: ${execution.sourceSha}\nPreparation execution: ${execution.id}\n\n${
 					preparationBody(execution)
 				}`;
-				const result = committed(execution)
-					? yield* commitVersion(gateway, source, versionMessage(execution), ordered, prepared.head, head => {
-						prepared.head = head;
-						return putExecution(execution);
-					})
-					: prepared.head
-					? yield* resumePreparation(gateway, source, branch, title, body, prepared.head)
-					: yield* pullRequest(gateway, {
-						snapshot: source,
-						branch,
-						title,
-						body,
-						edits: ordered,
-						checkpoint: head => {
-							prepared.head = head;
-							return putExecution(execution);
-						},
-						coAuthored: execution.initiatedBy !== undefined,
-					});
-				const merged = yield* this.autoMerged(execution, result);
-				prepared.result = merged;
+				const result = yield* (yield* PreparationWriter).submit(
+					preparationRequest(execution, prepared, source, { branch, title, body, edits: ordered }),
+				);
+				prepared.result = result;
 				yield* putExecution(execution);
-				return merged;
+				return result;
 			}),
 			'coordinator.prepared',
 			{ executionId: id },
@@ -1200,39 +1171,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				).pipe(logRecovered('preparation.restate-failed', { executionId: upgraded.id, url: result.url }));
 				yield* (yield* Background).fork(work);
 			}
-		});
-	}
-	private autoMerged(execution: Execution, result: PreparationResult): CoordinatorEffect<PreparationResult> {
-		const method = execution.versionPrMerge
-			?? execution.configuration.streams[execution.stream]?.prepare.versionPrMerge;
-		if (result.kind === 'commit' || result.autoMerge || !method || method === 'manual') return Effect.succeed(result);
-		return Effect.gen({ self: this }, function*() {
-			const lock = yield* CoordinatorLock;
-			const work = enableAutoMerge(
-				yield* this.gateway,
-				execution.repository,
-				execution.repositoryId,
-				result.url,
-				method,
-				'version PR',
-			)
-				.pipe(
-					retryTransient<DomainError>({
-						attempts: 3,
-						delay: 1000,
-						while: error => error.problem.code === 'upstream',
-					}),
-					Effect.flatMap(autoMerge => lock.serialized(Effect.gen({ self: this }, function*() {
-						const current = yield* getExecution(execution.id);
-						const preparation = current.prepared ?? current.managed;
-						if (preparation?.result?.head !== result.head) return;
-						preparation.result = { ...result, autoMerge };
-						yield* putExecution(current);
-					}))),
-					logRecovered('preparation.auto-merge-failed', { executionId: execution.id, url: result.url }),
-				);
-			yield* (yield* Background).fork(work);
-			return result;
 		});
 	}
 	register(id: string, identity: RunIdentity): Promise<Execution> {
@@ -3826,9 +3764,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (operation.plan.requiresPreparation || operation.plan.sourceSha !== execution.sourceSha) {
 					return yield* precondition('Managed preparation plan is not executable');
 				}
-				const gateway = yield* this.gateway;
 				const snapshot = yield* repositorySnapshot(
-					gateway,
+					yield* this.gateway,
 					execution.repository,
 					execution.repositoryId,
 					execution.sourceSha,
@@ -3837,38 +3774,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				execution.state = 'running';
 				execution.attempts++;
 				yield* putExecution(execution);
-				const checkpoint = (head: string) => {
-					operation.head = head;
-					return putExecution(execution);
-				};
-				const result = committed(execution)
-					? yield* commitVersion(
-						gateway,
-						snapshot,
-						versionMessage(execution),
-						operation.plan.edits,
-						operation.head,
-						checkpoint,
-					)
-					: operation.head
-					? yield* resumePreparation(
-						gateway,
-						snapshot,
-						operation.branch,
-						operation.title,
-						operation.body,
-						operation.head,
-					)
-					: yield* pullRequest(gateway, {
-						snapshot,
+				operation.result = yield* (yield* PreparationWriter).submit(
+					preparationRequest(execution, operation, snapshot, {
 						branch: operation.branch,
 						title: operation.title,
 						body: operation.body,
 						edits: operation.plan.edits,
-						checkpoint,
-						coAuthored: execution.initiatedBy !== undefined,
-					});
-				operation.result = yield* this.autoMerged(execution, result);
+					}),
+				);
 				execution.state = 'succeeded';
 				delete execution.reason;
 				yield* putExecution(execution);
@@ -3876,7 +3789,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				recover(error =>
 					putExecution({
 						...execution,
-						state: committed(execution) && error.problem.code === 'precondition' ? 'failed' : 'uncertain',
+						state: landsByCommit(execution) && error.problem.code === 'precondition' ? 'failed' : 'uncertain',
 						reason: decodeError(error),
 					})
 				),
