@@ -161,7 +161,7 @@ const patterns: readonly Pattern[] = [
 	},
 ];
 const releaseActions =
-	/^(?:softprops\/action-gh-release|ncipollo\/release-action|taiki-e\/create-gh-release-action|taiki-e\/upload-rust-binary-action|svenstaro\/upload-release-action|goreleaser\/goreleaser-action|googleapis\/release-please-action)@/;
+	/^(?:softprops\/action-gh-release|ncipollo\/release-action|taiki-e\/create-gh-release-action|taiki-e\/upload-rust-binary-action|svenstaro\/upload-release-action|goreleaser\/goreleaser-action|googleapis\/release-please-action|kjanat\/beepboop\/actions\/publish-tagged-release)@/;
 const releaseCommand = /\bgh\s+release\s+(create|upload|edit)\b|\bgoreleaser\s+release\b/g;
 const goreleaserBuildOnly = /--snapshot\b|--skip[= ][\w,]*\bpublish\b|--skip-publish\b/;
 const aliasCommand =

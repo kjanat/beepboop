@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v7
         with: { ref: "${{ github.sha }}", fetch-depth: 0, token: "${{ steps.bot.outputs.token }}" }
       - if: steps.bot.outcome == 'success'
-        uses: jdx/mise-action@v5
+        uses: kjanat/mise-action@v6
       - if: steps.bot.outcome == 'success'
         run: runner i -f
       - name: Publish distribution commit
