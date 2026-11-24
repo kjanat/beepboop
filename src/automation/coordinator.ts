@@ -3807,10 +3807,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							now,
 							event => this.track(event).pipe(Effect.map(done => done ? undefined : trackLater(event, now))),
 						);
-						const due = yield* (yield* DurableStorage).peek(Keys.reconcileAt);
-						if (due === undefined || ((yield* (yield* AlarmPlanner).reconcileAt) ?? Number.POSITIVE_INFINITY) <= now) {
-							yield* this.reconcile();
-						}
+						if (yield* (yield* AlarmPlanner).reconcileDue(now)) yield* this.reconcile();
 					})),
 					lock.serialized(this.rebuildSetup()),
 				], { concurrency: 'unbounded' });
@@ -4223,8 +4220,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const clock = yield* Clock.Clock;
 
 			const storage = yield* DurableStorage;
+			const planner = yield* AlarmPlanner;
 			const started = clock.currentTimeMillisUnsafe();
-			if (!onlyExecution) yield* storage.write(Keys.reconcileAt, started + reconcileInterval);
+			if (!onlyExecution) yield* planner.holdReconcile(started + reconcileInterval);
 			const journal = yield* journaled;
 			const quarantined = new Set(yield* storage.ids(Keys.quarantine));
 			for (const entry of journal.unreadable) {
@@ -4236,7 +4234,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (executions[0] && (yield* this.suspended(executions[0].repositoryId))) {
 				return;
 			}
-			if (!onlyExecution) yield* storage.write(Keys.reconcileAt, null);
+			if (!onlyExecution) yield* planner.releaseReconcile;
 			const active = executions.filter(
 				(e) => !['succeeded', 'cancelled', 'failed'].includes(e.state),
 			);
@@ -4248,7 +4246,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const unresolved = (execution: Execution) =>
 				(execution.state === 'succeeded' || recoverable(execution)) && execution.publications.some(recheckable);
 			if (active.some(e => !e.releaseSet?.workflowId) || executions.some(unresolved)) {
-				yield* (yield* AlarmPlanner).requestReconcile(started + reconcileInterval);
+				yield* planner.requestReconcile(started + reconcileInterval);
 			}
 			const releaseHistory = new ReleaseHistory(journal.executions);
 			yield* (yield* ReconcileHistory).set(releaseHistory);

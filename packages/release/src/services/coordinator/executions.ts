@@ -7,7 +7,7 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Committed } from '@/persistence/durable/journal.ts';
 import { Journal } from '@/persistence/durable/journal.ts';
 import type { Write } from '@/persistence/durable/keyspace.ts';
-import { Keyspace, Singleton } from '@/persistence/durable/keyspace.ts';
+import { Keyspace } from '@/persistence/durable/keyspace.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
 import type { ReleaseWake } from '@/release/adapters/do/keys.ts';
 import { Keys } from '@/release/adapters/do/keys.ts';
@@ -139,10 +139,7 @@ export class Executions extends Context.Service<Executions, {
 				const extra: Write[] = [];
 				const set = execution.releaseSet;
 				if (!set?.workflowId) {
-					const current = yield* planner.reconcileAt;
-					extra.push(
-						Singleton.write(Keys.reconcileAt, Math.min(current ?? Number.POSITIVE_INFINITY, now + settleInterval)),
-					);
+					extra.push(yield* planner.reconcileWrite(now + settleInterval));
 				} else if (JSON.stringify({ ...previous, updatedAt: 0 }) !== JSON.stringify({ ...execution, updatedAt: 0 })) {
 					const wake = yield* storage.find(Keys.releaseWake, set.preparationId);
 					const members = wakeMembers(wake?.kind === 'readable' ? wake.value : undefined, execution.id);
