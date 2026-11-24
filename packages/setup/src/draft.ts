@@ -182,12 +182,20 @@ function draftSetup(
 					packageMarkdown(id)
 				}, which a selected package depends on and its registry does not have at this version.`
 			);
-		const narrowed: string[] = [], failing: string[] = [];
+		const narrowed: string[] = [], failing: string[] = [], unversioned: string[] = [];
 		for (const stream of choices.streams) {
 			const release = stream.promote?.binaries;
 			for (const build of release?.builds ?? []) {
 				const candidate = candidates.find(entry => entry.build.name === build.name);
 				if (!candidate || !release) continue;
+				const version = candidate.unsettableVersion;
+				if (version) {
+					unversioned.push(
+						`${stream.name}: \`-X main.version\` cannot set the version of ${build.name}: \`${version.file}\` declares \`main.version\` as ${
+							version.kind === 'const' ? 'a constant' : `\`${version.type}\``
+						}. Declare it as a \`string\` variable or untick ${build.name}.`,
+					);
+				}
 				const ticked = unbuildable(candidate, release.targets);
 				const note = leftOut(candidate);
 				if (ticked.length) {
@@ -225,7 +233,7 @@ function draftSetup(
 			...drafts,
 			...(actionReleaseOffer(snapshot) ? { actionRelease: actionReleaseOffer(snapshot) } : {}),
 			...(publishingChecks.length ? { publishingChecks } : {}),
-			blockers: [...ineligible, ...drafts.blockers],
+			blockers: [...ineligible, ...unversioned, ...drafts.blockers],
 			notes: [
 				...unanswered,
 				...added,

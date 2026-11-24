@@ -120,11 +120,14 @@ export const binaries = withValidation(
 	},
 );
 export type BinaryRelease = Decoded<typeof binaries>;
+export type VersionDeclaration = { kind: 'const' } | { kind: 'var'; type: string };
+export type UnsettableVersion = VersionDeclaration & { file: string };
 export interface BinaryCandidate {
 	package: string;
 	build: BinaryBuild;
 	targets: BinaryTarget[];
 	reason?: string;
+	unsettableVersion?: UnsettableVersion;
 }
 export function leftOut(candidate: BinaryCandidate): string | undefined {
 	return candidate.reason && `${candidate.build.name} leaves out Windows: ${candidate.reason}.`;

@@ -621,6 +621,35 @@ test('binary builds whose asset names collide block setup', async () => {
 	expect(plan.blockers).toEqual(['release.yml: signer linux-amd64 and signer linux-arm64 both produce signer']);
 });
 
+test('a Go binary whose main.version is not a string variable blocks setup and names the file', async () => {
+	const repository = binaryRepository();
+	world.github.push(repository, {
+		'client/cmd/signer/main.go': 'package main\n\nfunc main() {}\n',
+		'client/cmd/signer/version.go':
+			'package main\n\nimport "github.com/urfave/cli/v3"\n\nvar version = &cli.Command{\n\tName: "version",\n}\n',
+	}, 'Add a version command');
+	const api = bearer(world, await world.cliSession());
+	const preview = async () =>
+		Effect.runPromise(parseSetupPlan(
+			(await api('/api/repositories/setup/preview', { repository: repository.name, choices: binaryChoices() })).body,
+		));
+	const plan = await preview();
+	expect(plan.binaryCandidates?.find(candidate => candidate.build.name === 'signer')?.unsettableVersion).toEqual({
+		kind: 'var',
+		type: '*cli.Command',
+		file: 'client/cmd/signer/version.go',
+	});
+	expect(plan.blockers).toEqual([
+		'main: `-X main.version` cannot set the version of signer: `client/cmd/signer/version.go` declares `main.version` as `*cli.Command`. Declare it as a `string` variable or untick signer.',
+	]);
+	world.github.push(repository, {
+		'client/cmd/signer/version.go': 'package main\n\nconst version = "dev"\n',
+	}, 'Make the version a constant');
+	expect((await preview()).blockers).toEqual([
+		'main: `-X main.version` cannot set the version of signer: `client/cmd/signer/version.go` declares `main.version` as a constant. Declare it as a `string` variable or untick signer.',
+	]);
+});
+
 test('binary builds join an existing publication workflow and stay stable on a rerun', async () => {
 	const repository = binaryRepository();
 	world.github.push(repository, { '.github/workflows/release.yml': publishWorkflow }, 'Add a release workflow');

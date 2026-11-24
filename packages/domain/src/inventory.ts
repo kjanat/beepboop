@@ -15,6 +15,7 @@ export interface Snapshot {
 	repository: { id: number; name: string; defaultBranch: string };
 	sha: string;
 	files: Record<string, string>;
+	goSources?: Record<string, string>;
 	paths: string[];
 	links?: string[];
 	tags?: string[];
