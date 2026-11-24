@@ -1,11 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
-import { Clock, Effect, Layer, ManagedRuntime } from 'effect';
+import { Effect, Layer, ManagedRuntime } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
+import { Alarm } from '@/automation/alarm.ts';
 import { ApprovalGate } from '@/automation/approval-gate.ts';
 import { Dispatcher } from '@/automation/dispatcher.ts';
 import type { RecoveryAction } from '@/automation/execution-control.ts';
 import { ExecutionControl } from '@/automation/execution-control.ts';
 import { GitHubReleases } from '@/automation/github-releases.ts';
+import { Inbox, InboxRouter } from '@/automation/inbox.ts';
 import { ManagedPreparation } from '@/automation/managed-preparation.ts';
 import { PreparationWriter } from '@/automation/preparation-writer.ts';
 import { PublicationRecheck } from '@/automation/publication-recheck.ts';
@@ -20,51 +22,38 @@ import { ReleaseWorkflowLauncher } from '@/automation/release-workflow-launcher.
 import { RunCallbacks } from '@/automation/run-callbacks.ts';
 import { RunObservation } from '@/automation/run-observation.ts';
 import type { AutomationBindings } from '@/automation/service';
-import { Automation, applicationLayer, withAutomation } from '@/automation/service';
-import { repositorySnapshot } from '@/automation/snapshot';
+import { Automation, applicationLayer } from '@/automation/service';
+import { SetupEdits, SetupRebuild } from '@/automation/setup-edits.ts';
 import { TagSigning } from '@/automation/tag-signing.ts';
 import type { BinaryProgress, PackageTagPage, StreamGates } from '@/contract/views';
 import type { Edit } from '@/domain/inventory.ts';
 import type { RefPlan, RefState, TagSigner as SignerBinding } from '@/domain/refs.ts';
 import type { CheckChoice } from '@/domain/release-gates.ts';
-import { readiness } from '@/domain/repository';
 import { TagSigner } from '@/github/signing.ts';
 import type { InboxEvent } from '@/github/webhooks.ts';
-import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
 import { ProjectionSink } from '@/persistence/durable/journal.ts';
-import { DurableStorage } from '@/persistence/durable/storage.ts';
 import type { ClaimStep, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
 import { PublicationLedger, RegistryVerification } from '@/publication/ledger/service.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { PublishPacing } from '@/publication/publish-pace.ts';
 import { verifyPublication } from '@/publication/registries/verify.ts';
 import { projectionRules } from '@/release/adapters/d1/completions.ts';
-import { Keys } from '@/release/adapters/do/keys.ts';
 import type { DistributionArtifact } from '@/release/distribution/artifact.ts';
 import type { DistributionFile } from '@/release/distribution/validation.ts';
 import type { Artifact, AutomationEvent, Execution, PreparedRelease } from '@/release/domain/execution/types.ts';
 import { refsRequest } from '@/release/domain/refs-request.ts';
 import type { ReleaseOperation } from '@/release/domain/release-set.ts';
-import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
 import { Background } from '@/release/services/coordinator/background.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
 import { RepositoryRevisions } from '@/release/services/coordinator/executions.ts';
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
-import {
-	AuditTrail,
-	InboxQueue,
-	ObserveQueue,
-	TrackQueue,
-	trackLater,
-} from '@/release/services/coordinator/retry-queue.ts';
-import { decodeSetupEditV1 } from '@/setup/edit.ts';
-import { maintainSetup } from '@/setup/server/maintenance.ts';
+import { AuditTrail } from '@/release/services/coordinator/retry-queue.ts';
 import type { SetupEdit } from '@/setup/types.ts';
 
 export interface CoordinatorBindings extends AutomationBindings {
@@ -76,7 +65,10 @@ export interface CoordinatorBindings extends AutomationBindings {
 }
 type CoordinatorContext =
 	| Infrastructure
+	| Alarm
 	| ApprovalGate
+	| Inbox
+	| SetupEdits
 	| ExecutionControl
 	| Dispatcher
 	| ManagedPreparation
@@ -100,18 +92,6 @@ type CoordinatorContext =
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, CoordinatorContext>;
 
 export type Infrastructure = Automation;
-
-function readSetupEdit(storage: DurableStorage['Service']): Effect.Effect<SetupEdit | undefined, DomainError> {
-	return storage.read(Keys.setupEdit).pipe(
-		Effect.flatMap(value => value === undefined ? Effect.undefined : fromSync(() => decodeSetupEditV1(value))),
-	);
-}
-
-const setupEditSource = Layer.effectDiscard(Effect.gen(function*() {
-	const planner = yield* AlarmPlanner;
-	const storage = yield* DurableStorage;
-	yield* planner.register({ due: () => readSetupEdit(storage).pipe(Effect.map(edit => [edit?.due])) });
-}));
 
 const repositoryRevisions = Layer.effect(
 	RepositoryRevisions,
@@ -168,7 +148,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				jsonLogging,
 				RefPublication.packageTagSchedule.pipe(
 					Layer.provideMerge(
-						Layer.merge(Reconciler.layer, ExecutionControl.layer).pipe(
+						Alarm.layer.pipe(
+							Layer.provideMerge(
+								Layer.mergeAll(Reconciler.layer, ExecutionControl.layer, Inbox.layer, SetupEdits.layer),
+							),
 							Layer.provideMerge(Layer.merge(Dispatcher.layer, ManagedPreparation.layer)),
 							Layer.provideMerge(Layer.mergeAll(ApprovalGate.layer, RunObservation.layer, PublicationRecheck.layer)),
 							Layer.provideMerge(GitHubReleases.layer),
@@ -183,7 +166,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							Layer.provideMerge(ReleaseWorkflowLauncher.layer(() => env.RELEASE_WORKFLOW)),
 							Layer.provideMerge(PublishPacing.layer(name => env.PUBLISH_BUDGET.getByName(name))),
 							Layer.provideMerge(registryVerification),
-							Layer.provideMerge(setupEditSource),
+							Layer.provideMerge(Layer.merge(InboxRouter.layer, SetupRebuild.layer)),
 							Layer.provideMerge(coordinatorLayer(ctx.storage)),
 							Layer.provide(Layer.merge(projectionSink, repositoryRevisions)),
 							Layer.provideMerge(auditTrail),
@@ -213,8 +196,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<A> {
 		return this.run(CoordinatorLock.use(lock => lock.serialized(work)), operation, fields);
 	}
-	private readonly store = Effect.map(Automation, service => service.store);
-	private readonly gateway = Effect.map(Automation, service => service.gateway);
 	packageTags(
 		repositoryId: number,
 		stream: string,
@@ -487,19 +468,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return this.run(ExecutionControl.use(control => control.wake), 'coordinator.wake', {});
 	}
 	receive(delivery: string, repositoryId: number, event: InboxEvent): Promise<void> {
-		return this.run(
-			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
-				const storage = yield* DurableStorage;
-				if (yield* storage.has(Keys.inbox, delivery)) return;
-				const now = clock.currentTimeMillisUnsafe();
-				yield* storage.put(Keys.inbox, delivery, { delivery, repositoryId, event, attempts: 0, due: now });
-				yield* (yield* AlarmPlanner).arm(now);
-			}),
-			'coordinator.receive',
-			{ repositoryId, deliveryId: delivery },
-		);
+		return this.run(Inbox.use(inbox => inbox.accept(delivery, repositoryId, event)), 'coordinator.receive', {
+			repositoryId,
+			deliveryId: delivery,
+		});
 	}
 	observeRun(repositoryId: number, runId: number): Promise<void> {
 		return this.serial(
@@ -519,80 +491,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			},
 		);
 	}
-	private setupEdit(): CoordinatorEffect<SetupEdit | undefined, DomainError> {
-		return DurableStorage.use(readSetupEdit);
-	}
 	setupEdited(edit: Omit<SetupEdit, 'due'>, changed: boolean): Promise<boolean> {
-		return this.run(
-			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
-				const previous = yield* this.setupEdit();
-				if (previous ? previous.number === edit.number && previous.body === edit.body : !changed) return false;
-				const due = clock.currentTimeMillisUnsafe() + 5000;
-				yield* (yield* DurableStorage).write(Keys.setupEdit, { ...edit, due });
-				yield* (yield* AlarmPlanner).arm(due);
-				return true;
-			}),
-			'coordinator.setupEdited',
-			{},
-		);
-	}
-	private rebuildSetup(): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const edit = yield* this.setupEdit();
-			if (!edit || edit.due > clock.currentTimeMillisUnsafe()) return;
-			const store = yield* this.store;
-			yield* Effect.gen({ self: this }, function*() {
-				const repository = yield* store.repositories.get(edit.repositoryId);
-				if (repository && readiness(repository).kind !== 'suspended') {
-					const gateway = yield* this.gateway;
-					const snapshot = yield* repositorySnapshot(gateway, repository.name, repository.id);
-					yield* maintainSetup(store, gateway, snapshot, (yield* Automation).publishingAccess(snapshot.repository), {
-						number: edit.number,
-						choices: edit.choices,
-					});
-				}
-			}).pipe(
-				store.auditFailure('beepboop', 'repository.setup.failed', `${edit.repositoryId} ${edit.head}`),
-			);
-			const current = yield* this.setupEdit();
-			if (current?.due === edit.due) yield* (yield* DurableStorage).clear(Keys.setupEdit);
-		});
+		return this.run(SetupEdits.use(edits => edits.edited(edit, changed)), 'coordinator.setupEdited', {});
 	}
 	alarm(): Promise<void> {
-		return this.run(
-			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
-				const now = clock.currentTimeMillisUnsafe();
-				const lock = yield* CoordinatorLock;
-				yield* (yield* InboxQueue).drain(
-					now,
-					entry =>
-						withAutomation(service => service.receive(entry.delivery, entry.repositoryId, entry.event)).pipe(
-							Effect.as(undefined),
-						),
-				);
-				yield* Effect.all([
-					lock.serialized(Effect.gen({ self: this }, function*() {
-						yield* (yield* ReleaseSets).deliver(now);
-						const observation = yield* RunObservation;
-						yield* (yield* ObserveQueue).drain(now, event => Effect.as(observation.observe(event), undefined));
-						yield* (yield* TrackQueue).drain(
-							now,
-							event => observation.track(event).pipe(Effect.map(done => done ? undefined : trackLater(event, now))),
-						);
-						if (yield* (yield* AlarmPlanner).reconcileDue(now)) yield* (yield* Reconciler).reconcile();
-					})),
-					lock.serialized(this.rebuildSetup()),
-				], { concurrency: 'unbounded' });
-				yield* (yield* AlarmPlanner).reschedule;
-			}),
-			'coordinator.alarm',
-			{},
-		);
+		return this.run(Alarm.use(alarm => alarm.fire), 'coordinator.alarm', {});
 	}
 }
