@@ -5,7 +5,7 @@ import { inferReleaseGraph } from '@/discovery/release-graph/graph.ts';
 import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import { workflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { BinaryCandidate, BinaryRelease } from '@/domain/binary-platforms.ts';
-import { defaultBinaryTargets } from '@/domain/binary-platforms.ts';
+import { defaultBinaryTargets, unconfigured } from '@/domain/binary-platforms.ts';
 import { legacyConfiguration } from '@/domain/configuration/names.ts';
 import type { Configuration } from '@/domain/configuration/schema.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
@@ -230,8 +230,9 @@ function proposeBinaries(
 	return { ...promote, binaries: binaryRelease(candidates) };
 }
 export function binaryRelease(candidates: readonly BinaryCandidate[]): BinaryRelease {
+	const proposed = unconfigured(candidates, []);
 	return {
-		builds: candidates.map(candidate => candidate.build),
-		targets: defaultBinaryTargets.filter(target => candidates.every(candidate => candidate.targets.includes(target))),
+		builds: proposed.map(candidate => candidate.build),
+		targets: defaultBinaryTargets.filter(target => proposed.every(candidate => candidate.targets.includes(target))),
 	};
 }

@@ -2,9 +2,9 @@ import type { BinaryBuild, BinaryTarget } from '@/domain/binary-platforms.ts';
 import {
 	binaryTargets,
 	candidateOf,
-	configured,
 	defaultBinaryTargets,
 	supportedTargets,
+	unconfigured,
 } from '@/domain/binary-platforms.ts';
 import { publishable } from '@/domain/package-publication.ts';
 import { configurableStarts, versionBumps } from '@/domain/release-start.ts';
@@ -73,7 +73,7 @@ function binaryOptions(plan: SetupPlan, stream: SetupChoices['streams'][number])
 			build,
 			targets: candidateOf(candidates, build)?.targets ?? [...binaryTargets],
 		})),
-		...candidates.filter(candidate => !configured(stream.promote?.binaries?.builds ?? [], candidate)),
+		...unconfigured(candidates, stream.promote?.binaries?.builds ?? []),
 	];
 	if (!builds.length) return [];
 	return [

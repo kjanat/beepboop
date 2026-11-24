@@ -143,8 +143,16 @@ export function candidateOf(
 function directoryPath(path: string): string {
 	return path.split('/').filter(part => part && part !== '.').join('/');
 }
-export function configured(builds: readonly BinaryBuild[], candidate: BinaryCandidate): boolean {
-	return builds.some(build => build.name === candidate.build.name || candidateOf([candidate], build) !== undefined);
+export function unconfigured(
+	candidates: readonly BinaryCandidate[],
+	builds: readonly BinaryBuild[],
+): BinaryCandidate[] {
+	const names = new Set(builds.map(build => build.name));
+	return candidates.filter(candidate => {
+		const fresh = !names.has(candidate.build.name) && !builds.some(build => candidateOf([candidate], build));
+		names.add(candidate.build.name);
+		return fresh;
+	});
 }
 export function failsOn(
 	candidates: readonly BinaryCandidate[] | undefined,

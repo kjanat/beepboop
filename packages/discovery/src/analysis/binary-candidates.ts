@@ -131,10 +131,7 @@ function goCandidates(snapshot: Snapshot, pkg: Package): BinaryCandidate[] {
 }
 
 export function binaryCandidates(snapshot: Snapshot, inventory: Inventory): BinaryCandidate[] {
-	const candidates = inventory.packages.flatMap(pkg =>
+	return inventory.packages.flatMap(pkg =>
 		pkg.manager === 'cargo' ? cargoCandidates(snapshot, pkg) : pkg.manager === 'go' ? goCandidates(snapshot, pkg) : []
-	);
-	return candidates.filter((candidate, index) =>
-		candidates.findIndex(other => other.build.name === candidate.build.name) === index
 	);
 }

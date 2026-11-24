@@ -5,9 +5,10 @@ import { unsettableVersion } from '@/discovery/analysis/go-version.ts';
 import { discover } from '@/discovery/discover.ts';
 import { buildSnapshot } from '@/discovery/snapshot/builder.ts';
 import type { BinaryBuild, BinaryCandidate, VersionDeclaration } from '@/domain/binary-platforms.ts';
-import { candidateOf, leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
+import { candidateOf, leftOut, supportedTargets, unconfigured } from '@/domain/binary-platforms.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import { binaryRelease } from '@/setup/suggest.ts';
 
 function snapshot(files: Record<string, string>, extra: string[] = []): Snapshot {
 	return {
@@ -209,6 +210,33 @@ test('a Go binary names the file that declares an unsettable main.version', () =
 		binaryCandidates(source, discover(source)).map(candidate => [candidate.build.name, candidate.unsettableVersion]),
 	)
 		.toEqual([['tool', { kind: 'const', file: 'cmd/tool/version.go' }], ['other', undefined]]);
+});
+
+test('Go packages that share a binary name stay candidates, and the proposal takes the first', () => {
+	const source: Snapshot = {
+		...snapshot({ 'a/go.mod': 'module example/a\n', 'b/go.mod': 'module example/b\n' }, [
+			'a/cmd/tool/main.go',
+			'b/cmd/tool/main.go',
+		]),
+		goSources: {
+			'a/cmd/tool/main.go': 'package main\n\nfunc main() {}\n',
+			'b/cmd/tool/main.go': 'package main\n\nvar version int\n\nfunc main() {}\n',
+		},
+	};
+	const found = binaryCandidates(source, discover(source));
+	const second: BinaryBuild = {
+		toolchain: 'go',
+		name: 'second-tool',
+		module: 'b',
+		package: './cmd/tool',
+		asset: '{name}-{go.os}-{go.arch}{ext}',
+	};
+	expect([
+		found.map(candidate => candidate.build.toolchain === 'go' && candidate.build.module),
+		candidateOf(found, second)?.unsettableVersion,
+		binaryRelease(found).builds.map(build => build.toolchain === 'go' && build.module),
+		unconfigured(found, [second]).map(candidate => candidate.build.toolchain === 'go' && candidate.build.module),
+	]).toEqual([['a', 'b'], { kind: 'var', type: 'int', file: 'b/cmd/tool/main.go' }, ['a'], ['a']]);
 });
 
 test('a configured build finds its candidate whether its paths start with ./ or not', () => {
