@@ -621,7 +621,7 @@ test('binary builds whose asset names collide block setup', async () => {
 	expect(plan.blockers).toEqual(['release.yml: signer linux-amd64 and signer linux-arm64 both produce signer']);
 });
 
-test('a Go binary whose main.version is not a string variable blocks setup and names the file', async () => {
+test('a Go binary whose main.version is a non-string variable blocks setup, and a constant gets a note', async () => {
 	const repository = binaryRepository();
 	world.github.push(repository, {
 		'client/cmd/signer/main.go': 'package main\n\nfunc main() {}\n',
@@ -645,9 +645,11 @@ test('a Go binary whose main.version is not a string variable blocks setup and n
 	world.github.push(repository, {
 		'client/cmd/signer/version.go': 'package main\n\nconst version = "dev"\n',
 	}, 'Make the version a constant');
-	expect((await preview()).blockers).toEqual([
-		'main: `-X main.version` cannot set the version of signer: `client/cmd/signer/version.go` declares `main.version` as a constant. Declare it as a `string` variable or untick signer.',
-	]);
+	const constant = await preview();
+	expect(constant.blockers).toEqual([]);
+	expect(constant.notes).toContain(
+		'main: `client/cmd/signer/version.go` declares `main.version` as a constant. `-X main.version` leaves the version of signer unstamped. Declare it as a `string` variable to stamp it.',
+	);
 });
 
 test('binary builds join an existing publication workflow and stay stable on a rerun', async () => {

@@ -182,18 +182,20 @@ function draftSetup(
 					packageMarkdown(id)
 				}, which a selected package depends on and its registry does not have at this version.`
 			);
-		const narrowed: string[] = [], failing: string[] = [], unversioned: string[] = [];
+		const narrowed: string[] = [], failing: string[] = [], unversioned: string[] = [], unstamped: string[] = [];
 		for (const stream of choices.streams) {
 			const release = stream.promote?.binaries;
 			for (const build of release?.builds ?? []) {
 				const candidate = candidates.find(entry => entry.build.name === build.name);
 				if (!candidate || !release) continue;
 				const version = candidate.unsettableVersion;
-				if (version) {
+				if (version?.kind === 'const') {
+					unstamped.push(
+						`${stream.name}: \`${version.file}\` declares \`main.version\` as a constant. \`-X main.version\` leaves the version of ${build.name} unstamped. Declare it as a \`string\` variable to stamp it.`,
+					);
+				} else if (version) {
 					unversioned.push(
-						`${stream.name}: \`-X main.version\` cannot set the version of ${build.name}: \`${version.file}\` declares \`main.version\` as ${
-							version.kind === 'const' ? 'a constant' : `\`${version.type}\``
-						}. Declare it as a \`string\` variable or untick ${build.name}.`,
+						`${stream.name}: \`-X main.version\` cannot set the version of ${build.name}: \`${version.file}\` declares \`main.version\` as \`${version.type}\`. Declare it as a \`string\` variable or untick ${build.name}.`,
 					);
 				}
 				const ticked = unbuildable(candidate, release.targets);
@@ -238,6 +240,7 @@ function draftSetup(
 				...unanswered,
 				...added,
 				...failing,
+				...unstamped,
 				...narrowed,
 				...companionProposals(choices, snapshot, inventory),
 				...drafts.notes,
