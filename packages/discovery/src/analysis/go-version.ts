@@ -1,6 +1,7 @@
 import type { UnsettableVersion } from '@/domain/binary-platforms.ts';
 
 const tokens = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:[^"\\\n]|\\.)*"|`[^`]*`|'(?:[^'\\\n]|\\.)*'/g;
+const cPath = /^(?:"(?:C|\\x43|\\103|\\u0043|\\U00000043)"|`C`)$/;
 
 function code(source: string): string {
 	return source.replace(tokens, token =>
@@ -10,6 +11,8 @@ function code(source: string): string {
 			? token.includes('\n') ? '\n' : ' '
 			: token.startsWith("'")
 			? "''"
+			: cPath.test(token)
+			? '"C"'
 			: '""');
 }
 
@@ -52,11 +55,13 @@ function literalType(value: string): string | undefined {
 	return undefined;
 }
 
-function inferred(value: string): string | undefined {
+type Universal = (name: string) => boolean;
+
+function inferred(value: string, universal: Universal): string | undefined {
 	const literal = literalType(value);
 	if (literal) return literal;
 	if (value === "''") return 'rune';
-	if (/^(?:true|false)$/.test(value)) return 'bool';
+	if (/^(?:true|false)$/.test(value)) return universal(value) ? 'bool' : undefined;
 	if (/^[-+]?(?:\d[\d_]*|0[xXbBoO][\da-fA-F_]+)$/.test(value)) return 'int';
 	if (/^[-+]?[\d.][\d_.eE+-]*$/.test(value)) return 'float64';
 	return undefined;
@@ -66,15 +71,17 @@ type Found = { kind: 'const' } | { kind: 'var'; type: string; stated: boolean };
 
 const unparenthesized = (type: string) => type.trim().replace(/^\(\s*([\s\S]*?)\s*\)$/, '$1');
 
-function declared(constant: boolean, spec: string): Found | undefined {
+const specNames = (spec: string) =>
+	/^[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*/.exec(spec)?.[0].split(',').map(name => name.trim()) ?? [];
+
+function declared(constant: boolean, spec: string, universal: Universal): Found | undefined {
 	const parsed = /^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*([^=]*?)\s*(?:=\s*([\s\S]*))?$/.exec(spec);
-	const names = parsed?.[1]?.split(',').map(name => name.trim()) ?? [];
-	const index = names.indexOf('version');
+	const index = specNames(spec).indexOf('version');
 	if (index < 0) return undefined;
 	if (constant) return { kind: 'const' };
 	const stated = parsed?.[2] ? unparenthesized(parsed[2]) : '';
 	if (stated) return { kind: 'var', type: stated, stated: true };
-	const type = inferred(split(parsed?.[3] ?? '', char => char === ',')[index] ?? '');
+	const type = inferred(split(parsed?.[3] ?? '', char => char === ',')[index] ?? '', universal);
 	return type === undefined ? undefined : { kind: 'var', type, stated: false };
 }
 
@@ -132,19 +139,19 @@ function constrainedName(file: string): boolean {
 	return knownOS.has(last) || knownArch.has(last);
 }
 
-const cgo = /^import\s*(?:\(\s*(?:[^)]*\n\s*)?)?"C"(?=\s|\)|\/[/*]|$)/m;
+const importsC = (list: readonly string[]) =>
+	list.some(statement => /^import\b/.test(statement) && specs(statement, 'import').some(spec => spec.endsWith('"C"')));
 
-function built(file: string, source: string): string[] | undefined {
-	if (constrainedName(file) || /^\/\/(?:go:build|\s*\+build)\s/m.test(source) || cgo.test(source)) return undefined;
-	const list = statements(code(source));
-	return list[0] === 'package main' ? list : undefined;
+function built(file: string, list: readonly string[], source: string): boolean {
+	return !constrainedName(file) && !/^\s*\/\/(?:go:build|\s*\+build)\s/m.test(source)
+		&& /^package\s+main$/.test(list[0] ?? '') && !importsC(list);
 }
 
-function declaration(list: readonly string[]): Found | undefined {
+function declaration(list: readonly string[], universal: Universal): Found | undefined {
 	for (const statement of list) {
 		const keyword = /^(?:var|const)\b/.exec(statement)?.[0];
 		const found = keyword
-			? specs(statement, keyword).map(spec => declared(keyword === 'const', spec)).find(Boolean)
+			? specs(statement, keyword).map(spec => declared(keyword === 'const', spec, universal)).find(Boolean)
 			: undefined;
 		if (found) return found;
 	}
@@ -164,6 +171,16 @@ function typeDeclarations(list: readonly string[]): [string, TypeDeclaration][] 
 			})
 			: []
 	);
+}
+
+function packageNames(list: readonly string[]): string[] {
+	return [
+		...list.flatMap(statement => {
+			const keyword = /^(?:var|const)\b/.exec(statement)?.[0];
+			return keyword ? specs(statement, keyword).flatMap(specNames) : [];
+		}),
+		...typeDeclarations(list).map(([name]) => name),
+	];
 }
 
 const predeclared = new Set([
@@ -192,28 +209,33 @@ const predeclared = new Set([
 function notString(
 	type: string,
 	types: ReadonlyMap<string, TypeDeclaration>,
+	universal: Universal,
 	seen: ReadonlySet<string> = new Set(),
 ): boolean {
 	const name = unparenthesized(type);
 	if (/^(?:\*|\[|map\[|chan\b|<-|func\b|struct\b|interface\b)/.test(name)) return true;
 	const declaration = types.get(name);
 	if (declaration && !seen.has(name)) {
-		return !declaration.alias || notString(declaration.target, types, new Set([...seen, name]));
+		return !declaration.alias || notString(declaration.target, types, universal, new Set([...seen, name]));
 	}
-	return predeclared.has(name);
+	return predeclared.has(name) && universal(name);
 }
 
-export function unsettableVersion(files: readonly (readonly [string, string])[]): UnsettableVersion | undefined {
-	const parsed = files.flatMap(([file, source]) => {
-		const list = built(file, source);
-		return list ? [{ file, list }] : [];
-	});
+export function unsettableVersion(
+	files: readonly (readonly [string, string | undefined])[],
+): UnsettableVersion | undefined {
+	const read = files.flatMap(([file, source]) =>
+		source === undefined ? [] : [{ file, source, list: statements(code(source)) }]
+	);
+	const shadowed = new Set(read.flatMap(({ list }) => packageNames(list)));
+	const universal = (name: string) => read.length === files.length && !shadowed.has(name);
+	const parsed = read.filter(({ file, list, source }) => built(file, list, source));
 	const types = new Map(parsed.flatMap(({ list }) => typeDeclarations(list)));
 	for (const { file, list } of parsed) {
-		const found = declaration(list);
+		const found = declaration(list, universal);
 		if (!found) continue;
 		if (found.kind === 'const') return { kind: 'const', file };
-		return !found.stated || notString(found.type, types)
+		return !found.stated || notString(found.type, types, universal)
 			? { kind: 'var', type: found.type, file }
 			: undefined;
 	}

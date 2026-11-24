@@ -98,11 +98,10 @@ function goMainPackages(paths: readonly string[]): GoMain[] {
 		return skippedGo.test(relative) ? [] : [{ module, directory, relative }];
 	});
 }
+const goSource = (path: string) => /(?:^|\/)[^/_.][^/]*\.go$/.test(path) && !path.endsWith('_test.go');
 export function goMainSources(paths: readonly string[]): string[] {
 	const directories = new Set(goMainPackages(paths).map(entry => entry.directory));
-	return paths.filter(path =>
-		/(?:^|\/)[^/_.][^/]*\.go$/.test(path) && !path.endsWith('_test.go') && directories.has(parentDirectory(path))
-	);
+	return paths.filter(path => goSource(path) && directories.has(parentDirectory(path)));
 }
 
 function goCandidates(snapshot: Snapshot, pkg: Package): BinaryCandidate[] {
@@ -110,10 +109,9 @@ function goCandidates(snapshot: Snapshot, pkg: Package): BinaryCandidate[] {
 	return goMainPackages(snapshot.paths).filter(entry => entry.module === module).map(({ directory, relative }) => {
 		const name = (relative || pkg.name).split('/').at(-1) ?? pkg.name;
 		const version = unsettableVersion(
-			Object.entries(snapshot.goSources ?? {}).filter(([file]) => parentDirectory(file) === directory).sort((
-				[a],
-				[b],
-			) => a.localeCompare(b)),
+			[...snapshot.paths, ...(snapshot.links ?? [])].filter(path =>
+				goSource(path) && parentDirectory(path) === directory
+			).sort((a, b) => a.localeCompare(b)).map(file => [file, snapshot.goSources?.[file]]),
 		);
 		return {
 			package: packageId(pkg),
