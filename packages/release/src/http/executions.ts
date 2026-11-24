@@ -1,8 +1,11 @@
 import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import { routes } from '@/contract/routes';
+import { requireReady } from '@/domain/repository';
+import { gitRefSchema, releaseSchema } from '@/github/resources.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import { createExecution } from '@/release/domain/execution/execution.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { admin } from '@/server/handlers/kit';
 
@@ -73,6 +76,44 @@ export const executionEndpoints = {
 				Effect.flatMap(found => service.coordinators.resolveChecks(found.repositoryId, found.id, input.choice, actor)),
 			),
 	),
+	executionsBackfill: admin(routes.executionsBackfill, (input, { service, actor }) =>
+		Effect.gen(function*() {
+			const parent = yield* execution(service, input.id, input.repositoryId);
+			const release = parent.release;
+			if (parent.operation !== 'promote' || !release?.tag || release.releaseId === undefined) {
+				return yield* precondition('Backfill requires a promotion with a published GitHub release');
+			}
+			const repository = yield* requireReady(yield* service.catalog.refresh(parent.repository, parent.repositoryId));
+			const binding = repository.configuration.streams[parent.stream]?.workflows[input.operation];
+			if (input.operation === 'prepare' || input.operation === 'promote' || !binding?.backfill) {
+				return yield* precondition('Select an operation enabled for backfills in repository configuration');
+			}
+			if (binding.ref && ![repository.defaultBranch, `refs/heads/${repository.defaultBranch}`].includes(binding.ref)) {
+				return yield* precondition('Backfill workflow must run on the repository default branch');
+			}
+			const gateway = service.gateway;
+			const token = yield* gateway.token(parent.repository, parent.repositoryId, { contents: 'read' });
+			const base = `/repos/${parent.repository}`;
+			const published = yield* gateway.read(releaseSchema, `${base}/releases/${release.releaseId}`, token);
+			const ref = yield* gateway.read(gitRefSchema, `${base}/git/ref/tags/${encodeURIComponent(release.tag)}`, token);
+			const target = yield* gateway.peelTag(parent.repository, ref.object, token);
+			if (
+				published.draft !== false || published.tag_name !== release.tag
+				|| target.type !== 'commit' || target.sha !== release.commit
+			) {
+				return yield* precondition('Published release no longer matches the recorded tag and commit');
+			}
+			const backfill = yield* createExecution(repository, {
+				stream: parent.stream,
+				operation: input.operation,
+				eventId: `backfill:${parent.id}:${repository.sha}`,
+				sourceSha: release.commit,
+				version: release.version,
+				upstreamRelease: release,
+			});
+			backfill.initiatedBy = actor;
+			return yield* service.enqueue(repository, backfill);
+		})),
 	executionsRecover: admin(
 		routes.executionsRecover,
 		(input, { service, actor }) =>

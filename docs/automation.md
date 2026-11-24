@@ -444,6 +444,22 @@ environment written as an expression blocks setup. A credential input that
 holds an expression or invalid JSON blocks setup. Merging grants only aliases
 in the merged `credentials` list.
 
+## Backfill a published release
+
+Declare a standalone operation under the stream's `workflows` with
+`mode: "dispatch"` and `backfill: true`. List the package publications that
+must succeed. During adoption the equivalent operation choice has
+`backfill: true` and `needs: []`. The promotion's publication requirements
+still apply to normal releases.
+
+Run `beepboop runs backfill PROMOTION_ID OPERATION` for a promotion with a
+published GitHub release. Beepboop checks the release tag against its recorded
+commit and dispatches the repository's current, checked-in workflow. The
+workflow reads the tag from its begin context's `upstreamRelease.tag`, builds
+from the context's `sourceSha`, and reports its publications. Running the same
+command again for the same configuration returns the existing backfill. Use
+`beepboop runs recover BACKFILL_ID --action retry` to retry that operation.
+
 ## Publish through Beepboop
 
 `actions/publish` publishes an execution's Cargo, PyPI and npm packages and

@@ -328,6 +328,9 @@ beepboop adopt owner/repository --promote-file release.yml \
   --binary tool --target linux-amd64 --target darwin-arm64
 ```
 
+- `--operations` accepts JSON operation choices. A backfill has
+  `"backfill": true` and `"needs": []`. It runs with
+  `beepboop runs backfill PROMOTION_ID OPERATION` for a published release.
 - `--stream` names the release group the other flags change. It is needed
   when the proposal has several groups, and a new name adds a group.
 - `--package` and `--must-publish` take a package name or PURL and repeat.

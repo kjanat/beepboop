@@ -112,6 +112,10 @@ export function streamSummary(
 		if (files.includes(check.file)) lines.push(`${check.subject}: ${check.message}`);
 	}
 	for (const operation of stream.operations ?? []) {
+		if (operation.backfill) {
+			lines.push(`${named(operation.file)} can backfill ${publishes(operation.publications)} for a published release.`);
+			continue;
+		}
 		const after = operation.needs.map(name => {
 			const file = stream.observe?.find(entry => entry.name === name)?.file ?? name;
 			const jobs = operation.needsJobs?.[name];

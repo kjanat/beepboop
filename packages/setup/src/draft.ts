@@ -485,10 +485,12 @@ function drafted(
 			}
 			for (const entry of selection.operations ?? []) {
 				const previous = object(object(current.workflows)[entry.name]);
-				const { name: _name, needs: _needs, needsJobs: _jobs, publications: _publications, ...generator } = entry;
+				const { name: _name, backfill, needs: _needs, needsJobs: _jobs, publications: _publications, ...generator } =
+					entry;
 				const operation: Record<string, unknown> = {
 					...previous,
 					file: entry.file,
+					...(backfill ? { mode: 'dispatch', backfill } : {}),
 					ref: typeof previous.ref === 'string' ? previous.ref : snapshot.repository.defaultBranch,
 					publications: entry.publications,
 					needs: entry.needs,
@@ -502,7 +504,9 @@ function drafted(
 			else delete updated.workflows;
 			if (selection.observe?.length) managers.add('workflow');
 			streams[selection.name] = updated;
-			const delegated = new Set(selection.operations?.flatMap(entry => entry.publications) ?? []);
+			const delegated = new Set(
+				selection.operations?.filter(entry => !entry.backfill).flatMap(entry => entry.publications) ?? [],
+			);
 			const promoted = published.filter(pkg => !delegated.has(packageId(pkg)));
 			const shared = selection.prepare && selection.promote && selection.prepare.file === selection.promote.file;
 			for (const operation of ['prepare', 'promote'] as const) {
@@ -672,7 +676,8 @@ function drafted(
 				updated.start = selection.start.flatMap(via => via === 'action' ? [{ via, workflow: startWorkflowFile }] : []);
 			}
 			for (const entry of selection.operations ?? []) {
-				const { name: operation, needs: _needs, needsJobs: _jobs, publications, ...workflow } = entry;
+				const { name: operation, backfill: _backfill, needs: _needs, needsJobs: _jobs, publications, ...workflow } =
+					entry;
 				if (selectedFiles.has(workflow.file)) {
 					blockers.push(`${workflow.file}: one workflow cannot be assigned to multiple release roles or streams.`);
 				}

@@ -483,6 +483,13 @@
 												"dispatch"
 											]
 										},
+										"backfill": {
+											"type": "boolean",
+											"enum": [
+												true
+											],
+											"description": "Allow this standalone dispatch operation to run for an existing published release"
+										},
 										"each": {
 											"type": "string",
 											"enum": [
@@ -1000,6 +1007,7 @@
 											"schedule",
 											"publications",
 											"mode",
+											"backfill",
 											"each",
 											"refs",
 											"platform",
@@ -1166,6 +1174,13 @@
 												"dispatch"
 											]
 										},
+										"backfill": {
+											"type": "boolean",
+											"enum": [
+												true
+											],
+											"description": "Allow this standalone dispatch operation to run for an existing published release"
+										},
 										"each": {
 											"type": "string",
 											"enum": [
@@ -1683,6 +1698,7 @@
 											"schedule",
 											"publications",
 											"mode",
+											"backfill",
 											"each",
 											"refs",
 											"platform",
@@ -1977,6 +1993,13 @@
 												"dispatch"
 											]
 										},
+										"backfill": {
+											"type": "boolean",
+											"enum": [
+												true
+											],
+											"description": "Allow this standalone dispatch operation to run for an existing published release"
+										},
 										"each": {
 											"type": "string",
 											"enum": [
@@ -2494,6 +2517,7 @@
 											"schedule",
 											"publications",
 											"mode",
+											"backfill",
 											"each",
 											"refs",
 											"platform",

@@ -55,7 +55,7 @@ export function completeChoices(
 				? previousPolicy.prefix
 				: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, streamCount);
 			const elsewhere = new Set([
-				...(stream.operations?.flatMap(entry => entry.publications) ?? []),
+				...(stream.operations?.filter(entry => !entry.backfill).flatMap(entry => entry.publications) ?? []),
 				...(stream.observe?.flatMap(entry => entry.publications) ?? []),
 			]);
 			const complete = (operation: Operation, workflow: SetupWorkflow | undefined): SetupWorkflow | undefined => {

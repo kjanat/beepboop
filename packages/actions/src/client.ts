@@ -18,7 +18,18 @@ function writeResult(mode: Mode, data: Record<string, unknown>, environment: Env
 			const directory = yield* Effect.fromResult(required(environment, 'RUNNER_TEMP'));
 			const contextFile = join(directory, `release-context-${crypto.randomUUID()}.json`);
 			yield* Effect.fromResult(attempt(() => writeFileSync(contextFile, JSON.stringify(data), { mode: 0o600 })));
-			const { repositoryId, repository, stream, operation, state, version, sourceSha, updatedAt, draftRelease } = data;
+			const {
+				repositoryId,
+				repository,
+				stream,
+				operation,
+				state,
+				version,
+				sourceSha,
+				updatedAt,
+				draftRelease,
+				upstreamRelease,
+			} = data;
 			const force = data.force === true;
 			yield* writeOutput(
 				'context',
@@ -33,6 +44,7 @@ function writeResult(mode: Mode, data: Record<string, unknown>, environment: Env
 					sourceSha,
 					updatedAt,
 					draftRelease,
+					upstreamRelease,
 					force,
 					contextFile,
 				}),
