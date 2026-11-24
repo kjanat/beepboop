@@ -172,6 +172,7 @@ import {
 import { compileReleaseSet } from '@/release/domain/release-set.ts';
 import { manifestProblems, releasePaths } from '@/release/domain/version.ts';
 import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
+import { Background } from '@/release/services/coordinator/background.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
 import type { ExecutionCommitted } from '@/release/services/coordinator/executions.ts';
 import { Executions, RepositoryRevisions } from '@/release/services/coordinator/executions.ts';
@@ -291,7 +292,8 @@ function referenceProbe(reference: string, version: string): Publication | undef
 		required: true,
 	};
 }
-type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, Infrastructure | CoordinatorServices | AuditTrail>;
+type CoordinatorContext = Infrastructure | CoordinatorServices | AuditTrail | Background;
+type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, CoordinatorContext>;
 type GateSubject =
 	& Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>
 	& Partial<Pick<Execution, 'reruns'>>;
@@ -394,7 +396,7 @@ const projectionSink = Layer.effect(
 );
 
 export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
-	readonly #runtime: ManagedRuntime.ManagedRuntime<Infrastructure | CoordinatorServices | AuditTrail, DomainError>;
+	readonly #runtime: ManagedRuntime.ManagedRuntime<CoordinatorContext, DomainError>;
 	constructor(
 		ctx: DurableObjectState,
 		env: CoordinatorBindings,
@@ -402,7 +404,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	) {
 		super(ctx, env);
 		const committed = Layer.effectDiscard(Effect.gen({ self: this }, function*() {
-			const context = yield* Effect.context<Infrastructure | CoordinatorServices | AuditTrail>();
+			const context = yield* Effect.context<CoordinatorContext>();
 			yield* (yield* Executions).onCommitted(change =>
 				this.committed(change).pipe(
 					Effect.updateContext((current: Context.Context<never>) => Context.merge(context, current)),
@@ -413,6 +415,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Layer.mergeAll(
 				jsonLogging,
 				committed.pipe(
+					Layer.provideMerge(Background.layer(work => ctx.waitUntil(work))),
 					Layer.provideMerge(setupEditSource),
 					Layer.provideMerge(coordinatorLayer(ctx.storage)),
 					Layer.provide(Layer.merge(projectionSink, repositoryRevisions)),
@@ -490,9 +493,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					);
 				}
 			}).pipe(logRecovered('package-tags.failed', { executionId: execution.id }));
-			this.ctx.waitUntil(
-				Effect.runPromiseWith(yield* Effect.context<Infrastructure | CoordinatorServices | AuditTrail>())(work),
-			);
+			yield* (yield* Background).fork(work);
 		});
 	}
 	packageTags(
@@ -1197,9 +1198,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					previous,
 					next,
 				).pipe(logRecovered('preparation.restate-failed', { executionId: upgraded.id, url: result.url }));
-				this.ctx.waitUntil(
-					Effect.runPromiseWith(yield* Effect.context<Infrastructure | CoordinatorServices | AuditTrail>())(work),
-				);
+				yield* (yield* Background).fork(work);
 			}
 		});
 	}
@@ -1232,9 +1231,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					}))),
 					logRecovered('preparation.auto-merge-failed', { executionId: execution.id, url: result.url }),
 				);
-			this.ctx.waitUntil(
-				Effect.runPromiseWith(yield* Effect.context<Infrastructure | CoordinatorServices | AuditTrail>())(work),
-			);
+			yield* (yield* Background).fork(work);
 			return result;
 		});
 	}
