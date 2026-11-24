@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { Clock, Context, Effect, Layer, ManagedRuntime, Predicate, Schema } from 'effect';
+import { Clock, Effect, Layer, ManagedRuntime, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { ApprovalGate } from '@/automation/approval-gate.ts';
 import { GitHubReleases } from '@/automation/github-releases.ts';
@@ -8,6 +8,7 @@ import { PreparationWriter } from '@/automation/preparation-writer.ts';
 import type { PublishBudget } from '@/automation/publish-budget';
 import { RefPublication } from '@/automation/ref-publication.ts';
 import { ReleaseCommits } from '@/automation/release-commits.ts';
+import { ReleaseEventOutbox } from '@/automation/release-event-outbox.ts';
 import { ReleaseSets } from '@/automation/release-sets.ts';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { ReleaseWorkflowLauncher } from '@/automation/release-workflow-launcher.ts';
@@ -41,10 +42,7 @@ import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { matches, sha } from '@/kernel/schema/result.ts';
 import type { SqlDatabase } from '@/persistence/d1/database';
 import { ProjectionStore } from '@/persistence/d1/projection';
-import type { Committed } from '@/persistence/durable/journal.ts';
 import { Journal, ProjectionSink } from '@/persistence/durable/journal.ts';
-import type { Write } from '@/persistence/durable/keyspace.ts';
-import { Keyspace } from '@/persistence/durable/keyspace.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
 import type { ClaimStep, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
 import { LedgerStore, PublicationLedger, RegistryVerification } from '@/publication/ledger/service.ts';
@@ -60,7 +58,6 @@ import type { DistributionFile } from '@/release/distribution/validation.ts';
 import {
 	dependenciesReady,
 	expectedRunTitle,
-	mergePublications,
 	publishedAfterFailure,
 	recheckable,
 	rechecked,
@@ -79,11 +76,9 @@ import type {
 	AutomationEvent,
 	Execution,
 	PreparedRelease,
-	ReleaseReference,
 	ReleaseStarted,
 } from '@/release/domain/execution/types.ts';
 import { ReleaseHistory } from '@/release/domain/history.ts';
-import { releaseEventId } from '@/release/domain/identity-keys.ts';
 import { preparationBody } from '@/release/domain/managed.ts';
 import { landsByCommit, preparationRequest } from '@/release/domain/preparation-request.ts';
 import { referenceProbe } from '@/release/domain/reference-probe.ts';
@@ -92,7 +87,6 @@ import type { ReleaseOperation } from '@/release/domain/release-set.ts';
 import { AlarmPlanner, reconcileInterval } from '@/release/services/coordinator/alarm-planner.ts';
 import { Background } from '@/release/services/coordinator/background.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
-import type { ExecutionCommitted } from '@/release/services/coordinator/executions.ts';
 import { Executions, RepositoryRevisions } from '@/release/services/coordinator/executions.ts';
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
@@ -144,6 +138,7 @@ function startedPreparation(prior: Execution, started: ReleaseStarted): Executio
 type CoordinatorContext =
 	| Infrastructure
 	| ApprovalGate
+	| ReleaseEventOutbox
 	| RunObservation
 	| CoordinatorServices
 	| AuditTrail
@@ -184,9 +179,6 @@ function getExecution(id: string) {
 }
 function putExecution(execution: Execution) {
 	return Executions.use(service => service.put(execution));
-}
-function commitEntries(entries: readonly [Committed, ...Committed[]], extra?: readonly Write[]) {
-	return Executions.use(service => service.commit(entries, extra));
 }
 function isolateExecution(id: string, error: DomainError) {
 	return Executions.use(service => service.isolate(id, error));
@@ -251,36 +243,32 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		infrastructure?: Layer.Layer<Infrastructure, DomainError>,
 	) {
 		super(ctx, env);
-		const committed = Layer.effectDiscard(Effect.gen({ self: this }, function*() {
-			const context = yield* Effect.context<CoordinatorContext>();
-			yield* (yield* Executions).onCommitted(change =>
-				this.committed(change).pipe(
-					Effect.updateContext((current: Context.Context<never>) => Context.merge(context, current)),
-				)
-			);
-		}));
 		this.#runtime = ManagedRuntime.make(
 			Layer.mergeAll(
 				jsonLogging,
-				RefPublication.packageTagSchedule.pipe(Layer.provideMerge(committed.pipe(
-					Layer.provideMerge(Layer.merge(ApprovalGate.layer, RunObservation.layer)),
-					Layer.provideMerge(GitHubReleases.layer),
-					Layer.provideMerge(ReleaseSets.layer),
-					Layer.provideMerge(RefPublication.layer),
-					Layer.provideMerge(Layer.merge(RunCallbacks.layer, TagSigning.layer)),
-					Layer.provideMerge(Layer.merge(PreparationWriter.layer, ReleaseCommits.layer)),
-					Layer.provideMerge(PublicationLedger.layer),
-					Layer.provideMerge(Background.layer(work => ctx.waitUntil(work))),
-					Layer.provideMerge(TagSigner.layer(() => env.SIGNER)),
-					Layer.provideMerge(ReleaseWorkflowLauncher.layer(() => env.RELEASE_WORKFLOW)),
-					Layer.provideMerge(PublishPacing.layer(name => env.PUBLISH_BUDGET.getByName(name))),
-					Layer.provideMerge(registryVerification),
-					Layer.provideMerge(setupEditSource),
-					Layer.provideMerge(coordinatorLayer(ctx.storage)),
-					Layer.provide(Layer.merge(projectionSink, repositoryRevisions)),
-					Layer.provideMerge(auditTrail),
-					Layer.provideMerge(infrastructure ?? applicationLayer(env, work => ctx.waitUntil(work))),
-				))),
+				RefPublication.packageTagSchedule.pipe(
+					Layer.provideMerge(
+						Layer.merge(ApprovalGate.layer, RunObservation.layer).pipe(
+							Layer.provideMerge(GitHubReleases.layer),
+							Layer.provideMerge(ReleaseSets.layer),
+							Layer.provideMerge(RefPublication.layer),
+							Layer.provideMerge(Layer.merge(RunCallbacks.layer, TagSigning.layer)),
+							Layer.provideMerge(Layer.merge(PreparationWriter.layer, ReleaseCommits.layer)),
+							Layer.provideMerge(PublicationLedger.layer),
+							Layer.provideMerge(ReleaseEventOutbox.layer),
+							Layer.provideMerge(Background.layer(work => ctx.waitUntil(work))),
+							Layer.provideMerge(TagSigner.layer(() => env.SIGNER)),
+							Layer.provideMerge(ReleaseWorkflowLauncher.layer(() => env.RELEASE_WORKFLOW)),
+							Layer.provideMerge(PublishPacing.layer(name => env.PUBLISH_BUDGET.getByName(name))),
+							Layer.provideMerge(registryVerification),
+							Layer.provideMerge(setupEditSource),
+							Layer.provideMerge(coordinatorLayer(ctx.storage)),
+							Layer.provide(Layer.merge(projectionSink, repositoryRevisions)),
+							Layer.provideMerge(auditTrail),
+							Layer.provideMerge(infrastructure ?? applicationLayer(env, work => ctx.waitUntil(work))),
+						),
+					),
+				),
 			),
 		);
 	}
@@ -305,11 +293,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private readonly store = Effect.map(Automation, service => service.store);
 	private readonly gateway = Effect.map(Automation, service => service.gateway);
-	private committed({ execution }: ExecutionCommitted): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
-		});
-	}
 	packageTags(
 		repositoryId: number,
 		stream: string,
@@ -322,60 +305,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			'coordinator.packageTags',
 			{ repositoryId, stream },
 		);
-	}
-	private releaseGroup(
-		execution: Execution,
-		history: CoordinatorEffect<ReleaseHistory, DomainError> = ReconcileHistory.use(active => active.current).pipe(
-			Effect.filterOrElse(
-				Predicate.isNotUndefined,
-				() => allExecutions.pipe(Effect.map(entries => new ReleaseHistory(entries))),
-			),
-		),
-	): CoordinatorEffect<Execution[] | undefined, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (!execution.version) return;
-			const required = execution.releaseSet?.required ?? execution.configuration.streams[execution.stream]?.required
-				?? [];
-			if (!required.length) return;
-			const id = releaseEventId({ ...execution, version: execution.version });
-			if (yield* (yield* DurableStorage).has(Keys.releaseEmitted, id)) return;
-			return (yield* history).completed(execution, required);
-		});
-	}
-	private captureReleaseEvent(execution: Execution): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (!execution.version) return;
-			const group = yield* this.releaseGroup(execution);
-			if (!group) return;
-			const id = releaseEventId({ ...execution, version: execution.version });
-			const references = group.flatMap(e => e.release ? [e.release] : []);
-			if (references.some(r => r.tag !== references[0]?.tag || r.releaseId !== references[0]?.releaseId)) {
-				return yield* precondition('Conflicting release identities');
-			}
-			const release: ReleaseReference = {
-				id,
-				...(execution.releaseSet ? { group: execution.releaseSet.group } : {}),
-				repository: { id: execution.repositoryId, name: execution.repository },
-				stream: execution.stream,
-				commit: execution.sourceSha,
-				version: execution.version,
-				...(references[0]?.tag ? { tag: references[0].tag, releaseId: references[0].releaseId } : {}),
-				publications: yield* mergePublications([], group.flatMap(e => e.publications)),
-				artifacts: [...new Map(group.flatMap(e => e.artifacts).map(a => [a.id, a])).values()],
-			};
-			const event: AutomationEvent = {
-				occurredAt: (yield* Clock.Clock).currentTimeMillisUnsafe(),
-				id,
-				source: execution.repository,
-				event: 'release',
-				version: execution.version,
-				release,
-			};
-			yield* commitEntries(
-				[{ entity: 'release', id, repositoryId: execution.repositoryId, value: event }],
-				[Keyspace.write(Keys.releaseEvent, id, event), Keyspace.write(Keys.releaseEmitted, id, true)],
-			);
-		});
 	}
 	execution(id: string): Promise<Execution | undefined> {
 		return this.run(storedExecution(id), 'coordinator.execution', { executionId: id });
@@ -461,20 +390,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	releaseEvents(): Promise<AutomationEvent[]> {
-		return this.run(
-			DurableStorage.use(storage => storage.list(Keys.releaseEvent, 100)).pipe(
-				Effect.map(entries => entries.map(entry => entry.value)),
-			),
-			'coordinator.releaseEvents',
-			{},
-		);
+		return this.run(ReleaseEventOutbox.use(outbox => outbox.events), 'coordinator.releaseEvents', {});
 	}
 	acknowledgeReleaseEvent(id: string): Promise<void> {
-		return this.run(
-			DurableStorage.use(storage => storage.remove(Keys.releaseEvent, id)),
-			'coordinator.acknowledgeReleaseEvent',
-			{ executionId: id },
-		);
+		return this.run(ReleaseEventOutbox.use(outbox => outbox.acknowledge(id)), 'coordinator.acknowledgeReleaseEvent', {
+			executionId: id,
+		});
 	}
 	releaseOperations(preparationId: string, workflowId: string): Promise<ReleaseOperation[]> {
 		return this.run(
@@ -1493,7 +1414,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	private hasAdvanceWork(
 		execution: Execution,
 		unresolved: (execution: Execution) => boolean,
-		history: CoordinatorEffect<ReleaseHistory, DomainError>,
 	): CoordinatorEffect<boolean, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (
@@ -1503,7 +1423,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (yield* (yield* PublicationLedger).owesReceipts(execution)) return true;
 			return execution.state === 'succeeded'
 				&& ((yield* pendingContinuations(execution)).length > 0
-					|| (yield* this.releaseGroup(execution, history)) !== undefined);
+					|| (yield* (yield* ReleaseEventOutbox).owed(execution)));
 		});
 	}
 	private advance(
@@ -1542,7 +1462,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			if (execution.state === 'succeeded') {
 				if ((yield* continuationsOf(execution)).length) yield* putExecution(execution);
-				else yield* this.captureReleaseEvent(execution);
+				else yield* (yield* ReleaseEventOutbox).capture(execution);
 			}
 			if (!active.includes(execution) || execution.state === 'pending') return 'continue' as const;
 			if (execution.state === 'awaiting-approval') return yield* (yield* ApprovalGate).review(execution, executions);
@@ -1589,10 +1509,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			}
 			const releaseHistory = new ReleaseHistory(journal.executions);
 			yield* (yield* ReconcileHistory).set(releaseHistory);
-			const history = Effect.succeed(releaseHistory);
 			for (const execution of executions) {
 				if (onlyExecution ? execution.id !== onlyExecution : Boolean(execution.releaseSet?.workflowId)) continue;
-				const work = yield* Effect.result(this.hasAdvanceWork(execution, unresolved, history));
+				const work = yield* Effect.result(this.hasAdvanceWork(execution, unresolved));
 				if (work._tag === 'Success' && !work.success) continue;
 				if (yield* this.suspended(execution.repositoryId)) return;
 				if (work._tag === 'Failure') {

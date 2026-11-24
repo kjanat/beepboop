@@ -117,3 +117,13 @@ test('an invalid repository configuration receives no delivery', async () => {
 	expect(await deliveryRows()).toEqual([]);
 	expect(await world.run(delivery.events.event(release.id))).toEqual(release);
 });
+
+test('the scheduled sweep delivers an outbox release event before it acknowledges it', async () => {
+	const { repository } = await follower();
+	const coordinator = world.coordinators.instance(String(repository.id));
+	await coordinator.storage.put(`release-event:${release.id}`, release);
+	await world.run(Automation.use(service => service.scheduled));
+	expect(await coordinator.object.releaseEvents()).toEqual([]);
+	expect(await world.run(new ReleaseEvents(sql(world.db)).event(release.id))).toEqual(release);
+	expect(await deliveryRows()).toMatchObject([{ state: 'delivered', error: null }]);
+});
