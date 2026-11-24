@@ -7,11 +7,12 @@ import { decodeSync, looseStruct } from '@/kernel/schema/structs.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
 import type { InboxEntry, Observation } from '@/release/adapters/do/keys.ts';
 import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
-import type { RetryQueue } from '@/release/services/coordinator/retry-queue.ts';
 import {
 	AuditTrail,
 	InboxQueue,
+	inboxPolicy,
 	ObserveQueue,
+	RetryQueue,
 	TrackQueue,
 	trackLater,
 } from '@/release/services/coordinator/retry-queue.ts';
@@ -49,6 +50,7 @@ const refusal = precondition('not ready');
 function written(memory: MemoryStorage): string {
 	return JSON.stringify([...memory.snapshot()]);
 }
+const queuedRun: Observation = { repositoryId: 1, runId: 7 };
 const inboxEntry: InboxEntry = {
 	delivery: 'd',
 	repositoryId: 1,
@@ -133,7 +135,15 @@ for (const [name, key, interval] of [['observe', 'observe', 60_000], ['track', '
 			attempts: 9,
 			error: refusal.message,
 		}]])));
-		expect(memory.snapshot()).toEqual(new Map());
+		expect(memory.snapshot()).toEqual(
+			new Map([[`${key}-dead:7`, {
+				repositoryId: 1,
+				runId: 7,
+				due: 10 * interval,
+				attempts: 10,
+				error: refusal.message,
+			}]]),
+		);
 		expect(audited).toEqual([[`${name}.dead`, `run 7 after 10 attempts: ${refusal.message}`, `${name}.audit-failed`]]);
 	});
 }
@@ -158,15 +168,77 @@ test('a run that is still going is tracked again thirty seconds later, and an un
 	]));
 });
 
-test('a handled inbox entry whose removal fails counts as a failed attempt', async () => {
+const storageReset = new Error('storage reset');
+
+function failOnce(memory: MemoryStorage, method: 'put' | 'delete'): void {
+	spyOn(memory, method).mockImplementationOnce(async () => {
+		throw storageReset;
+	});
+}
+
+test('a handled entry whose acknowledgement fails stays queued without counting as a failed attempt', async () => {
+	for (const [method, handled] of [['delete', undefined], ['put', trackLater(queuedRun, 0)]] as const) {
+		const memory = new MemoryStorage();
+		await memory.put('track:7', queuedRun);
+		failOnce(memory, method);
+		const audited: Audited[] = [];
+		const exit = await run(memory, audited, TrackQueue.use(queue => queue.drain(0, () => Effect.succeed(handled))));
+		expect(Exit.isFailure(exit)).toBe(true);
+		expect([...memory.snapshot()]).toEqual([['track:7', queuedRun]]);
+		expect(audited).toEqual([]);
+	}
+});
+
+test('a failed retry write leaves the entry and its attempt count as they were', async () => {
 	const memory = new MemoryStorage();
 	await memory.put('inbox:d', inboxEntry);
-	spyOn(memory, 'delete').mockImplementationOnce(async () => {
-		throw new Error('storage reset');
-	});
+	failOnce(memory, 'put');
 	const audited: Audited[] = [];
-	const exit = await run(memory, audited, InboxQueue.use(inbox => inbox.drain(0, () => Effect.undefined)));
-	expect(exit).toEqual(Exit.void);
-	expect([...memory.snapshot().keys()]).toEqual(['inbox-dead:d']);
-	expect(audited.map(([action]) => action)).toEqual(['inbox.dead']);
+	const exit = await run(memory, audited, InboxQueue.use(inbox => inbox.drain(0, () => Effect.fail(outage))));
+	expect(Exit.isFailure(exit)).toBe(true);
+	expect([...memory.snapshot()]).toEqual([['inbox:d', inboxEntry]]);
+	expect(audited).toEqual([]);
+});
+
+test('a failed dead-letter write keeps the entry queued and unaudited', async () => {
+	const memory = new MemoryStorage();
+	await memory.put('inbox:d', inboxEntry);
+	failOnce(memory, 'put');
+	const audited: Audited[] = [];
+	const exit = await run(memory, audited, InboxQueue.use(inbox => inbox.drain(0, () => Effect.fail(refusal))));
+	expect(Exit.isFailure(exit)).toBe(true);
+	expect([...memory.snapshot()]).toEqual([['inbox:d', inboxEntry]]);
+	expect(audited).toEqual([]);
+});
+
+test('a failed terminal removal keeps the dead letter and leaves the entry queued', async () => {
+	const memory = new MemoryStorage();
+	await memory.put('inbox:d', inboxEntry);
+	failOnce(memory, 'delete');
+	const audited: Audited[] = [];
+	const exit = await run(memory, audited, InboxQueue.use(inbox => inbox.drain(0, () => Effect.fail(refusal))));
+	expect(Exit.isFailure(exit)).toBe(true);
+	expect([...memory.snapshot().keys()]).toEqual(['inbox-dead:d', 'inbox:d']);
+	expect(audited).toEqual([]);
+});
+
+test('a queue leaves the alarm planner when its scope closes', async () => {
+	const memory = new MemoryStorage();
+	await memory.put('inbox:d', { ...inboxEntry, due: 5_000 });
+	const exit = await Effect.runPromiseExit(
+		Effect.gen(function*() {
+			const planner = yield* AlarmPlanner;
+			const before = yield* planner.nextAlarm;
+			yield* Effect.scoped(Effect.gen(function*() {
+				yield* RetryQueue.make(inboxPolicy);
+				expect(yield* planner.nextAlarm).toBe(5_000);
+			}));
+			return [before, yield* planner.nextAlarm];
+		}).pipe(Effect.provide(
+			Layer.mergeAll(AlarmPlanner.layer, Layer.succeed(AuditTrail, { record: () => Effect.void })).pipe(
+				Layer.provideMerge(DurableStorage.layer(memory)),
+			),
+		)),
+	);
+	expect(exit).toEqual(Exit.succeed([undefined, undefined]));
 });

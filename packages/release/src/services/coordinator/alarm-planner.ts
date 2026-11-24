@@ -1,3 +1,4 @@
+import type { Scope } from 'effect';
 import { Clock, Context, Effect, Layer, Ref } from 'effect';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { Journal } from '@/persistence/durable/journal.ts';
@@ -29,7 +30,7 @@ export function queueSource<A>(
 }
 
 export class AlarmPlanner extends Context.Service<AlarmPlanner, {
-	readonly register: (source: DueSource) => Effect.Effect<void>;
+	readonly register: (source: DueSource) => Effect.Effect<void, never, Scope.Scope>;
 	readonly nextAlarm: Effect.Effect<number | undefined, DomainError>;
 	readonly arm: (at: number | undefined) => Effect.Effect<void, DomainError>;
 	readonly reschedule: Effect.Effect<void, DomainError>;
@@ -56,7 +57,11 @@ export class AlarmPlanner extends Context.Service<AlarmPlanner, {
 				return earliest(times);
 			});
 			return AlarmPlanner.of({
-				register: source => Ref.update(sources, registered => [...registered, source]),
+				register: source =>
+					Effect.acquireRelease(
+						Ref.update(sources, registered => [...registered, source]),
+						() => Ref.update(sources, registered => registered.filter(entry => entry !== source)),
+					),
 				nextAlarm,
 				arm: Effect.fnUntraced(function*(at: number | undefined) {
 					if (at === undefined) return;

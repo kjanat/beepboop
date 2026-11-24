@@ -67,6 +67,8 @@ export const Keys = {
 	subscriptionIssue: Keyspace.make('subscription-issue:', decoder(marker)),
 	observe: Keyspace.make('observe:', decoder(observation)),
 	track: Keyspace.make('track:', decoder(observation)),
+	observeDead: Keyspace.make('observe-dead:', decoder(observation)),
+	trackDead: Keyspace.make('track-dead:', decoder(observation)),
 	inbox: Keyspace.make('inbox:', decoder(inboxEntry)),
 	inboxDead: Keyspace.make('inbox-dead:', decoder(inboxEntry)),
 	quarantine: Keyspace.make('quarantine:', decoder(quarantine)),
