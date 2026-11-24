@@ -567,13 +567,13 @@ pre {
 .grant-row form {
 	flex-shrink: 0;
 }
-.revealed:empty {
-	display: none;
-}
 .revealed {
 	font-family: monospace;
 	overflow-wrap: anywhere;
 	max-width: 100%;
+}
+.revealed:empty {
+	display: none;
 }
 dl {
 	display: grid;
