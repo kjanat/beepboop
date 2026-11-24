@@ -503,7 +503,12 @@ function drafted(
 						operation === 'prepare' && !resolved?.streams[selection.name]?.prepare.workflow
 						&& !object(object(current.prepare).workflow).file
 					) {
-						if (selected.length && snapshot.paths.some(isLockfile)) {
+						const promote = selection.promote;
+						const tagged = selection.versionSource?.kind === 'tags' && promote !== undefined
+							&& (promote.binaries !== undefined || promote.tagPrefix !== undefined
+								|| selection.actionRelease !== undefined
+								|| object(object(object(current.promote).workflow).refs).phase === 'version');
+						if (!tagged && selected.length && snapshot.paths.some(isLockfile)) {
 							blockers.push(`${selection.name}: select a preparation workflow to regenerate lockfiles.`);
 						}
 						const versionFiles = selection.versionFiles
@@ -514,7 +519,10 @@ function drafted(
 						if (strategy === 'workflow') {
 							blockers.push(`${selection.name}: select a preparation workflow for the configured workflow strategy.`);
 						}
-						if (selected.length && !versionsInFiles({ ...inventory, packages: selected }) && !versionFiles.length) {
+						if (
+							!tagged && selected.length && !versionsInFiles({ ...inventory, packages: selected })
+							&& !versionFiles.length
+						) {
 							blockers.push(
 								`${selection.name}: select a preparation workflow; managed preparation needs a version stored in a file.`,
 							);
