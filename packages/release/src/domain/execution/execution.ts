@@ -246,6 +246,11 @@ export function settleRun(execution: Execution, result: GitHubRunResult): Execut
 	}
 	return settled;
 }
+export function reopened(publications: Publication[]): Publication[] {
+	return publications.map(publication =>
+		publication.outcome === 'succeeded' ? publication : { ...publication, outcome: 'pending' as const }
+	);
+}
 export function recoverable(execution: Execution): boolean {
 	return execution.state === 'failed' || (execution.state === 'cancelled' && execution.cancelledBy === undefined);
 }
