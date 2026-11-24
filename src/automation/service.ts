@@ -4,7 +4,6 @@ import type { CLISessionStore } from '@/auth/adapters/d1/cli-sessions.ts';
 import type { SessionStore } from '@/auth/adapters/d1/sessions.ts';
 import type { AuthBindings, AuthenticationDependencies } from '@/auth/service.ts';
 import { Authentication, authentication } from '@/auth/service.ts';
-import type { AutomationCoordinator } from '@/automation/coordinator';
 import { CoordinatorClient } from '@/automation/coordinator-client.ts';
 import type { Credentials } from '@/automation/gateway.ts';
 import { RepositoryGateway } from '@/automation/gateway.ts';
@@ -84,6 +83,7 @@ import {
 	releasePaths,
 	unreleasedManifestVersion,
 } from '@/release/domain/version.ts';
+import type { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
 import { releaseAfterMerge } from '@/setup/body.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
 import { inferredConfiguration } from '@/setup/draft.ts';

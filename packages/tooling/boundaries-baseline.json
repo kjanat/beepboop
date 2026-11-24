@@ -200,6 +200,98 @@
 		"specifier": "@/server/handlers/kit"
 	},
 	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/alarm.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/approval-gate.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/dispatcher.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/execution-control.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/github-releases.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/inbox.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/managed-preparation.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/preparation-writer.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/publication-recheck.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/reconciler.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/ref-publication.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/release-commits.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/release-event-outbox.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/release-sets.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/release-workflow-launcher.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/run-callbacks.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/run-observation.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/service"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/setup-edits.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/automation/tag-signing.ts"
+	},
+	{
+		"file": "packages/server/src/durable/automation-coordinator.ts",
+		"specifier": "@/contract/views"
+	},
+	{
+		"file": "packages/server/src/durable/release-workflow.ts",
+		"specifier": "@/automation/coordinator-client.ts"
+	},
+	{
+		"file": "packages/server/src/durable/release-workflow.ts",
+		"specifier": "@/automation/release-workflow-driver.ts"
+	},
+	{
 		"file": "packages/setup/src/server/maintenance.ts",
 		"specifier": "@/automation/gateway.ts"
 	},

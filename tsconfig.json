@@ -18,7 +18,8 @@
 			"@/publication/*": ["./packages/publication/src/*"],
 			"@/actions/*": ["./packages/actions/src/*"],
 			"@/setup/*": ["./packages/setup/src/*"],
-			"@/release/*": ["./packages/release/src/*"]
+			"@/release/*": ["./packages/release/src/*"],
+			"@/server/*": ["./packages/server/src/*", "./src/server/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",

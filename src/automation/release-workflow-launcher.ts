@@ -1,7 +1,7 @@
 import { Context, Effect, Layer } from 'effect';
-import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import type { ReleaseWorkflowParams } from '@/server/durable/release-workflow.ts';
 
 export interface ReleaseWorkflowInstance {
 	readonly status: Effect.Effect<InstanceStatus['status'], DomainError>;

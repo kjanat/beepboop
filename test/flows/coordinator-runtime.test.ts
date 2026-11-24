@@ -3,7 +3,7 @@ import { durableObjectState } from '@root/test/support/do-storage.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Layer } from 'effect';
-import { AutomationCoordinator } from '@/automation/coordinator';
+import { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
 
 let world: World;
 eachWorld(created => {

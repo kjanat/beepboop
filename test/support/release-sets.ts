@@ -4,8 +4,8 @@ import type { Repository, Run } from '@root/test/support/github.ts';
 import { dispatchedPublishWorkflow, passChecks } from '@root/test/support/repositories.ts';
 import type { WorkflowRecord } from '@root/test/support/workflows.ts';
 import type { World } from '@root/test/support/world.ts';
-import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { routes } from '@/contract/routes';
+import type { ReleaseWorkflowParams } from '@/server/durable/release-workflow.ts';
 
 const buildThenPromote = [{ id: 'build', group: 'widget' }, { id: 'promote', group: 'widget', needs: ['build'] }];
 
