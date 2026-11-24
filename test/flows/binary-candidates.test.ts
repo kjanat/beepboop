@@ -133,6 +133,8 @@ test('a package-level main.version that -X cannot set is reported with its type,
 		['const true = "dev"\nvar version = true', undefined],
 		['var (\n\tfalse = "dev"\n)\nvar version = false', undefined],
 		['type bool = string\nvar version = true', { kind: 'var', type: 'bool' }],
+		['type chanñ = string\nvar version chanñ', undefined],
+		['var version = ñ{}', { kind: 'var', type: 'ñ' }],
 	];
 	for (const [source, expected] of cases) {
 		expect([source, unsettableVersion([['main.go', `package main\n\n${source}\n`]])]).toEqual([
@@ -204,6 +206,10 @@ test('Go files outside the main package build do not decide main.version, and al
 		['var version int', 'shadow.go', 'type\nint = string'],
 		['var version = true', 'shadow.go', 'var\ntrue = "dev"'],
 		['var version = false', 'shadow.go', 'const\n(\n\tfalse = "dev"\n)'],
+		['var version = true', 'shadow.go', 'var ñvar = 1\nvar x = ñvar\nconst true = "dev"'],
+		['var version = true', 'shadow.go', 'var xñ = 1\nvar y = xñ\nconst true = "dev"'],
+		['var version = true', 'shadow.go', 'var éif = 1\nvar z = éif\nconst true = "dev"'],
+		['var version = true', 'shadow.go', 'const ñ, true = "a", "dev"'],
 	];
 	for (const [version, file, declaration] of shadows) {
 		expect([

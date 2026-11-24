@@ -31,14 +31,15 @@ function split(text: string, ends: (char: string, current: string) => boolean): 
 }
 
 const keywordEnd =
-	/(?<![\w.])(?:case|chan|const|default|defer|else|for|func|go|goto|if|import|interface|map|package|range|select|struct|switch|type|var)\s*$/;
+	/(?<![\p{L}\p{Nd}_.])(?:case|chan|const|default|defer|else|for|func|go|goto|if|import|interface|map|package|range|select|struct|switch|type|var)\s*$/u;
 
 const statements = (text: string) =>
 	split(
 		text,
 		(char, current) =>
 			char === ';'
-			|| char === '\n' && /(?:[\w"')\]}]|(?<![\w.])\d+\.)\s*$/.test(current) && !keywordEnd.test(current),
+			|| char === '\n' && /(?:[\p{L}\p{Nd}_"')\]}]|(?<![\p{L}\p{Nd}_.])\d+\.)\s*$/u.test(current)
+				&& !keywordEnd.test(current),
 	);
 
 function specs(statement: string, keyword: string): string[] {
@@ -47,7 +48,7 @@ function specs(statement: string, keyword: string): string[] {
 }
 
 function literalType(value: string): string | undefined {
-	const composite = /^(&?)\s*((?:\[[^\]]*\]|map\[[^\]]*\]|\*)*[A-Za-z_][\w.]*)\s*\{/.exec(value);
+	const composite = /^(&?)\s*((?:\[[^\]]*\]|map\[[^\]]*\]|\*)*[\p{L}_][\p{L}\p{Nd}_.]*)\s*\{/u.exec(value);
 	if (!composite) return undefined;
 	const [whole, pointer, type] = composite;
 	let depth = 0;
@@ -77,10 +78,13 @@ type Found = { kind: 'const' } | { kind: 'var'; type: string; stated: boolean };
 const unparenthesized = (type: string) => type.trim().replace(/^\(\s*([\s\S]*?)\s*\)$/, '$1');
 
 const specNames = (spec: string) =>
-	/^[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*/.exec(spec)?.[0].split(',').map(name => name.trim()) ?? [];
+	/^[\p{L}_][\p{L}\p{Nd}_]*(?:\s*,\s*[\p{L}_][\p{L}\p{Nd}_]*)*/u.exec(spec)?.[0].split(',').map(name => name.trim())
+		?? [];
 
 function declared(constant: boolean, spec: string, universal: Universal): Found | undefined {
-	const parsed = /^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*([^=]*?)\s*(?:=\s*([\s\S]*))?$/.exec(spec);
+	const parsed = /^([\p{L}_][\p{L}\p{Nd}_]*(?:\s*,\s*[\p{L}_][\p{L}\p{Nd}_]*)*)\s*([^=]*?)\s*(?:=\s*([\s\S]*))?$/u.exec(
+		spec,
+	);
 	const index = specNames(spec).indexOf('version');
 	if (index < 0) return undefined;
 	if (constant) return { kind: 'const' };
@@ -145,7 +149,9 @@ function constrainedName(file: string): boolean {
 }
 
 const importsC = (list: readonly string[]) =>
-	list.some(statement => /^import\b/.test(statement) && specs(statement, 'import').some(spec => spec.endsWith('"C"')));
+	list.some(statement =>
+		/^import(?![\p{L}\p{Nd}_])/u.test(statement) && specs(statement, 'import').some(spec => spec.endsWith('"C"'))
+	);
 
 function built(file: string, list: readonly string[], source: string): boolean {
 	return !constrainedName(file) && !/^\s*\/\/(?:go:build|\s*\+build)\s/m.test(source)
@@ -154,7 +160,7 @@ function built(file: string, list: readonly string[], source: string): boolean {
 
 function declaration(list: readonly string[], universal: Universal): Found | undefined {
 	for (const statement of list) {
-		const keyword = /^(?:var|const)\b/.exec(statement)?.[0];
+		const keyword = /^(?:var|const)(?![\p{L}\p{Nd}_])/u.exec(statement)?.[0];
 		const found = keyword
 			? specs(statement, keyword).map(spec => declared(keyword === 'const', spec, universal)).find(Boolean)
 			: undefined;
@@ -169,9 +175,9 @@ interface TypeDeclaration {
 }
 function typeDeclarations(list: readonly string[]): [string, TypeDeclaration][] {
 	return list.flatMap(statement =>
-		/^type\b/.test(statement)
+		/^type(?![\p{L}\p{Nd}_])/u.test(statement)
 			? specs(statement, 'type').flatMap((spec): [string, TypeDeclaration][] => {
-				const match = /^([A-Za-z_]\w*)\s*(=?)\s*([\s\S]+)$/.exec(spec);
+				const match = /^([\p{L}_][\p{L}\p{Nd}_]*)\s*(=?)\s*([\s\S]+)$/u.exec(spec);
 				return match?.[1] && match[3] ? [[match[1], { alias: match[2] === '=', target: match[3] }]] : [];
 			})
 			: []
@@ -181,7 +187,7 @@ function typeDeclarations(list: readonly string[]): [string, TypeDeclaration][] 
 function packageNames(list: readonly string[]): string[] {
 	return [
 		...list.flatMap(statement => {
-			const keyword = /^(?:var|const)\b/.exec(statement)?.[0];
+			const keyword = /^(?:var|const)(?![\p{L}\p{Nd}_])/u.exec(statement)?.[0];
 			return keyword ? specs(statement, keyword).flatMap(specNames) : [];
 		}),
 		...typeDeclarations(list).map(([name]) => name),
@@ -218,7 +224,7 @@ function notString(
 	seen: ReadonlySet<string> = new Set(),
 ): boolean {
 	const name = unparenthesized(type);
-	if (/^(?:\*|\[|map\[|chan\b|<-|func\b|struct\b|interface\b)/.test(name)) return true;
+	if (/^(?:\*|\[|map\[|<-|(?:chan|func|struct|interface)(?![\p{L}\p{Nd}_]))/u.test(name)) return true;
 	const declaration = types.get(name);
 	if (declaration && !seen.has(name)) {
 		return !declaration.alias || notString(declaration.target, types, universal, new Set([...seen, name]));
