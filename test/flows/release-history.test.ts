@@ -1,6 +1,8 @@
 import { expect, spyOn, test } from 'bun:test';
+import { Effect, Exit } from 'effect';
 import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 import { ReleaseHistory } from '@/release/domain/history.ts';
+import { ReconcileHistory } from '@/release/services/coordinator/reconcile-history.ts';
 
 function execution(id: string, version = '1.0.0') {
 	return decodeExecutionV1({
@@ -132,4 +134,38 @@ test('uncommitted caller mutations cannot change cached history membership or re
 	if (!publication) throw new Error('Missing fixture publication');
 	publication.outcome = 'failed';
 	expect(history.completed(member, ['pkg:npm/widget'])?.[0]?.publications[0]?.outcome).toBe('succeeded');
+});
+
+test('a reconcile history records committed executions only while a reconcile holds one', async () => {
+	const member = execution('member');
+	const published = {
+		...member,
+		publications: [{
+			id: 'pkg:npm/widget',
+			manager: 'npm' as const,
+			name: 'widget',
+			version: '1.0.0',
+			required: true,
+			outcome: 'succeeded' as const,
+		}],
+	};
+	const committed = (value: unknown) => [{ entity: 'execution' as const, id: 'member', repositoryId: 1, value }];
+	const history = new ReleaseHistory([member]);
+
+	const exit = await Effect.runPromiseExit(
+		Effect.gen(function*() {
+			const active = yield* ReconcileHistory;
+			yield* active.record(committed({ broken: true }));
+			const idle = yield* active.current;
+			yield* active.set(history);
+			yield* active.record([...committed(published), { entity: 'release', id: 'r', repositoryId: 1, value: {} }]);
+			const held = yield* active.current;
+			const refused = yield* Effect.exit(active.record(committed({ broken: true })));
+			yield* active.set(undefined);
+			return { idle, held, refused: Exit.isFailure(refused), cleared: yield* active.current };
+		}).pipe(Effect.provide(ReconcileHistory.layer)),
+	);
+
+	expect(exit).toEqual(Exit.succeed({ idle: undefined, held: history, refused: true, cleared: undefined }));
+	expect(history.completed(member, ['pkg:npm/widget'])?.map(entry => entry.id)).toEqual(['member']);
 });
