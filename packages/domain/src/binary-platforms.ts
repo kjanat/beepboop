@@ -133,11 +133,15 @@ export function candidateOf(
 	candidates: readonly BinaryCandidate[] | undefined,
 	build: BinaryBuild,
 ): BinaryCandidate | undefined {
+	const same = (a: string, b: string) => directoryPath(a) === directoryPath(b);
 	return candidates?.find(({ build: found }) =>
 		found.toolchain === 'go'
-			? build.toolchain === 'go' && found.module === build.module && found.package === build.package
-			: build.toolchain === 'cargo' && found.manifest === build.manifest && found.name === build.name
+			? build.toolchain === 'go' && same(found.module, build.module) && same(found.package, build.package)
+			: build.toolchain === 'cargo' && same(found.manifest, build.manifest) && found.name === build.name
 	);
+}
+function directoryPath(path: string): string {
+	return path.split('/').filter(part => part && part !== '.').join('/');
 }
 export function configured(builds: readonly BinaryBuild[], candidate: BinaryCandidate): boolean {
 	return builds.some(build => build.name === candidate.build.name || candidateOf([candidate], build) !== undefined);

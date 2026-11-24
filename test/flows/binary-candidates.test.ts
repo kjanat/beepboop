@@ -4,8 +4,8 @@ import { binaryCandidates, goMainSources, unixDependencies } from '@/discovery/a
 import { unsettableVersion } from '@/discovery/analysis/go-version.ts';
 import { discover } from '@/discovery/discover.ts';
 import { buildSnapshot } from '@/discovery/snapshot/builder.ts';
-import type { VersionDeclaration } from '@/domain/binary-platforms.ts';
-import { leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
+import type { BinaryBuild, BinaryCandidate, VersionDeclaration } from '@/domain/binary-platforms.ts';
+import { candidateOf, leftOut, supportedTargets } from '@/domain/binary-platforms.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 
@@ -209,6 +209,31 @@ test('a Go binary names the file that declares an unsettable main.version', () =
 		binaryCandidates(source, discover(source)).map(candidate => [candidate.build.name, candidate.unsettableVersion]),
 	)
 		.toEqual([['tool', { kind: 'const', file: 'cmd/tool/version.go' }], ['other', undefined]]);
+});
+
+test('a configured build finds its candidate whether its paths start with ./ or not', () => {
+	const goBuild: Extract<BinaryBuild, { toolchain: 'go' }> = {
+		toolchain: 'go',
+		name: 'signer',
+		module: 'client',
+		package: './cmd/signer',
+		asset: '{name}',
+	};
+	const cargoBuild: Extract<BinaryBuild, { toolchain: 'cargo' }> = {
+		toolchain: 'cargo',
+		name: 'tool',
+		manifest: 'a/Cargo.toml',
+		asset: '{name}',
+	};
+	const go: BinaryCandidate = { package: 'pkg:golang/example/client', build: goBuild, targets: [] };
+	const cargo: BinaryCandidate = { package: 'pkg:cargo/a', build: cargoBuild, targets: [] };
+	expect([
+		candidateOf([go, cargo], { ...goBuild, module: './client' }),
+		candidateOf([go, cargo], { ...goBuild, module: './client/', package: './cmd/./signer' }),
+		candidateOf([go, cargo], { ...cargoBuild, manifest: './a/Cargo.toml' }),
+		candidateOf([go, cargo], { ...goBuild, module: 'client2' }),
+		candidateOf([go, cargo], { ...cargoBuild, manifest: 'b/Cargo.toml' }),
+	]).toEqual([go, go, cargo, undefined, undefined]);
 });
 
 test('the snapshot reads Go sources of main packages within the discovery file limit', async () => {
