@@ -7,6 +7,7 @@ import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/domain/versio
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 
 /** A Go module publishes a version by its own tag, such as `go/v1.2.3` for the module in `go/`. */
 function moduleTags(packages: readonly Package[], references: string[]): ModuleTag[] {
@@ -151,4 +152,7 @@ export function refsLanded(
 				)
 			),
 	}));
+}
+export function releaseCommit(execution: Execution): string {
+	return execution.refPlan?.distribution?.commit ?? execution.refPlan?.changes[0]?.commit ?? execution.sourceSha;
 }
