@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
-import type { BinaryProgress, PackageTagPage, StreamGates } from '@/contract/views';
-import { approvalReadiness, binaryProgress, packageTagPage, streamGates } from '@/contract/views';
+import type { BinaryProgress, ExecutionStateView, PackageTagPage, StreamGates } from '@/contract/views';
+import { approvalReadiness, binaryProgress, executionStates, packageTagPage, streamGates } from '@/contract/views';
 import type { Edit } from '@/domain/inventory.ts';
 import type { RefPlan, RefState } from '@/domain/refs.ts';
 import type { CheckChoice } from '@/domain/release-gates.ts';
@@ -30,6 +30,8 @@ import type {
 	PreparationResult,
 	PreparedRelease,
 } from '@/release/domain/execution/types.ts';
+import type { ReleaseOperation } from '@/release/domain/release-set.ts';
+import { releaseOperationsSchema } from '@/release/domain/release-set.ts';
 import type { SetupEdit } from '@/setup/types.ts';
 
 export interface CoordinatorRpc {
@@ -90,9 +92,16 @@ export interface CoordinatorRpc {
 	releaseEvents(): Promise<unknown>;
 	acknowledgeReleaseEvent(id: string): Promise<unknown>;
 	startReleaseSet(preparationId: string, target: string): Promise<unknown>;
+	releaseOperations(preparationId: string, workflowId: string): Promise<unknown>;
+	reservePublication(preparationId: string, workflowId: string, id: string): Promise<unknown>;
+	operationDelay(preparationId: string, workflowId: string, id: string): Promise<unknown>;
+	advanceReleaseOperation(preparationId: string, workflowId: string, id: string): Promise<unknown>;
+	releaseWorkflowInterrupted(preparationId: string, workflowId: string): Promise<unknown>;
+	completeReleaseWorkflow(preparationId: string, workflowId: string): Promise<unknown>;
 }
 
 const strings = mutableArray(Schema.String);
+const executionState = Schema.Literals(executionStates);
 const executions = mutableArray(executionSchema);
 
 export class CoordinatorClient extends Context.Service<CoordinatorClient, {
@@ -228,6 +237,39 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 		preparationId: string,
 		target: string,
 	) => Effect.Effect<Execution[], DomainError>;
+	readonly releaseOperations: (
+		repositoryId: number,
+		preparationId: string,
+		workflowId: string,
+	) => Effect.Effect<ReleaseOperation[], DomainError>;
+	readonly reservePublication: (
+		repositoryId: number,
+		preparationId: string,
+		workflowId: string,
+		id: string,
+	) => Effect.Effect<number, DomainError>;
+	readonly operationDelay: (
+		repositoryId: number,
+		preparationId: string,
+		workflowId: string,
+		id: string,
+	) => Effect.Effect<number, DomainError>;
+	readonly advanceReleaseOperation: (
+		repositoryId: number,
+		preparationId: string,
+		workflowId: string,
+		id: string,
+	) => Effect.Effect<ExecutionStateView, DomainError>;
+	readonly releaseWorkflowInterrupted: (
+		repositoryId: number,
+		preparationId: string,
+		workflowId: string,
+	) => Effect.Effect<void, DomainError>;
+	readonly completeReleaseWorkflow: (
+		repositoryId: number,
+		preparationId: string,
+		workflowId: string,
+	) => Effect.Effect<void, DomainError>;
 }>()('beepboop/automation/CoordinatorClient') {
 	static layer(coordinator: (repositoryId: number) => CoordinatorRpc): Layer.Layer<CoordinatorClient> {
 		const call = <S extends Schema.ConstraintDecoder<unknown>>(
@@ -299,6 +341,18 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 			acknowledgeReleaseEvent: (repositoryId, id) => send(repositoryId, rpc => rpc.acknowledgeReleaseEvent(id)),
 			startReleaseSet: (repositoryId, preparationId, target) =>
 				call(executions, repositoryId, rpc => rpc.startReleaseSet(preparationId, target)),
+			releaseOperations: (repositoryId, preparationId, workflowId) =>
+				call(releaseOperationsSchema, repositoryId, rpc => rpc.releaseOperations(preparationId, workflowId)),
+			reservePublication: (repositoryId, preparationId, workflowId, id) =>
+				call(Schema.Finite, repositoryId, rpc => rpc.reservePublication(preparationId, workflowId, id)),
+			operationDelay: (repositoryId, preparationId, workflowId, id) =>
+				call(Schema.Finite, repositoryId, rpc => rpc.operationDelay(preparationId, workflowId, id)),
+			advanceReleaseOperation: (repositoryId, preparationId, workflowId, id) =>
+				call(executionState, repositoryId, rpc => rpc.advanceReleaseOperation(preparationId, workflowId, id)),
+			releaseWorkflowInterrupted: (repositoryId, preparationId, workflowId) =>
+				send(repositoryId, rpc => rpc.releaseWorkflowInterrupted(preparationId, workflowId)),
+			completeReleaseWorkflow: (repositoryId, preparationId, workflowId) =>
+				send(repositoryId, rpc => rpc.completeReleaseWorkflow(preparationId, workflowId)),
 		});
 	}
 }

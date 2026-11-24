@@ -7,7 +7,6 @@ import { PreparationWriter } from '@/automation/preparation-writer.ts';
 import type { PublishBudget } from '@/automation/publish-budget';
 import { RefPublication } from '@/automation/ref-publication.ts';
 import { ReleaseCommits } from '@/automation/release-commits.ts';
-import type { ReleaseOperation } from '@/automation/release-sets.ts';
 import { ReleaseSets } from '@/automation/release-sets.ts';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { ReleaseWorkflowLauncher } from '@/automation/release-workflow-launcher.ts';
@@ -116,6 +115,7 @@ import { observedVersion, placeholderVersion } from '@/release/domain/planning/m
 import { landsByCommit, preparationRequest } from '@/release/domain/preparation-request.ts';
 import { referenceProbe } from '@/release/domain/reference-probe.ts';
 import { refsRequest } from '@/release/domain/refs-request.ts';
+import type { ReleaseOperation } from '@/release/domain/release-set.ts';
 import { manifestProblems } from '@/release/domain/version.ts';
 import { AlarmPlanner, reconcileInterval } from '@/release/services/coordinator/alarm-planner.ts';
 import { Background } from '@/release/services/coordinator/background.ts';

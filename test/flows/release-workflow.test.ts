@@ -4,7 +4,7 @@ import { finish, lastRun, loaded, publish, releaseSet } from '@root/test/support
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import { roundName, untilSlotHeld } from '@/automation/release-workflow';
+import { roundName, untilSlotHeld } from '@/automation/release-workflow-driver.ts';
 import { routes } from '@/contract/routes';
 
 let world: World;
