@@ -1,4 +1,4 @@
-import { object } from '@/automation/managers/helpers';
+import { object } from '@/discovery/managers/manifest-editing.ts';
 
 export const ownerId = 6353477;
 export const ownerLogin = 'octo';
@@ -224,7 +224,9 @@ export class FakeGitHub {
 						...(entry.type === 'blob' ? { size: Buffer.byteLength(repository.blobs.get(entry.sha) ?? '') } : {}),
 					});
 				}
-				if (slash >= 0) directories.add(path.slice(0, slash));
+				const parents = path.split('/').slice(0, -1);
+				const depth = url.searchParams.has('recursive') ? parents.length : Math.min(parents.length, 1);
+				for (let index = 1; index <= depth; index++) directories.add(parents.slice(0, index).join('/'));
 			}
 			for (const path of directories) {
 				const prefix = `${path}/`;

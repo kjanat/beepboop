@@ -1,9 +1,8 @@
 import { expect, test } from 'bun:test';
 import { widgetConfiguration } from '@root/test/support/repositories.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
-import { companionProposals } from '@/automation/companion-detection';
-import { createExecution } from '@/automation/execution';
-import type { SetupChoices } from '@/automation/setup-types';
+import { companionProposals } from '@/discovery/analysis/companions.ts';
+import { validateAgainst } from '@/discovery/validation/validate.ts';
 import { binaries } from '@/domain/binary-platforms.ts';
 import { parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
@@ -11,9 +10,7 @@ import type { Inventory, Package, RepositoryRecord, Snapshot } from '@/domain/in
 import { packageId } from '@/domain/package-identity.ts';
 import { registry } from '@/domain/package-publication.ts';
 import type { RefPolicy } from '@/domain/refs.ts';
-import { planRefs, refsLanded, streamModuleTagPrefixes } from '@/domain/refs.ts';
 import { requireReady } from '@/domain/repository';
-import { validateAgainst } from '@/domain/validate';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -28,6 +25,9 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
+import { createExecution } from '@/release/domain/execution/execution.ts';
+import { planRefs, refsLanded, streamModuleTagPrefixes } from '@/release/domain/refs.ts';
+import type { SetupChoices } from '@/setup/types.ts';
 
 const commit = 'a'.repeat(40);
 const policy: RefPolicy = { phase: 'version', prefix: 'rshellcheck-v', aliases: [], signed: false };

@@ -5,17 +5,15 @@ import { applySetup } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import type { SnapshotSource } from '@/automation/github';
-import { discover } from '@/automation/managers';
-import { adoptionChoices, adoptionMarkdown } from '@/automation/release-graph/adoption';
-import type { ReleaseGraph, StreamProposal, Target } from '@/automation/release-graph/graph';
-import { inferReleaseGraph } from '@/automation/release-graph/graph';
-import type { Destination } from '@/automation/release-graph/workflows';
-import { workflowModels } from '@/automation/release-graph/workflows';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import { buildSnapshot } from '@/automation/snapshot';
+import { discover } from '@/discovery/discover.ts';
+import type { ReleaseGraph, StreamProposal, Target } from '@/discovery/release-graph/graph.ts';
+import { inferReleaseGraph } from '@/discovery/release-graph/graph.ts';
+import type { Destination } from '@/discovery/release-graph/workflows.ts';
+import { workflowModels } from '@/discovery/release-graph/workflows.ts';
+import { buildSnapshot } from '@/discovery/snapshot/builder.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
+import type { SnapshotSource } from '@/github/contents.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -30,6 +28,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { adoptionChoices, adoptionMarkdown } from '@/setup/adoption.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
 
 const snapshotSchema = mutableStruct({
 	repository: mutableStruct({ id: Schema.Finite, name: Schema.String, defaultBranch: Schema.String }),
@@ -1138,18 +1138,22 @@ describe('release streams', () => {
 	});
 
 	test('discovers the standalone tag release action as a GitHub release target', () => {
-		const release = plan(inMemory({
-			'go.mod': 'module github.com/octo/tool\n\ngo 1.27.0\n',
-			'.github/workflows/release.yml': [
-				"name: Publish binaries",
-				"on: { push: { tags: ['v*'] } }",
-				'jobs:',
-				'  release:',
-				'    runs-on: ubuntu-latest',
-				'    steps:',
-				'      - uses: kjanat/beepboop/actions/publish-tagged-release@v1',
-			].join('\n'),
-		}, 1, 'octo/tool'));
+		const release = plan(inMemory(
+			{
+				'go.mod': 'module github.com/octo/tool\n\ngo 1.27.0\n',
+				'.github/workflows/release.yml': [
+					'name: Publish binaries',
+					"on: { push: { tags: ['v*'] } }",
+					'jobs:',
+					'  release:',
+					'    runs-on: ubuntu-latest',
+					'    steps:',
+					'      - uses: kjanat/beepboop/actions/publish-tagged-release@v1',
+				].join('\n'),
+			},
+			1,
+			'octo/tool',
+		));
 		expect(target(stream(release.graph, 'main'), 'github-release').operations).toEqual(['release.yml#release']);
 	});
 

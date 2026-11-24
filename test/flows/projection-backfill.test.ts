@@ -3,8 +3,9 @@ import { TestD1 } from '@root/test/support/d1';
 import { Effect } from 'effect';
 import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Store } from '@/automation/store';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { ProjectionStore } from '@/persistence/d1/projection';
+import { projectionRules } from '@/release/adapters/d1/completions.ts';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 
 function execution(id: string, verifying = false) {
 	return {
@@ -129,7 +130,7 @@ test('cold requests repair one bounded tail and refuse partial execution or comp
 test('old writer inserts and higher-revision updates invalidate metadata and stale frontier proofs', async () => {
 	const db = new TestD1();
 	try {
-		const projected = new ProjectionStore(db), store = new Store(db);
+		const projected = new ProjectionStore(db, projectionRules), store = new Store(db);
 		const row = execution('run');
 		expect(decodeExecutionV1(row).state).toBe('awaiting-approval');
 		await Effect.runPromise(
@@ -225,7 +226,7 @@ test('old writers preserve earliest fallback completion time for ready and still
 		delete withoutTime.occurredAt;
 		const document = JSON.stringify(withoutTime);
 		await Effect.runPromise(
-			new ProjectionStore(db).apply([{
+			new ProjectionStore(db, projectionRules).apply([{
 				entity: 'release',
 				id: 'release',
 				repositoryId: 1,

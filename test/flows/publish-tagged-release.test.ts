@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const script = fileURLToPath(new URL('../../actions/publish-tagged-release/publish.sh', import.meta.url));
+const script = fileURLToPath(
+	new URL('../../packages/actions/actions/publish-tagged-release/publish.sh', import.meta.url),
+);
 let directory: string;
 
 beforeEach(() => {
@@ -49,18 +51,21 @@ test('publishes only the exact changelog section and passes each downloaded asse
 		'```',
 		'Notes after the fenced example.',
 	];
-	writeFileSync(join(directory, 'CHANGELOG.md'), [
-		'# Changelog',
-		'',
-		'## [v1x2x3]',
-		'Do not match a similar tag.',
-		'',
-		'## [v1.2.3] — 2026-11-23',
-		...notes,
-		'',
-		'## [v1.2.2]',
-		'Earlier change.',
-	].join('\r\n'));
+	writeFileSync(
+		join(directory, 'CHANGELOG.md'),
+		[
+			'# Changelog',
+			'',
+			'## [v1x2x3]',
+			'Do not match a similar tag.',
+			'',
+			'## [v1.2.3] — 2026-11-23',
+			...notes,
+			'',
+			'## [v1.2.2]',
+			'Earlier change.',
+		].join('\r\n'),
+	);
 	mkdirSync(join(directory, 'build'));
 	writeFileSync(join(directory, 'build/first binary.tgz'), '');
 	writeFileSync(join(directory, 'build/sha256sum.txt'), '');
@@ -106,13 +111,15 @@ test('can generate GitHub notes without publishing assets', () => {
 
 test('rejects invalid release inputs before calling GitHub CLI', () => {
 	writeFileSync(join(directory, 'CHANGELOG.md'), '## [v1.2.2]\nEarlier release.');
-	for (const [env, message] of [
-		[{ RELEASE_CHANGELOG: 'CHANGELOG.md' }, 'Changelog has no notes'],
-		[{ GITHUB_REF_TYPE: 'branch' }, 'requires a tag ref'],
-		[{ RELEASE_ASSET_DIRECTORY: 'build' }, 'Expected a release asset directory'],
-		[{ GH_TOKEN: '' }, 'Missing Beepboop App token'],
-		[{ RELEASE_PRERELEASE: 'true', RELEASE_LATEST: 'true' }, 'A prerelease cannot be marked Latest'],
-	] as const) {
+	for (
+		const [env, message] of [
+			[{ RELEASE_CHANGELOG: 'CHANGELOG.md' }, 'Changelog has no notes'],
+			[{ GITHUB_REF_TYPE: 'branch' }, 'requires a tag ref'],
+			[{ RELEASE_ASSET_DIRECTORY: 'build' }, 'Expected a release asset directory'],
+			[{ GH_TOKEN: '' }, 'Missing Beepboop App token'],
+			[{ RELEASE_PRERELEASE: 'true', RELEASE_LATEST: 'true' }, 'A prerelease cannot be marked Latest'],
+		] as const
+	) {
 		const result = publish(env);
 		expect(result.exitCode).not.toBe(0);
 		expect(result.stdout.toString()).toBe('');

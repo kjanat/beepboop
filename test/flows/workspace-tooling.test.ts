@@ -756,9 +756,9 @@ describe('boundaries', () => {
 			'tsconfig.json': aliases,
 			'schemas/v1.json': '{}\n',
 			'packages/kernel/package.json':
-				'{ "name": "@beepboop/kernel", "files": ["built.js"], "exports": { "./*": "./src/*" }, "dependencies": { "effect": "4", "yaml": "2" } }',
+				'{ "name": "@beepboop/kernel", "files": ["built.js"], "exports": { "./*": "./src/*" }, "dependencies": { "effect": "4", "yaml": "2" }, "devDependencies": { "@types/mdast": "4", "@types/scoped__thing": "1" } }',
 			'packages/kernel/src/a.ts':
-				"import { Effect } from 'effect';\nimport { b } from './b.ts';\nimport { c } from '@/kernel/b.ts';\nimport { join } from 'node:path';\nimport { readFileSync } from 'fs';\nimport { mock } from 'bun:test';\nimport raw from 'yaml?raw';\nimport schema from '@root/schemas/v1.json';\n",
+				"import { Effect } from 'effect';\nimport type { Root } from 'mdast';\nimport { type Point } from 'mdast/position';\nexport type { Root as Tree } from 'mdast';\nimport type { Thing } from '@scoped/thing';\nimport { b } from './b.ts';\nimport { c } from '@/kernel/b.ts';\nimport { join } from 'node:path';\nimport { readFileSync } from 'fs';\nimport { mock } from 'bun:test';\nimport raw from 'yaml?raw';\nimport schema from '@root/schemas/v1.json';\n",
 			'packages/kernel/src/b.ts': 'export const b = 1;\n',
 			'packages/kernel/mod.ts': "export * from './built.js';\n",
 			'packages/domain/package.json':
@@ -785,8 +785,12 @@ describe('boundaries', () => {
 			'packages/domain/package.json':
 				'{ "name": "@beepboop/domain", "dependencies": { "@beepboop/cli": "workspace:*" } }',
 			'packages/domain/src/c.ts': "export { a } from '@/kernel/a.ts';\nimport '@/cli/d.ts';\n",
-			'packages/cli/package.json': '{ "name": "@beepboop/cli", "dependencies": { "@beepboop/kernel": "workspace:*" } }',
-			'packages/cli/src/d.ts': "import '@beepboop/kernel/a.ts';\nimport '@beepboop/kernel/nope.ts';\n",
+			'packages/cli/package.json':
+				'{ "name": "@beepboop/cli", "dependencies": { "@beepboop/kernel": "workspace:*" }, "devDependencies": { "@types/unist": "3", "@types/hast": "3" } }',
+			'packages/cli/src/d.ts':
+				"import '@beepboop/kernel/a.ts';\nimport '@beepboop/kernel/nope.ts';\nimport { type Node, visit } from 'unist';\n",
+			'packages/cli/src/e.astro': "---\nimport type { Root } from 'hast';\n---\n<script>import 'hast';</script>\n",
+			'packages/cli/src/f.js': "import type { Root } from 'hast';\n",
 			'src/legacy.ts': 'export const legacy = 1;\n',
 		});
 		write('packages/domain/node_modules/effect/package.json', '{}');
@@ -797,6 +801,10 @@ describe('boundaries', () => {
 
 		expect(report.violations.map(describeViolation)).toEqual([
 			'packages/cli/src/d.ts imports @beepboop/kernel/nope.ts, which resolves to no tracked file',
+			'packages/cli/src/d.ts imports unist without declaring unist',
+			'packages/cli/src/e.astro imports hast without declaring hast',
+			'packages/cli/src/e.astro imports hast without declaring hast',
+			'packages/cli/src/f.js imports hast without declaring hast',
 			'packages/domain/src/c.ts imports @/kernel/a.ts without declaring @beepboop/kernel',
 			'packages/kernel/src/a.ts imports @/legacy.ts, which resolves outside any package (src/legacy.ts)',
 			'packages/kernel/src/a.ts imports ../../../src/legacy, which resolves outside any package (src/legacy.ts)',
@@ -807,7 +815,7 @@ describe('boundaries', () => {
 			'A second copy of effect is installed at node_modules/dep/node_modules/effect/package.json',
 			'A second copy of effect is installed at packages/domain/node_modules/effect/package.json',
 		]);
-		expect(await refusal(boundariesCommand(root))).toContain('10 package boundary violations');
+		expect(await refusal(boundariesCommand(root))).toContain('14 package boundary violations');
 	});
 
 	test('the baseline tolerates the imports it lists and reports listed imports that stopped happening', async () => {

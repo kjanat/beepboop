@@ -1,5 +1,6 @@
 import type { Schema } from 'effect';
 import { Effect, Result } from 'effect';
+import { builtinPreset } from '@/domain/configuration/builtin-presets.ts';
 import { legacyConfiguration } from '@/domain/configuration/names.ts';
 import type { Configuration } from '@/domain/configuration/schema.ts';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
@@ -68,11 +69,13 @@ export function resolveConfiguration(
 			const data = yield* Effect.fromResult(record(legacyConfiguration(raw)));
 			let resolved: Record<string, unknown> = {};
 			for (const reference of yield* Effect.fromResult(strings(data.extends ?? []))) {
-				if (!parsePresetReference(reference)) return yield* precondition('Invalid preset reference');
+				const parsed = parsePresetReference(reference);
+				if (!parsed) return yield* precondition('Invalid preset reference');
 				if (stack.includes(reference)) {
 					return yield* precondition(`Preset cycle: ${[...stack, reference].join(' -> ')}`);
 				}
-				const loaded = cache.get(reference) ?? (yield* load(reference));
+				const loaded = cache.get(reference)
+					?? (yield* parsed.kind === 'builtin' ? builtinPreset(parsed.preset) : load(reference));
 				cache.set(reference, loaded);
 				if (!shaPattern.test(loaded.sha)) return yield* precondition('Preset must resolve to a commit');
 				presetShas[reference] = loaded.sha;

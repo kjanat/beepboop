@@ -7,10 +7,6 @@ import { applyChoices, applySetup, discoverSetup, previewSetup } from '@root/tes
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { runFailedNote } from '@/automation/execution';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices } from '@/automation/setup-types';
-import type { Execution } from '@/automation/types';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -26,7 +22,11 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { runFailedNote } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import type { SetupChoices } from '@/setup/types.ts';
 
 let world: World;
 eachWorld(created => {
@@ -1077,3 +1077,63 @@ test('an observed run records only the publications its binding lists', async ()
 		.toEqual([['pkg:npm/a', true, 'succeeded']]);
 	expect(execution?.state).toBe('succeeded');
 });
+
+for (const [name, queue] of [['observation', 'observe'], ['tracking', 'track']] as const) {
+	test(`a run reported again while its ${name} is handled stays queued`, async () => {
+		const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
+		await adopt(repository, true);
+		world.npm.publish('widget', '1.2.0');
+		repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
+		const run = {
+			id: 9100,
+			path: '.github/workflows/release.yml',
+			event: 'push',
+			headSha: world.github.head(repository),
+			headBranch: 'widget-v1.2.0',
+			status: 'completed' as const,
+			conclusion: 'success',
+			attempt: 1,
+			title: 'Release',
+			inputs: {},
+		};
+		repository.runs.push(run);
+		const coordinator = world.coordinator(repository);
+		const storage = world.coordinators.instance(String(repository.id)).storage;
+		const queued = `${queue}:${run.id}`;
+		let suspended!: () => void;
+		const reached = new Promise<void>(resolve => {
+			suspended = resolve;
+		});
+		let resume!: () => void;
+		const gate = new Promise<void>(resolve => {
+			resume = resolve;
+		});
+		let held = false;
+		world.network.serve('api.github.com', async request => {
+			if (!held && storage.snapshot().has(queued) && new URL(request.url).pathname.includes('/actions/runs')) {
+				held = true;
+				suspended();
+				await gate;
+			}
+			return world.github.handle(request);
+		});
+
+		await (queue === 'observe' ? coordinator.observeRun : coordinator.trackRun).call(
+			coordinator,
+			repository.id,
+			run.id,
+		);
+		const alarm = coordinator.alarm();
+		await reached;
+		const reported = (queue === 'observe' ? coordinator.observeRun : coordinator.trackRun).call(
+			coordinator,
+			repository.id,
+			run.id,
+		);
+		resume();
+		await alarm;
+		await reported;
+
+		expect(storage.snapshot().has(queued)).toBe(true);
+	});
+}

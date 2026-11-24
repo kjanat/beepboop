@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 import { Effect, Schema } from 'effect';
 import { compile } from 'json-schema-to-typescript';
+import { parseTypeDefinition } from '@/domain/purl/definition.ts';
 import { mutableRecord } from '@/kernel/schema/structs.ts';
-import { parseTypeDefinition } from '@/package-url/definition';
 import { definitionFiles } from '@/tooling/purl/definition-files';
 import {
 	attemptPromise,
@@ -52,7 +52,7 @@ await main(Effect.gen(function*() {
 			Effect.mapError(error => new ToolFailure({ message: error.message, cause: error })),
 		);
 		if (filename !== `${definition.type}-definition.json`) return yield* refuse(`Type filename mismatch: ${filename}`);
-		imports.push(`import definition${index} from '@/package-url/${source}';`);
+		imports.push(`import definition${index} from '@/domain/purl/${source}';`);
 		typeNames.push(JSON.stringify(definition.type));
 		const namespace = definition.namespace_definition.requirement === 'prohibited'
 			? 'namespace?: never;'

@@ -1,13 +1,9 @@
 import { Effect, Schema } from 'effect';
-import { discover } from '@/automation/managers';
 import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
-import { streamReleases } from '@/automation/release-capability';
-import { branchConflictBlocker, previewSetup, setupBody, setupOptions, withRegistryStatus } from '@/automation/setup';
-import { setupBranch, setupTitle } from '@/automation/setup-changes';
-import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/automation/setup-maintenance';
-import { generatedFiles, openSetupPull, setupHead } from '@/automation/setup-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { routes } from '@/contract/routes';
+import { discover } from '@/discovery/discover.ts';
+import { encodeRepository } from '@/discovery/repositories/codec-v1.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
@@ -17,9 +13,16 @@ import { fromJson, fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, domainError, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
-import { encodeRepository } from '@/persistence/codecs/stored';
+import { streamReleases } from '@/release/domain/capability.ts';
 import type { Context } from '@/server/handlers/kit';
 import { admin, storedRepository } from '@/server/handlers/kit';
+import { setupBody } from '@/setup/body.ts';
+import { setupBranch, setupTitle } from '@/setup/changes.ts';
+import { branchConflictBlocker, previewSetup } from '@/setup/draft.ts';
+import { setupOptions } from '@/setup/options.ts';
+import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/setup/server/maintenance.ts';
+import { generatedFiles, openSetupPull, setupHead } from '@/setup/server/pull-requests.ts';
+import { withRegistryStatus } from '@/setup/suggest.ts';
 
 function reference(input: string) {
 	return repositoryReference(input).pipe(Effect.mapError(error => invalid(error.message, ['repository'])));
@@ -73,37 +76,17 @@ export const repositoryEndpoints = {
 		})),
 	repositoriesList: admin(
 		routes.repositoriesList,
-		(_, { service }) => service.store.repositories().pipe(Effect.map(rows => rows.map(shown))),
+		(_, { service }) => service.store.repositories.all().pipe(Effect.map(rows => rows.map(shown))),
 	),
-	repositoriesResolve: admin(routes.repositoriesResolve, (input, { service }) =>
-		Effect.gen(function*() {
-			const wanted = yield* reference(input.repository);
-			const name = wanted.name.toLowerCase(), owner = wanted.owner?.toLowerCase();
-			const matches = (yield* service.store.enrollments()).filter(repository => {
-				const [candidateOwner = '', candidateName = ''] = repository.name.toLowerCase().split('/');
-				return candidateName === name && (owner === undefined || candidateOwner === owner);
-			});
-			const [found, ...others] = matches;
-			if (others.length) {
-				return yield* precondition(
-					`Repository ${input.repository} matches ${
-						matches.map(repository => repository.name).join(', ')
-					}; name the owner`,
-				);
-			}
-			const stored = found ? yield* service.store.repository(found.id) : undefined;
-			if (stored) return shown(stored);
-			return yield* notFound(
-				'repository',
-				`Repository ${input.repository} is not enrolled; run beepboop repositories discover ${input.repository}`,
-				input.repository,
-			);
-		})),
+	repositoriesResolve: admin(
+		routes.repositoriesResolve,
+		(input, { service }) => service.catalog.resolve(input.repository).pipe(Effect.map(shown)),
+	),
 	repositoriesDiscover: admin(routes.repositoriesDiscover, (input, context) =>
 		Effect.gen(function*() {
 			yield* reference(input.repository);
 			const name = yield* ownerName(context, input.repository);
-			return shown(yield* context.service.discover(name, input.repositoryId));
+			return shown(yield* context.service.catalog.discover(name, input.repositoryId));
 		})),
 	setupPreview: admin(
 		routes.setupPreview,
@@ -183,7 +166,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 					: error
 			),
 		);
-		const stored = yield* service.store.repository(id);
+		const stored = yield* service.store.repositories.get(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
 		const document = yield* service.onboarding.document(id);
 		const saved = document === undefined ? undefined : yield* Effect.fromResult(record(yield* fromJson(document)));

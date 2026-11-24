@@ -6,6 +6,7 @@ import { Store } from '@/automation/store';
 import { compare, precedenceKey } from '@/domain/semver.ts';
 import type { Projection } from '@/persistence/d1/projection';
 import { ProjectionStore } from '@/persistence/d1/projection';
+import { projectionRules } from '@/release/adapters/d1/completions.ts';
 
 const candidate = { repositoryId: 1, stream: 'main', state: 'failed' as const, version: '1.0.0', updatedAt: 1 };
 function projection(id: string, version: string, at: number, group?: string): Projection {
@@ -87,7 +88,7 @@ for (const legacy of [false, true]) {
 				await db.batch(
 					rows.map(row => insert.bind(row.id, row.repositoryId, row.revision, row.document, row.updatedAt)),
 				);
-			} else await Effect.runPromise(new ProjectionStore(db).apply(rows));
+			} else await Effect.runPromise(new ProjectionStore(db, projectionRules).apply(rows));
 			const store = new Store(db);
 			if (legacy) await Effect.runPromise(new ProjectionBackfill(db).drain());
 			db.reset();
@@ -119,7 +120,7 @@ test('a release of the same version is proof for a preparation and for no other 
 	const db = new TestD1();
 	try {
 		const store = new Store(db);
-		await Effect.runPromise(new ProjectionStore(db).apply([projection('same', '1.0.0', 50)]));
+		await Effect.runPromise(new ProjectionStore(db, projectionRules).apply([projection('same', '1.0.0', 50)]));
 		const proof = [{ repositoryId: 1, stream: 'main', version: '1.0.0', completedAt: 50 }];
 		const preparation = { ...candidate, operation: 'prepare' };
 		expect(await Effect.runPromise(store.completionEvidence([preparation]))).toEqual(proof);
@@ -128,7 +129,7 @@ test('a release of the same version is proof for a preparation and for no other 
 		expect(await Effect.runPromise(store.completionEvidence([{ ...preparation, version: '0.9.0' }]))).toEqual(proof);
 		expect(await Effect.runPromise(store.completionEvidence([{ ...candidate, operation: 'promote' }]))).toEqual([]);
 		expect(await Effect.runPromise(store.completionEvidence([candidate]))).toEqual([]);
-		await Effect.runPromise(new ProjectionStore(db).apply([
+		await Effect.runPromise(new ProjectionStore(db, projectionRules).apply([
 			projection('build', '1.0.0+build', 100),
 			projection('next', '2.0.0', 60),
 		]));
@@ -146,7 +147,7 @@ test('a release of the same version is proof for a preparation and for no other 
 test('completion proof respects version, group, time, repository and corrupt history boundaries', async () => {
 	const db = new TestD1();
 	try {
-		const projections = new ProjectionStore(db), store = new Store(db);
+		const projections = new ProjectionStore(db, projectionRules), store = new Store(db);
 		await Effect.runPromise(projections.apply([
 			projection('old-high', '99.0.0', 1),
 			projection('equal-build', '1.0.0+build', 50),
@@ -186,7 +187,7 @@ function frontier(db: TestD1) {
 test('frontier proofs remain equivalent for out-of-order and downgrade releases, ties, moves and removals', async () => {
 	const db = new TestD1();
 	try {
-		const projected = new ProjectionStore(db), store = new Store(db);
+		const projected = new ProjectionStore(db, projectionRules), store = new Store(db);
 		const rows = [
 			projection('high-old', '9.0.0', 10),
 			projection('low-new', '2.0.0', 90),
@@ -248,7 +249,7 @@ test('absent-proof work stays bounded per candidate across a large nondominated 
 	const db = new TestD1();
 	try {
 		await Effect.runPromise(
-			new ProjectionStore(db).apply(
+			new ProjectionStore(db, projectionRules).apply(
 				Array.from({ length: 1000 }, (_, i) => projection(`point-${i}`, `2.${i}.0`, 10000 - i)),
 			),
 		);
@@ -306,7 +307,7 @@ test('nondominated appends and unchanged reindex avoid residual frontier scans a
 				),
 			);
 		}
-		const projected = new ProjectionStore(db);
+		const projected = new ProjectionStore(db, projectionRules);
 		const rows = Array.from({ length: 1000 }, (_, i) => projection(`point-${i}`, `2.${i}.0`, 10000 - i));
 		await Effect.runPromise(projected.apply(rows));
 		expect(frontier(db)).toHaveLength(1000);

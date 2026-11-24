@@ -10,13 +10,10 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { parse } from 'yaml';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import { jobObstacles } from '@/automation/setup-workflows';
-import { app } from '@/cli/cli';
-import type { Client } from '@/cli/client';
-import { choicesEditors, streamEditors, workflowEditors } from '@/cli/setup-choices';
+import type { Client } from '@/cli/client/api';
+import { app } from '@/cli/main';
 import { routes } from '@/contract/routes';
-import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
+import { jobObstacles } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import { binaryTargets, defaultBinaryTargets, supportedTargets } from '@/domain/binary-platforms.ts';
 import {
 	publishWhenQuestion,
@@ -42,6 +39,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { choicesFields, streamFields, workflowFields } from '@/setup/editing/fields.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
 
 let world: World;
 let directory: string;
@@ -225,7 +224,7 @@ test('adopt enrolls a repository, reviews generated files and only opens a PR af
 	const original = world.github.head(repository);
 	const declined = await run(
 		['adopt', repository.name],
-		[false, 'new', '', 'managed', false, 'pr', 'required', false, false],
+		[false, 'new', '', 'managed', 'none', 'pr', 'required', false, false],
 	);
 	expect(declined.exitCode).toBe(0);
 	expect(declined.stdout.join('')).toContain('release-widget.yml');
@@ -235,7 +234,7 @@ test('adopt enrolls a repository, reviews generated files and only opens a PR af
 	);
 	const accepted = await run(
 		['adopt', `https://github.com/${repository.name}`],
-		[false, 'new', '', 'managed', false, 'pr', 'required', false, true],
+		[false, 'new', '', 'managed', 'none', 'pr', 'required', false, true],
 	);
 	expect(accepted.exitCode).toBe(0);
 	expect(repository.pulls).toHaveLength(1);
@@ -266,13 +265,13 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 			'',
 			'same',
 			'',
-			false,
+			'none',
 			'pr',
 			'required',
 			true,
 			false,
 			'workspace',
-			false,
+			'none',
 			'pr',
 			'manual',
 			'push',
@@ -332,7 +331,7 @@ jobs:
 	});
 	const result = await run(
 		['adopt', repository.name],
-		[true, 'ship.yml', 'ship', 'publish_a', '', '', 'managed', false, 'pr', 'required', false, true],
+		[true, 'ship.yml', 'ship', 'publish_a', '', '', 'managed', 'none', 'pr', 'required', false, true],
 	);
 	expect(result.exitCode).toBe(0);
 	const workflow = decodeSync(
@@ -378,7 +377,7 @@ for (const mixed of ['pypi', 'npm'] as const) {
 		});
 		const result = await run(
 			['adopt', repository.name],
-			[true, 'new', 'managed', false, 'pr', 'required', false, true],
+			[true, 'new', 'managed', 'none', 'pr', 'required', false, true],
 		);
 		expect(result.stdout.join('')).not.toContain('Bash commands');
 		expect(result.exitCode).toBe(0);
@@ -434,7 +433,7 @@ test('generated npm targets require explicit commands instead of an npm publish 
 	});
 	const result = await run(
 		['adopt', repository.name],
-		[true, 'new', './scripts/generate-and-publish.sh', '', 'managed', false, 'pr', 'required', false, true],
+		[true, 'new', './scripts/generate-and-publish.sh', '', 'managed', 'none', 'pr', 'required', false, true],
 	);
 	expect(result.exitCode).toBe(0);
 	const workflow = world.github.file(repository, '.github/workflows/release-generated.yml', 'automation/onboarding')
@@ -834,7 +833,7 @@ for (const scripted of [true, false]) {
 		world.github.push(repository, { 'README.md': '# Updated default branch\n' }, 'Change source after opening setup');
 		const result = scripted
 			? await run(['adopt', repository.name, '--choices', file, '--json'])
-			: await run(['adopt', repository.name], [false, 'new', '', 'managed', false, 'pr', 'required', false, false]);
+			: await run(['adopt', repository.name], [false, 'new', '', 'managed', 'none', 'pr', 'required', false, false]);
 		expect(result.exitCode).toBe(0);
 		expect(world.github.resolve(repository, 'automation/onboarding').sha).toBe(head);
 		expect(repository.pulls).toEqual(before);
@@ -858,13 +857,13 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 	});
 	const unchanged = await run(
 		['adopt', repository.name],
-		[false, true, 'new', '', 'managed', false, 'pr', 'required', false, false],
+		[false, true, 'new', '', 'managed', 'none', 'pr', 'required', false, false],
 	);
 	expect(unchanged.exitCode).toBe(0);
 	expect(unchanged.stdout.join('')).toContain("cargo publish --package 'crate-a' --locked");
 	const changed = await run(
 		['adopt', repository.name],
-		[false, false, ['pkg:cargo/crate-b'], 'new', '', 'managed', false, 'pr', 'required', false, true],
+		[false, false, ['pkg:cargo/crate-b'], 'new', '', 'managed', 'none', 'pr', 'required', false, true],
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/release.yml', 'automation/onboarding') ?? '';
@@ -909,7 +908,7 @@ test('changing publishing-step mappings regenerates commands for the newly unmap
 	});
 	const changed = await run(
 		['adopt', repository.name],
-		[false, true, 'ship.yml', '', 'publish_existing', '', 'managed', false, 'pr', 'required', false, true],
+		[false, true, 'ship.yml', '', 'publish_existing', '', 'managed', 'none', 'pr', 'required', false, true],
 	);
 	expect(changed.exitCode).toBe(0);
 	const source = world.github.file(repository, '.github/workflows/ship.yml', 'automation/onboarding') ?? '';
@@ -940,7 +939,7 @@ test('automatic triggers default to review and retain an explicit saved handover
 	expect(
 		(await run(
 			['adopt', repository.name],
-			[false, false, 'ship.yml', 'dispatchOnly', 'publish_existing', 'managed', false, 'pr', 'required', false, true],
+			[false, false, 'ship.yml', 'dispatchOnly', 'publish_existing', 'managed', 'none', 'pr', 'required', false, true],
 		))
 			.exitCode,
 	).toBe(0);
@@ -962,7 +961,7 @@ test('shared preparation does not ask for a second trigger handover', async () =
 		'Cargo.lock': '# Lockfile\n',
 	});
 	expect(
-		(await run(['adopt', repository.name], ['new', '', 'same', '', false, 'pr', 'required', false, true])).exitCode,
+		(await run(['adopt', repository.name], ['new', '', 'same', '', 'none', 'pr', 'required', false, true])).exitCode,
 	)
 		.toBe(0);
 	world.github.merge(repository, 1);
@@ -1037,12 +1036,6 @@ test('an inferred stream gets a Beepboop release workflow that starts its existi
 	);
 });
 
-test('the CLI declares an editor for every setup choice field', () => {
-	expect(Object.keys(choicesEditors).sort()).toEqual([...choicesFields].sort());
-	expect(Object.keys(streamEditors).sort()).toEqual([...streamFields].sort());
-	expect(Object.keys(workflowEditors).sort()).toEqual([...workflowFields].sort());
-});
-
 test('interactive setup asks for each proposed binary, its targets and every advanced field', async () => {
 	const repository = world.github.create('octo/tool', {
 		'Cargo.toml': '[package]\nname = "tool"\nversion = "1.0.0"\nedition = "2024"\n\n[dependencies]\nnix = "0.30"\n',
@@ -1050,18 +1043,18 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	});
 	const customize =
 		'Customize filenames, versionScope, publishWhen, release groups, advanced fields or Actions revision?';
-	const startPrompt = `main: ${startFromQuestion}? ${startFromSentences.action.replaceAll('`', '')}`;
+	const startPrompt = `main: startFrom. ${startFromQuestion}`;
 	const session = defaults(
 		{
 			'main: publishing workflow filename': 'release-tool.yml',
 			'main: version tag prefix (empty uses the default)': 'tool-v',
 			[`main: versionLands. ${versionLandsQuestion}`]: 'pr',
 			[`main: versionPrMerge. ${versionPrMergeQuestion}`]: 'merge',
+			[startPrompt]: 'action',
 		},
 		{
 			[proposalPrompt]: false,
 			[customize]: true,
-			[startPrompt]: true,
 			'Add another release group?': false,
 			'Open or refresh the setup PR with these exact changes?': true,
 		},
@@ -1089,9 +1082,9 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	}
 	expect(
 		session.prompts.filter(prompt => prompt.message === startPrompt).map(prompt =>
-			prompt.kind === 'confirm' && prompt.default
+			prompt.kind === 'select' && prompt.choices.map(choice => choice.value)
 		),
-	).toEqual([false, true]);
+	).toEqual([['', 'action', 'none'], ['action', '', 'none']]);
 	expect(messages).toContain(`main: versionLands. ${versionLandsQuestion}`);
 	expect(messages).toContain(`main: publishWhen. ${publishWhenQuestion}`);
 	const merging = session.prompts.find(prompt => prompt.message === `main: versionPrMerge. ${versionPrMergeQuestion}`);

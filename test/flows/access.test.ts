@@ -71,7 +71,7 @@ async function badge(): Promise<string> {
 }
 
 async function stored(repository: Repository) {
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('Repository is not enrolled');
 	return record;
 }
@@ -211,7 +211,7 @@ test('a lost unsuspend webhook leaves refresh suspended until discover asks GitH
 		refreshed.updatedAt,
 	).run();
 	deployed.sqlite.run(readFileSync(join(migrationsDirectory, '0012_repository_access.sql'), 'utf8'));
-	const migrated = await Effect.runPromise(new Store(deployed).repository(repository.id));
+	const migrated = await Effect.runPromise(new Store(deployed).repositories.get(repository.id));
 	expect(migrated && readiness(migrated)).toEqual({ kind: 'suspended', since: refreshed.updatedAt });
 
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
@@ -245,7 +245,9 @@ for (const startingSuspended of [false, true]) {
 	test(`discovery cannot overwrite access changed in flight: initially suspended=${startingSuspended}`, async () => {
 		const repository = await discoveredWidget(world, await world.cliSession());
 		const service = await world.run(Automation);
-		if (startingSuspended) await world.run(service.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+		if (startingSuspended) {
+			await world.run(service.catalog.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+		}
 		const entered = Promise.withResolvers<void>();
 		const resume = Promise.withResolvers<void>();
 		world.network.serve('registry.npmjs.org', async request => {
@@ -253,10 +255,10 @@ for (const startingSuspended of [false, true]) {
 			await resume.promise;
 			return world.npm.handle(request);
 		});
-		const refreshing = world.run(service.refresh(repository.name, repository.id));
+		const refreshing = world.run(service.catalog.refresh(repository.name, repository.id));
 		await entered.promise;
 		const access = startingSuspended ? { kind: 'active' as const } : { kind: 'suspended' as const, since: Date.now() };
-		await world.run(service.setAccess(repository.id, access));
+		await world.run(service.catalog.setAccess(repository.id, access));
 		resume.resolve();
 		expect((await refreshing).access).toEqual(access);
 		expect((await stored(repository)).access).toEqual(access);

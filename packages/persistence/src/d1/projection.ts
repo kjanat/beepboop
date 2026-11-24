@@ -1,9 +1,6 @@
 import { Effect } from 'effect';
 import type { ProjectedEntity } from '@/contract/changes';
-import { isDecodingFailure } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { completionMetadata } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase, SqlStatement } from '@/persistence/d1/database';
 import { sql } from '@/persistence/d1/database';
 
@@ -18,6 +15,18 @@ export type Projection =
 	| (Common & { entity: 'execution'; state: string })
 	| (Common & { entity: Exclude<ProjectedEntity, 'execution'> });
 
+export interface CompletionMetadata {
+	readonly stream: string;
+	readonly group: string | null;
+	readonly version: string;
+	readonly sort: string;
+	readonly at: number | null;
+}
+export interface ProjectionRules {
+	readonly executionState: (document: string) => string | undefined;
+	readonly completion: (document: string, repositoryId: number) => CompletionMetadata | undefined;
+}
+
 const tables = {
 	execution: 'executions',
 	'release-set': 'release_sets',
@@ -26,17 +35,12 @@ const tables = {
 
 export class ProjectionStore {
 	private readonly db: Sql;
-	constructor(db: SqlDatabase | Sql) {
+	constructor(db: SqlDatabase | Sql, private readonly rules: ProjectionRules) {
 		this.db = sql(db);
 	}
 	private upsert(row: Projection): SqlStatement {
 		if (row.entity === 'execution') {
-			let state = row.state;
-			try {
-				state = decodeExecutionV1(JSON.parse(row.document)).state;
-			} catch (error) {
-				if (!isDecodingFailure(error)) throw error;
-			}
+			const state = this.rules.executionState(row.document) ?? row.state;
 			return this.db.statement(
 				'INSERT INTO executions(id,repository_id,state,document,updated_at,revision,state_version,state_revision) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET repository_id=excluded.repository_id,state=excluded.state,state_version=1,state_revision=excluded.state_revision,document=excluded.document,updated_at=excluded.updated_at,revision=excluded.revision WHERE executions.revision IS NULL OR excluded.revision>executions.revision',
 			).bind(
@@ -50,7 +54,7 @@ export class ProjectionStore {
 			);
 		}
 		if (row.entity === 'release') {
-			const meta = completionMetadata(row.document, row.repositoryId);
+			const meta = this.rules.completion(row.document, row.repositoryId);
 			return this.db.statement(
 				`INSERT INTO releases(id,repository_id,revision,document,updated_at,completion_format,
      completion_stream,completion_group,completion_release_version,completion_sort,completion_at,completion_revision)

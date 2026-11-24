@@ -11,9 +11,10 @@ import { widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { RepositoryGateway } from '@/automation/github';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import { pullRequest, refreshPullRequest } from '@/automation/preparation-pull-requests';
 import { repositorySnapshot } from '@/automation/snapshot';
+import { configurationSchema } from '@/domain/configuration/schema.ts';
 import { pullSchema } from '@/github/resources.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -189,8 +190,7 @@ for (const outcome of [429, 422, 'reset', 204] as const) {
 }
 
 test('a pending manual WinGet receipt is recovered without creating another PR', async () => {
-	const { Store } = await import('@/automation/store');
-	const { WinGetService } = await import('@/automation/winget');
+	const { WinGetService } = await import('@/publication/winget/service.ts');
 	const plan = {
 		id: 'receipt',
 		repositoryId: 42,
@@ -229,7 +229,7 @@ test('a pending manual WinGet receipt is recovered without creating another PR',
 		}
 		return Response.json({ message: 'Unexpected request' }, { status: 403 });
 	});
-	const service = new WinGetService(new Store(world.db), new RepositoryGateway(world.env, 42), {
+	const service = new WinGetService(world.db, new RepositoryGateway(world.env, 42), {
 		WINGET_GITHUB_TOKEN: 'test-token',
 		WINGET_FORK: 'octo/winget-pkgs',
 	});
@@ -240,6 +240,46 @@ test('a pending manual WinGet receipt is recovered without creating another PR',
 		url: 'https://github.com/microsoft/winget-pkgs/pull/123',
 	});
 	expect(calls).toHaveLength(1);
+});
+
+test('an automatic WinGet submission that fails to plan leaves an audit entry', async () => {
+	const { WinGetService } = await import('@/publication/winget/service.ts');
+	const repository = widget(world.github);
+	repository.private = true;
+	repository.releases.push({
+		id: 7,
+		tag: 'v1.2.0',
+		target: world.github.head(repository),
+		draft: false,
+		prerelease: false,
+		authorId: 1,
+		body: '',
+	});
+	const service = new WinGetService(world.db, new RepositoryGateway(world.env, Number(world.env.OWNER_ID)), {
+		WINGET_GITHUB_TOKEN: 'test-token',
+		WINGET_FORK: 'octo/winget-pkgs',
+	});
+	await Effect.runPromise(service.automatic({
+		access: { kind: 'active' },
+		id: repository.id,
+		name: repository.name,
+		defaultBranch: repository.defaultBranch,
+		sha: world.github.head(repository),
+		configuration: decodeSync(configurationSchema, {
+			streams: { main: { promote: { workflow: { file: 'publish.yml' } } } },
+			winget: { config: 'winget.json', automatic: true },
+		}),
+		presetShas: {},
+		inventory: { packages: [], workflows: [], managers: [], diagnostics: [], publicationOrder: [] },
+		diagnostics: [],
+		updatedAt: 0,
+	}));
+	const audit = await world.db.prepare("SELECT actor, action, target FROM audit WHERE action = 'winget.failed'").all();
+	expect(audit.results).toEqual([{
+		actor: 'winget',
+		action: 'winget.failed',
+		target: `${repository.name}: WinGet installers must come from a public repository`,
+	}]);
 });
 
 for (const when of ['before update', 'during update'] as const) {

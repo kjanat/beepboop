@@ -3,11 +3,11 @@ import type { Repository } from '@root/test/support/github.ts';
 import { editableConfiguration, publishWorkflow } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { createExecution } from '@/automation/execution';
-import { ReleaseHistory } from '@/automation/release-history';
 import { Automation } from '@/automation/service';
 import { requireReady } from '@/domain/repository';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { createExecution } from '@/release/domain/execution/execution.ts';
+import { ReleaseHistory } from '@/release/domain/history.ts';
 
 let world: World;
 eachWorld(created => {
@@ -32,7 +32,7 @@ async function observed(count = 1) {
 	});
 	world.npm.publish('widget', '1.0.0');
 	const app = await world.run(Automation);
-	const stored = await world.run(app.discover(repository.name, repository.id));
+	const stored = await world.run(app.catalog.discover(repository.name, repository.id));
 	const ready = await world.run(requireReady(stored));
 	const execution = await world.run(
 		createExecution(ready, {
@@ -146,11 +146,11 @@ test('reconciliation restores a missing sibling while preserving a completed chi
 test('stale coordinator access cannot resume work while the repository is suspended', async () => {
 	const { repository, app, execution, storage } = await observed();
 	await storage.put('access', { suspended: false });
-	await world.run(app.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+	await world.run(app.catalog.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
 	await world.wait(120_000);
 	expect((await executions(repository)).find(item => item.id === execution.id)?.state).toBe('running');
 	expect(world.github.dispatches).toHaveLength(0);
-	await world.run(app.setAccess(repository.id, { kind: 'active' }));
+	await world.run(app.catalog.setAccess(repository.id, { kind: 'active' }));
 	await world.wait(2_000);
 	expect((await executions(repository)).find(item => item.id === execution.id)?.state).toBe('succeeded');
 });
@@ -173,7 +173,7 @@ test('an access read failure leaves work retryable and fails closed', async () =
 
 test('suspension during reconciliation prevents subsequent executions from advancing', async () => {
 	const { repository, app, execution, coordinator } = await observed();
-	const stored = await world.run(app.store.repository(repository.id));
+	const stored = await world.run(app.store.repositories.get(repository.id));
 	if (!stored) throw new Error('Expected repository');
 	const ready = await world.run(requireReady(stored));
 	const next = await world.run(
@@ -202,14 +202,14 @@ test('suspension during reconciliation prevents subsequent executions from advan
 	const pass = world.wait(20_000);
 	await entered.promise;
 	try {
-		await world.run(app.store.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
+		await world.run(app.store.repositories.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
 	} finally {
 		resume.resolve();
 	}
 	await pass;
 	expect(world.github.dispatches).toHaveLength(0);
 	expect((await executions(repository)).find(item => item.id === next.id)?.state).toBe('ready');
-	await world.run(app.setAccess(repository.id, { kind: 'active' }));
+	await world.run(app.catalog.setAccess(repository.id, { kind: 'active' }));
 	await world.wait(2_000);
 	expect(world.github.dispatches.length).toBeGreaterThan(0);
 });
@@ -217,10 +217,10 @@ test('suspension during reconciliation prevents subsequent executions from advan
 test('legacy continuation repair requires current inventory and can recover after discovery is restored', async () => {
 	const { repository, app, execution, coordinator, storage } = await observed();
 	await storage.put(`execution:${execution.id}`, { ...execution, state: 'succeeded' });
-	const record = await world.run(app.store.repository(repository.id));
+	const record = await world.run(app.store.repositories.get(repository.id));
 	if (!record) throw new Error('Expected repository');
 	await world.run(
-		app.store.saveDiscovery({
+		app.store.repositories.saveDiscovery({
 			...record,
 			sha: 'b'.repeat(40),
 			inventory: {
@@ -235,7 +235,7 @@ test('legacy continuation repair requires current inventory and can recover afte
 	expect(await storage.get(`quarantine:${execution.id}`)).toMatchObject({
 		error: expect.stringContaining('Workflow needs workflow_dispatch'),
 	});
-	await world.run(app.store.saveDiscovery(record));
+	await world.run(app.store.repositories.saveDiscovery(record));
 	await coordinator.recover(execution.id, 'reconcile', 'admin');
 	await world.wait(2_000);
 	expect((await executions(repository)).find(item => item.operation === 'follow0')).toMatchObject({

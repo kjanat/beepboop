@@ -1,0 +1,216 @@
+import { Effect, Result } from 'effect';
+import { discover } from '@/discovery/discover.ts';
+import type { Inventory, Snapshot } from '@/domain/inventory.ts';
+import { packageId, selectorKey, soleMatch } from '@/domain/package-identity.ts';
+import { tagPrefix } from '@/domain/version-tags.ts';
+import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
+import { fromSync } from '@/kernel/errors/classify.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { invalid } from '@/kernel/schema/result.ts';
+import { deriveExecution } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { executionId } from '@/release/domain/identity-keys.ts';
+
+function expandPackages(
+	member: Execution,
+	targets: string[],
+	inventory: Inventory,
+	repositoryId: number,
+	event: string,
+): Effect.Effect<Execution[], DomainError> {
+	return Effect.gen(function*() {
+		const workflow = member.workflow;
+		if (!workflow) return yield* precondition('Per-package operation needs a workflow');
+		if (!inventory.workflows.find(found => found.file === workflow.file)?.dispatchInputs.includes('package')) {
+			return yield* precondition(`Per-package workflow needs a package input: ${workflow.file}`);
+		}
+		if (!targets.length) {
+			return yield* precondition(`Per-package operation has no required packages: ${member.operation}`);
+		}
+		const order = (id: string) => {
+			const index = inventory.publicationOrder.indexOf(id);
+			return index < 0 ? inventory.publicationOrder.length : index;
+		};
+		const selected = yield* Effect.forEach(targets, reference => {
+			const pkg = soleMatch(reference, inventory.packages);
+			return pkg
+				? Effect.succeed({ reference, pkg, id: packageId(pkg) })
+				: Effect.fail(precondition(`Per-package target is ambiguous or missing: ${reference}`));
+		});
+		selected.sort((a, b) => order(a.id) - order(b.id) || a.id.localeCompare(b.id));
+		const identified = yield* Effect.forEach(
+			selected,
+			target =>
+				executionId(repositoryId, member.stream, `${member.operation}#${target.id}`, event).pipe(
+					Effect.map(id => ({ ...target, executionId: id })),
+				),
+			{ concurrency: 'unbounded' },
+		);
+		return identified.map(target => {
+			const upstream = identified.filter(other =>
+				other.pkg.manager === target.pkg.manager && target.pkg.dependencies.includes(other.pkg.name)
+			);
+			return {
+				...structuredClone(member),
+				id: target.executionId,
+				package: { id: target.id, manager: target.pkg.manager },
+				workflow: { ...workflow, publications: [target.reference] },
+				dependencies: [...new Set([...member.dependencies, ...upstream.map(other => other.executionId)])],
+			};
+		});
+	});
+}
+
+/** Compile a frozen preparation into operations for its verified merged revision. */
+export function compileReleaseSet(preparation: Execution, snapshot: Snapshot): Effect.Effect<Execution[], DomainError> {
+	return Effect.gen(function*() {
+		const plan = preparation.managed?.plan ?? preparation.plan;
+		if (
+			preparation.state !== 'succeeded' || !(preparation.managed?.result ?? preparation.prepared?.result) || !plan
+			|| !('groups' in plan)
+		) {
+			return yield* precondition('Completed release-set preparation required');
+		}
+		if (snapshot.repository.id !== preparation.repositoryId || snapshot.repository.name !== preparation.repository) {
+			return yield* precondition('Prepared repository identity changed');
+		}
+		for (const edit of plan.edits) {
+			if (snapshot.files[edit.path] !== edit.after) {
+				return yield* precondition(`Prepared content changed: ${edit.path}`);
+			}
+		}
+		if (!plan.operations.length || plan.operations.length > 100) {
+			return yield* precondition('Release set requires 1-100 operations');
+		}
+		const stream = preparation.configuration.streams[preparation.stream];
+		if (!stream) return yield* precondition('Missing prepared stream');
+		const inventory = yield* fromSync(() => discover(snapshot, preparation.configuration.managers));
+		for (const group of plan.groups) {
+			for (const name of group.packages) {
+				const match = soleMatch(name, inventory.packages);
+				if (!match || (tagPrefix(match.versionSource) === undefined && match.version !== group.version)) {
+					return yield* precondition(`Prepared package version mismatch: ${name}`);
+				}
+			}
+		}
+		const revision = { defaultBranch: snapshot.repository.defaultBranch, inventory };
+		const event = `release-set:${preparation.id}:${snapshot.sha}`;
+		const operations: Execution[] = [];
+		const names = new Set(plan.operations.map(op => op.id));
+		for (const operation of plan.operations) {
+			if (operation.id === 'prepare') return yield* precondition('Release set cannot repeat preparation');
+			const execution = yield* deriveExecution(preparation, revision, {
+				stream: preparation.stream,
+				operation: operation.id,
+				eventId: event,
+				sourceSha: snapshot.sha,
+				version: operation.version,
+				perPackage: true,
+			});
+			const binding = execution.workflow;
+			if (!binding || binding.ref?.includes('*')) return yield* precondition('Exact workflow binding required');
+			if (
+				binding.platform && operation.platform
+				&& (binding.platform.os !== operation.platform.os || binding.platform.arch !== operation.platform.arch
+					|| binding.platform.abi !== operation.platform.abi)
+			) {
+				return yield* precondition(`Platform binding mismatch: ${operation.id}`);
+			}
+			const outputs = new Map((binding.outputs ?? []).map(output => [output.id, output]));
+			for (const output of operation.outputs) {
+				if (outputs.has(output.id) && outputs.get(output.id)?.kind !== output.kind) {
+					return yield* precondition('Output kind changed');
+				}
+				outputs.set(output.id, output);
+			}
+			const inputs = new Map(
+				[...(binding.artifactInputs ?? []), ...operation.inputs].map(
+					input => [`${input.operation}/${input.output}`, input],
+				),
+			);
+			const needs = [
+				...new Set([
+					...(binding.needs ?? []),
+					...operation.needs,
+					...[...inputs.values()].map(input => input.operation),
+				]),
+			].sort();
+			if (needs.some(name => !names.has(name))) {
+				return yield* precondition(`Release set omits a dependency of ${operation.id}`);
+			}
+			execution.workflow = {
+				...binding,
+				needs,
+				outputs: [...outputs.values()],
+				artifactInputs: [...inputs.values()],
+				platform: operation.platform ?? binding.platform,
+			};
+			execution.dependencies = yield* Effect.forEach(
+				needs,
+				name => executionId(preparation.repositoryId, preparation.stream, name, event),
+				{ concurrency: 'unbounded' },
+			);
+			execution.releaseSet = { preparationId: preparation.id, group: operation.group, required: [] };
+			operations.push(execution);
+		}
+		const bindings = new Map(operations.map(op => [op.operation, op.workflow]));
+		yield* Effect.fromResult(dependencyOrder(
+			names,
+			name => {
+				const binding = bindings.get(name);
+				for (const input of binding?.artifactInputs ?? []) {
+					if (!bindings.get(input.operation)?.outputs?.some(output => output.id === input.output)) {
+						return invalid('Missing producer output');
+					}
+				}
+				return Result.succeed(binding?.needs ?? []);
+			},
+			() => invalid('Combined operation dependency cycle'),
+		));
+		const assigned = new Set<string>();
+		for (const group of plan.groups) {
+			const members = operations.filter(op => op.releaseSet?.group === group.id);
+			if (!members.length) return yield* precondition(`Release group has no operations: ${group.id}`);
+			const publications = new Set(
+				[...group.packages, ...members.flatMap(op => op.workflow?.publications ?? [])].map(reference =>
+					selectorKey(reference, inventory.packages)
+				),
+			);
+			const required = stream.required.filter(id => publications.has(selectorKey(id, inventory.packages)));
+			for (const id of required) {
+				if (assigned.has(id)) return yield* precondition(`Publication assigned to multiple groups: ${id}`);
+				assigned.add(id);
+			}
+			for (const member of members) {
+				if (member.releaseSet) member.releaseSet.required = required;
+				if (member.workflow?.each === 'package') {
+					const selected = member.workflow.publications;
+					const targets = selected
+						? required.filter(id =>
+							selected.some(reference =>
+								selectorKey(reference, inventory.packages) === selectorKey(id, inventory.packages)
+							)
+						)
+						: required;
+					const expanded = yield* expandPackages(member, targets, inventory, preparation.repositoryId, event);
+					operations.splice(operations.indexOf(member), 1, ...expanded);
+					const ids = expanded.map(execution => execution.id);
+					for (const other of operations) {
+						if (other.dependencies.includes(member.id)) {
+							other.dependencies = [...new Set(other.dependencies.flatMap(id => id === member.id ? ids : [id]))];
+						}
+					}
+					continue;
+				}
+				if (member.operation === 'publish' && member.workflow && !member.workflow.publications) {
+					member.workflow.publications = required;
+				}
+			}
+		}
+		if (stream.required.some(id => !assigned.has(id))) {
+			return yield* precondition('Required publication is not assigned to a release group');
+		}
+		return operations;
+	});
+}

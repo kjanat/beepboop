@@ -14,11 +14,9 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
 import { Effect, Schema, Struct } from 'effect';
 import { Window } from 'happy-dom';
-import { createExecution, runFailedNote } from '@/automation/execution';
 import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Automation } from '@/automation/service';
 import { Store } from '@/automation/store';
-import type { Execution } from '@/automation/types';
 import { requireReady } from '@/domain/repository';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -34,10 +32,18 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { executionId, releaseEventId } from '@/persistence/identity-keys';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { createExecution, runFailedNote } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { executionId, releaseEventId } from '@/release/domain/identity-keys.ts';
+import {
+	checksPolicy,
+	needingUser,
+	releaseSetSummaries,
+	releaseSummaries,
+	runStateLabel,
+} from '@/release/domain/summaries.ts';
 import { loaders } from '@/server/loaders';
-import { checksPolicy, needingUser, releaseSetSummaries, releaseSummaries, runStateLabel } from '@/server/releases';
 import { overview } from '@/server/views/overview';
 import { pipeline, runCard } from '@/server/views/runs';
 import { releaseStatus } from '@/server/views/tone';
@@ -243,7 +249,7 @@ test('a finished run whose registry publication appears late is verified without
 	expect(settled.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
 	expect(world.github.dispatches).toHaveLength(1);
 	await api('/api/repositories/discover', { repository: repository.name });
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('No stored repository');
 	const unreported = { ...finished, state: 'awaiting-approval' as const, publications: [] };
 	expect(releaseSummaries([unreported]).map(release => [release.verified, release.publications])).toEqual([
@@ -288,7 +294,7 @@ test('a finished run whose registry publication appears late is verified without
 
 test('the overview counts only runs that still need the user and shows each version as one release', async () => {
 	const { finished, repository } = await finishedPromotion('pending');
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('No stored repository');
 	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
 		...finished,
@@ -366,7 +372,7 @@ test('the overview counts only runs that still need the user and shows each vers
 
 test('a run cancelled after a newer release started stays below the unfinished release', async () => {
 	const { finished, repository } = await finishedPromotion('pending');
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('No stored repository');
 	const run = (id: string, createdAt: number, updatedAt: number, changes: Partial<Execution>): Execution => ({
 		...finished,
@@ -1450,7 +1456,7 @@ async function removeCompanionModule(): Promise<void> {
 	);
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
-	const stored = await Effect.runPromise(new Store(world.db).repository(target.id));
+	const stored = await Effect.runPromise(new Store(world.db).repositories.get(target.id));
 	expect(stored?.inventory.packages.map(pkg => pkg.manager)).toEqual(['npm']);
 }
 
@@ -1885,7 +1891,7 @@ test('the parent publishes a companion tag and the module stream reuses it only 
 	expect(parent.state).toBe('succeeded');
 	const original = repository.refs.get('tags/go/v1.1.0');
 	expect(original).toBeDefined();
-	const record = await Effect.runPromise(store.repository(repository.id));
+	const record = await Effect.runPromise(store.repositories.get(repository.id));
 	if (!record) throw new Error('Missing repository');
 	const ready = await world.run(requireReady(record));
 	const identity = {
@@ -1921,6 +1927,8 @@ test('the parent publishes a companion tag and the module stream reuses it only 
 		return execution;
 	};
 	const same = await create(parent.sourceSha);
+	await expect(coordinator.refs(same.id, identity, false, [], { id: 1, digest: `sha256:${'d'.repeat(64)}` })).rejects
+		.toThrow('Unexpected distribution artifact');
 	const plan = await coordinator.refs(same.id, identity);
 	expect(plan.changes).toHaveLength(1);
 	expect(plan.changes[0]).toMatchObject({ name: 'go/v1.1.0', expected: original, commit: parent.sourceSha });
@@ -1935,10 +1943,10 @@ test('the parent publishes a companion tag and the module stream reuses it only 
 test('repository filters render only their own readable and unreadable runs even outside the global page', async () => {
 	const { finished, repository } = await finishedPromotion('pending');
 	const store = new Store(world.db);
-	const original = await Effect.runPromise(store.repository(repository.id));
+	const original = await Effect.runPromise(store.repositories.get(repository.id));
 	if (!original) throw new Error('Missing repository');
 	for (const [id, name] of [[99, 'octo/gadget'], [100, 'octo/broken']] as const) {
-		await Effect.runPromise(store.saveDiscovery({ ...original, id, name }));
+		await Effect.runPromise(store.repositories.saveDiscovery({ ...original, id, name }));
 	}
 	await world.db.prepare('DELETE FROM executions').run();
 	const insert = world.db.prepare(

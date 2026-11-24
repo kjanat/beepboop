@@ -1,9 +1,6 @@
 import { Effect, Schema } from 'effect';
-import type { RepositoryGateway } from '@/automation/github';
-import { placeBlock, setupBlock } from '@/automation/setup-body';
-import { previousRender } from '@/automation/setup-pull-requests';
+import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { repositorySnapshot } from '@/automation/snapshot';
-import type { AutoMerge, PreparationResult } from '@/automation/types';
 import type { Edit, Snapshot } from '@/domain/inventory.ts';
 import { setupBranches } from '@/domain/setup-branches.ts';
 import type { AutoMergeMethod } from '@/domain/setup-terms.ts';
@@ -23,6 +20,9 @@ import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { sha } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import type { AutoMerge, PreparationResult } from '@/release/domain/execution/types.ts';
+import { placeBlock, setupBlock } from '@/setup/blocks.ts';
+import { previousRender } from '@/setup/server/pull-requests.ts';
 
 const coAuthor = 'Co-authored-by: kjanat <6353477+kjanat@users.noreply.github.com>';
 const autoMergeSchema = mutableStruct({

@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
 import { crateMetadata, licenseText, npmManifest, pythonMetadata } from '@root/test/support/repositories.ts';
 import { Effect } from 'effect';
-import { discover } from '@/automation/managers';
-import { metadataProblems } from '@/automation/package-metadata';
-import { buildSnapshot } from '@/automation/snapshot';
+import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
+import { discover } from '@/discovery/discover.ts';
+import { buildSnapshot } from '@/discovery/snapshot/builder.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 
 function snapshot(files: Record<string, string>, extra: string[] = [], links: string[] = []): Snapshot {

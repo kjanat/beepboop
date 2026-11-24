@@ -4,8 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect';
 import { TestClock } from 'effect/testing';
-import { applyVersionFiles } from '@/automation/editors';
-import { latestVersion, registryRequest } from '@/automation/managers/verification';
+import { SessionStore } from '@/auth/adapters/d1/sessions.ts';
 import {
 	ApplicationConfiguration,
 	ApplicationSecrets,
@@ -15,18 +14,24 @@ import {
 	HttpTransport,
 } from '@/automation/service';
 import { Store } from '@/automation/store';
-import { Vault } from '@/automation/vault';
 import { call, send } from '@/contract/client';
 import { routes } from '@/contract/routes';
-import { https } from '@/distribution/assets';
+import { CredentialStore } from '@/credentials/adapters/d1/credentials.ts';
+import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
+import { SecretDeliveryStore } from '@/credentials/adapters/d1/secret-deliveries.ts';
+import { Vault } from '@/credentials/vault.ts';
+import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
+import { GitHubApp, makeGitHubApp } from '@/github/app.ts';
 import { GitHubTransport, gitHubRequest } from '@/github/transport.ts';
 import { classify, fromSync, recover } from '@/kernel/errors/classify.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { retryTransient } from '@/kernel/http/retry.ts';
-import { CredentialStore } from '@/persistence/d1/credentials';
+import { AuditStore } from '@/persistence/d1/audit';
 import type { Sql } from '@/persistence/d1/database';
 import { Database } from '@/persistence/d1/database';
-import { SessionStore } from '@/persistence/d1/sessions';
+import { https } from '@/publication/distribution/assets.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
+import { latestVersion, registryRequest } from '@/publication/registries/verification.ts';
 import { capture } from '@/tooling/runtime';
 import { readBody } from '@/webhook';
 
@@ -99,7 +104,7 @@ test('registry decoder defects remain observable instead of becoming outages', a
 		'https://registry.test/package',
 		() => '1.0.0',
 	));
-	expect(outage.kind).toBe('failed');
+	expect(outage._tag).toBe('LookupFailed');
 });
 
 test('registry lookup diagnostics distinguish transport, timeout and invalid responses without exposing error details', async () => {
@@ -127,14 +132,16 @@ test('registry lookup diagnostics distinguish transport, timeout and invalid res
 		},
 	];
 	for (const { request, reason } of attempts) {
-		expect(await Effect.runPromise(latestVersion(request, url, decode))).toEqual({ kind: 'failed', url, reason });
+		expect(await Effect.runPromise(latestVersion(request, url, decode))).toEqual(
+			VerificationOutcome.LookupFailed({ url, reason }),
+		);
 	}
 	for (const status of [403, 429, 503]) {
 		expect(await Effect.runPromise(latestVersion(() => Promise.resolve(new Response('', { status })), url, decode)))
-			.toEqual({ kind: 'failed', url, reason: `HTTP ${status}` });
+			.toEqual(VerificationOutcome.LookupFailed({ url, reason: `HTTP ${status}` }));
 	}
 	expect(await Effect.runPromise(latestVersion(() => Promise.resolve(new Response('', { status: 404 })), url, decode)))
-		.toEqual({ kind: 'missing', url });
+		.toEqual(VerificationOutcome.Missing({ url }));
 });
 
 test('malformed successful API responses are typed failures', async () => {
@@ -242,7 +249,12 @@ test('the application layer uses explicitly supplied database, GitHub, HTTP and 
 				return { results: [], meta: { changes: 1 } };
 			}),
 	};
-	const vault = new Vault(new Store(sql), new CredentialStore(sql), {}, 'test');
+	const vault = new Vault(
+		new AuditStore(sql),
+		{ credentials: new CredentialStore(sql), grants: new GrantStore(sql), deliveries: new SecretDeliveryStore(sql) },
+		{},
+		'test',
+	);
 	const http = () => Promise.resolve(Response.json({ injected: 'http' }));
 	const calls: string[] = [];
 	const supplied = Layer.mergeAll(
@@ -255,6 +267,7 @@ test('the application layer uses explicitly supplied database, GitHub, HTTP and 
 				}),
 		}),
 		Layer.succeed(HttpTransport, { fetch: http }),
+		Layer.effect(GitHubApp, makeGitHubApp({ GITHUB_APP_ID: 'test', GITHUB_APP_PRIVATE_KEY: '' }, 1)),
 		Layer.succeed(ApplicationSecrets, vault),
 		Layer.succeed(ApplicationConfiguration, {
 			env: {

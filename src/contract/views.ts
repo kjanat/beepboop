@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 import { githubJobKinds } from '@/domain/github-run-state.ts';
 import { releaseGate } from '@/domain/release-gates.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
-import { looseStruct, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
+import { looseStruct, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 export const tones = ['ok', 'active', 'waiting', 'warn', 'error', 'neutral'] as const;
 export type Tone = (typeof tones)[number];
@@ -40,22 +40,6 @@ export const executionView = looseStruct({
 	updatedAt: Schema.Finite,
 });
 export type ExecutionView = Decoded<typeof executionView>;
-
-export const releaseKinds = ['observes', 'unpublishable', 'promotes', 'prepares'] as const;
-export const streamRelease = mutableStruct({ kind: Schema.Literals(releaseKinds), summary: Schema.String });
-export type StreamRelease = Decoded<typeof streamRelease>;
-
-export const repositoryView = looseStruct({
-	id: Schema.Finite,
-	name: Schema.String,
-	defaultBranch: Schema.String,
-	sha: Schema.String,
-	suspended: Schema.optional(Schema.Boolean),
-	diagnostics: mutableArray(Schema.String),
-	configuration: Schema.optional(looseStruct({ streams: mutableRecord(Schema.String, Schema.Unknown) })),
-	releases: mutableRecord(Schema.String, streamRelease),
-});
-export type RepositoryView = Decoded<typeof repositoryView>;
 
 export const binaryProgress = mutableStruct({
 	legs: mutableArray(mutableStruct({
@@ -119,23 +103,6 @@ export const credentialsView = looseStruct({
 	deliveries: mutableArray(Schema.Unknown),
 });
 export type CredentialsView = Decoded<typeof credentialsView>;
-
-export const destinationView = looseStruct({
-	id: Schema.String,
-	name: Schema.String,
-	kind: Schema.String,
-	credential: Schema.String,
-	subscribeNew: Schema.Boolean,
-	enabled: Schema.Boolean,
-});
-export const notificationsView = looseStruct({
-	destinations: mutableArray(destinationView),
-	subscriptions: mutableArray(
-		looseStruct({ destinationId: Schema.String, registry: Schema.String, name: Schema.String }),
-	),
-	deliveries: mutableArray(Schema.Unknown),
-});
-export type NotificationsView = Decoded<typeof notificationsView>;
 
 export const approvalReadiness = looseStruct({
 	problems: mutableArray(Schema.String),

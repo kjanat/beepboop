@@ -1,0 +1,18 @@
+{
+	"name": "@beepboopbot/notifications",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./*": "./src/*"
+	},
+	"dependencies": {
+		"@beepboopbot/credentials": "workspace:*",
+		"@beepboopbot/domain": "workspace:*",
+		"@beepboopbot/kernel": "workspace:*",
+		"@beepboopbot/persistence": "workspace:*",
+		"@beepboopbot/publication": "workspace:*",
+		"@beepboopbot/release": "workspace:*",
+		"effect": "^4.1.2"
+	}
+}

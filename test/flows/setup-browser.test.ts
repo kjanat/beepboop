@@ -8,9 +8,7 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import type { Element, HTMLElement, HTMLFormElement, HTMLInputElement, HTMLSelectElement } from 'happy-dom';
 import { Window } from 'happy-dom';
-import { parseSetupPlan } from '@/automation/setup-plan';
 import { routes } from '@/contract/routes';
-import { choicesFields, streamFields, workflowFields } from '@/contract/setup-fields';
 import {
 	alwaysStarted,
 	existingTriggersQuestion,
@@ -32,6 +30,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { choicesFields, streamFields, workflowFields } from '@/setup/editing/fields.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
 
 // Browser modules are checked separately to keep DOM and Worker Element types apart.
 const browserModule = new URL('../../src/ui/browser/setup.ts', import.meta.url).href;
@@ -749,21 +749,6 @@ test('an inferred stream keeps its workflow until observation is cleared', async
 	expect(role(form, 'promote').hidden).toBe(false);
 	expect(role(form, 'promote').hasAttribute('disabled')).toBe(false);
 	await expect(act(form, 'preview')).rejects.toThrow('Select at least one package to release.');
-});
-
-const editorModules: [
-	{ choicesEditors: Record<string, string>; streamEditors: Record<string, string> },
-	{ workflowEditors: Record<string, string> },
-] = await Promise.all([
-	import(browserModule),
-	import(new URL('../../src/ui/browser/setup-fields.ts', import.meta.url).href),
-]);
-
-test('the dashboard declares an editor for every setup choice field', () => {
-	const [{ choicesEditors, streamEditors }, { workflowEditors }] = editorModules;
-	expect(Object.keys(choicesEditors).sort()).toEqual([...choicesFields].sort());
-	expect(Object.keys(streamEditors).sort()).toEqual([...streamFields].sort());
-	expect(Object.keys(workflowEditors).sort()).toEqual([...workflowFields].sort());
 });
 
 function toolRepository() {

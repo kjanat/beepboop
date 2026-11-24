@@ -25,65 +25,50 @@ jobs:
     steps:
       - name: Authenticate as Beepboop
         id: bot
-        uses: $/actions/token
+        continue-on-error: true
+        uses: kjanat/beepboop/actions/token@v1
         with:
           purpose: publish-actions
           permission-contents: write
           permission-workflows: write
+      - name: Stop when superseded
+        if: steps.bot.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_CODE: >-
+            .github bun.lock bunfig.toml mise.toml package.json tsconfig.json packages/actions packages/discovery
+            packages/domain packages/github packages/host packages/kernel packages/publication src/contract/http.ts
+            src/tooling/actions src/tooling/runtime.ts
+        run: |
+          head=$(gh api "repos/${GITHUB_REPOSITORY}/branches/${GITHUB_REF_NAME}" --jq .commit.sha)
+          changed=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${head}" --paginate --jq '.files[].filename')
+          while IFS= read -r file; do
+            for path in ${PUBLISH_CODE}; do
+              if [[ "${file}" == "${path}" || "${file}" == "${path}/"* ]]; then
+                echo "Superseded: \`${file}\` changed at \`${head}\`." >> "${GITHUB_STEP_SUMMARY}"
+                exit 0
+              fi
+            done
+          done <<< "${changed}"
+          echo "::error::Authentication failed although the publish code at ${GITHUB_SHA} matches ${GITHUB_REF_NAME}"
+          exit 1
       - name: Checkout source
+        if: steps.bot.outcome == 'success'
         uses: actions/checkout@v7
         with: { ref: "${{ github.sha }}", fetch-depth: 0, token: "${{ steps.bot.outputs.token }}" }
-      - uses: jdx/mise-action@v5
-      - run: runner i -f
+      - if: steps.bot.outcome == 'success'
+        uses: jdx/mise-action@v5
+      - if: steps.bot.outcome == 'success'
+        run: runner i -f
       - name: Publish distribution commit
         id: publish
-        shell: bash -euo pipefail {0}
+        if: steps.bot.outcome == 'success'
         env:
-          repository_url: ${{ join(fromJSON(format('["{0}","{1}"]', github.server_url, github.repository)), '/') }}
-          "${{ insert }}": ${{ fromJSON(steps.bot.outputs.gitId) }}
-        run: |
-          head=$(git rev-parse HEAD)
-          [[ "${head}" == "${GITHUB_SHA}" ]]
-          git diff --exit-code HEAD
-          index_dir=$(mktemp -d)
-          trap 'rm -rf "${index_dir}"' EXIT
-          export GIT_INDEX_FILE="${index_dir}/index"
-          git read-tree "${GITHUB_SHA}"
-          bundle_dir="${index_dir}/runtime"
-          bun src/tooling/actions/bundle.ts "${bundle_dir}"
-          for bundled in "${bundle_dir}"/*.ts; do
-            blob=$(git hash-object -w "${bundled}")
-            mode=100644
-            if [[ "$(head -c2 "${bundled}")" == '#!' ]]; then mode=100755; fi
-            git update-index --cacheinfo "${mode},${blob},actions/runtime/${bundled##*/}"
-          done
-          tree=$(git write-tree)
-          parents=(-p "${GITHUB_SHA}")
-          previous=$(git ls-remote --exit-code origin refs/heads/actions) || {
-            result=$?
-            if [[ "${result}" -ne 2 ]]; then exit "${result}"; fi
-          }
-          if [[ -n "${previous}" ]]; then
-            read -r previous _ <<< "${previous}"
-            git fetch --no-tags origin "${previous}"
-            previous_source=$(git rev-parse "${previous}^1")
-            git merge-base --is-ancestor "${previous_source}" "${GITHUB_SHA}"
-            parents+=(-p "${previous}")
-            if [[ "$(git rev-parse "${previous}:actions")" == "$(git rev-parse "${tree}:actions")" ]]; then
-              echo "Actions are unchanged since [\`${previous}\`](${repository_url}/commit/${previous})." >> "${GITHUB_STEP_SUMMARY}"
-              echo "commit=${previous}" >> "${GITHUB_OUTPUT}"
-              exit 0
-            fi
-          fi
-          commit=$(git commit-tree "${tree}" "${parents[@]}" -m "Publish Actions from ${GITHUB_SHA}")
-          git push origin "${commit}:refs/heads/actions"
-          echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
-          {
-            echo "Source commit: [\`${GITHUB_SHA}\`](${repository_url}/commit/${GITHUB_SHA})"
-            echo "Published Actions commit: [\`${commit}\`](${repository_url}/commit/${commit})"
-          } >> "${GITHUB_STEP_SUMMARY}"
+          "${{ insert }}": ${{ fromJSON(steps.bot.outputs.gitId || '{}') }}
+        run: bun src/tooling/actions/distribute.ts
       - name: Tag Actions release
+        if: steps.bot.outcome == 'success'
         env:
           DISTRIBUTION_COMMIT: ${{ steps.publish.outputs.commit }}
-          "${{ insert }}": ${{ fromJSON(steps.bot.outputs.gitId) }}
+          "${{ insert }}": ${{ fromJSON(steps.bot.outputs.gitId || '{}') }}
         run: bun src/tooling/actions/release.ts

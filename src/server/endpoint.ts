@@ -43,7 +43,7 @@ export function handleRequest(request: Request): Effect.Effect<Response, DomainE
 		const refreshed = refreshOutage.pipe(logRecovered('github-status.failed'));
 		if (service.defer) service.defer(Effect.runPromiseWith(yield* Effect.context<Automation>())(refreshed));
 		else yield* refreshed;
-		const outage = knownOutage();
+		const outage = knownOutage(service.dependencies.transport);
 		if (!outage) return response;
 		const annotated = new Response(response.body, response);
 		annotated.headers.set('Beepboop-GitHub-Status', outageLine(outage));

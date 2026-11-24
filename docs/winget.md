@@ -66,9 +66,11 @@ installer success codes are only emitted when explicitly configured.
 
 ## Development
 
-The generator is in `src/distribution/winget`. `bun run winget` and the Action
-run `actions/runtime/generate-winget.ts`. Publication bundles it with the other
-Action runtimes, so the Action installs no packages.
+The generator is in `packages/publication/src/distribution/winget`, and its
+command line is `packages/publication/src/bins/winget.ts`. `bun run winget` runs
+`packages/actions/src/generate-winget.ts`. Publication bundles it with the
+other Action runtimes into `actions/runtime/generate-winget.ts`, so the Action
+installs no packages.
 
 ## Publish the Action
 
@@ -78,6 +80,15 @@ runtimes. When the resulting `actions/` tree differs from the previous
 distribution commit, it publishes the source snapshot with the bundles to the
 `actions` branch. An unchanged `actions/` tree publishes no new commit. Other
 Actions and their shared runtime keep their paths.
+
+Publication runs one at a time, and a newer push replaces the run waiting for
+its turn. Beepboop issues the publication token to a run whose revision is
+behind `master` when the publish workflow, the local actions and reusable
+workflows it uses, and the code the publish job runs or bundles are identical,
+with the same file modes, at the head of `master`. That code is listed in
+`publishCode` in `packages/auth/src/workflow-token.ts`. A run whose token
+request fails ends as superseded when `.github/` or that code changed after its
+revision, and fails otherwise.
 
 A push whose head commit message contains `Actions-Release: skip` publishes
 and tags nothing. The next push without it publishes the complete snapshot,

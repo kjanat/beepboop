@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, mock, setSystemTime, spyOn } from 'bun:test';
 import { env as runtimeEnv } from '@root/test/support/cloudflare-workers.ts';
 import { TestD1 } from '@root/test/support/d1.ts';
-import { deferBackground, drainBackground } from '@root/test/support/do-storage.ts';
+import { deferBackground, drainBackground, MemoryStorage } from '@root/test/support/do-storage.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { appId, FakeGitHub, ownerId } from '@root/test/support/github.ts';
 import { Network } from '@root/test/support/network.ts';
 import { FakeNpm } from '@root/test/support/registries.ts';
 import { FakeNamespace } from '@root/test/support/rpc.ts';
+import type { StorageTrace } from '@root/test/support/storage-trace.ts';
+import { startTrace, testFile } from '@root/test/support/storage-trace.ts';
 import { FakeWorkflow } from '@root/test/support/workflows.ts';
 import { Effect, Layer, Schedule } from 'effect';
 import type { JWK } from 'jose';
@@ -17,9 +19,13 @@ import { PublishBudget } from '@/automation/publish-budget';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import type { Automation, AutomationBindings } from '@/automation/service';
 import { applicationLayer } from '@/automation/service';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import * as fetcher from '@/kernel/http/fetcher.ts';
 import { TransientBackoff } from '@/kernel/http/retry.ts';
 import { cliToken, sha256Hex } from '@/kernel/schema/ids.ts';
 import { serve } from '@/server/endpoint';
+
+const productionFetch = fetcher.platformFetch;
 
 export const origin = 'https://beepboop.kjanat.dev';
 export const issuer = 'https://auth.kjanat.com';
@@ -70,11 +76,13 @@ export class World {
 		private readonly actions: SigningKey,
 		private readonly openauth: SigningKey,
 		appKey: string,
+		private readonly trace: StorageTrace | undefined,
 	) {
-		this.budgets = new FakeNamespace('PublishBudget', state => new PublishBudget(state, this.env));
+		this.budgets = new FakeNamespace('PublishBudget', state => new PublishBudget(state, this.env), trace);
 		this.coordinators = new FakeNamespace(
 			'AutomationCoordinator',
 			state => new AutomationCoordinator(state, this.env, this.application),
+			trace,
 		);
 		this.env = {
 			DB: this.db,
@@ -114,18 +122,29 @@ export class World {
 		this.network.serve(new URL(origin).host, request => this.handle(request));
 	}
 
-	static async create(): Promise<World> {
+	static async create(file = testFile()): Promise<World> {
 		setSystemTime(new Date(epoch));
+		const platformFetch: Fetcher = function(this: unknown, input, init) {
+			return productionFetch.call(this, input, init);
+		};
+		mock.module('@/kernel/http/fetcher.ts', () => ({ ...fetcher, platformFetch }));
 		const [actions, openauth, appKey] = await keys;
-		const world = new World(actions, openauth, appKey);
+		const world = new World(actions, openauth, appKey, startTrace(file));
 		for (const key of Object.keys(runtimeEnv)) delete runtimeEnv[key];
 		Object.assign(runtimeEnv, world.env);
 		spyOn(globalThis, 'fetch').mockImplementation(Object.assign(world.network.fetch, { preconnect: fetch.preconnect }));
 		return world;
 	}
-	dispose(): void {
+	storage(label = 'storage'): MemoryStorage {
+		return new MemoryStorage(label, this.trace);
+	}
+	async dispose(): Promise<void> {
+		this.trace?.finish();
 		mock.restore();
 		setSystemTime();
+		await Promise.all(
+			[...this.coordinators.instances.values()].map(({ object }) => AutomationCoordinator.dispose(object)),
+		);
 	}
 
 	run<A, E>(work: Effect.Effect<A, E, Automation>): Promise<A> {
@@ -274,15 +293,16 @@ export class World {
 
 export function eachWorld(bind: (world: World) => void): void {
 	let current: World | undefined;
+	const file = testFile();
 	beforeEach(async () => {
-		current = await World.create();
+		current = await World.create(file);
 		bind(current);
 	});
 	afterEach(async () => {
 		try {
 			await drainBackground();
 		} finally {
-			if (current) current.dispose();
+			if (current) await current.dispose();
 		}
 	});
 }

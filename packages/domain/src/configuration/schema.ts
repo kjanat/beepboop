@@ -17,6 +17,7 @@ import {
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { parseReleaseIdentity } from '@/domain/package-identity.ts';
 import { presetReferencePattern } from '@/domain/preset.ts';
+import { purl } from '@/domain/purl/index.ts';
 import { releaseStart, releaseStarts, versionBump } from '@/domain/release-start.ts';
 import {
 	approvalOfPublishWhen,
@@ -54,7 +55,6 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { purl } from '@/package-url';
 
 const managerName = Schema.Literals(managerNames);
 

@@ -1,4 +1,7 @@
 import { expect, test } from 'bun:test';
+import type { RunJob } from '@/github/run-state.ts';
+import { classifyJob, classifyRun } from '@/github/run-state.ts';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 import {
 	publishedAfterFailure,
 	rechecked,
@@ -6,13 +9,10 @@ import {
 	recoverable,
 	runFailedNote,
 	settleRun,
-} from '@/automation/execution';
-import { githubFailureReason } from '@/automation/run-labels';
-import type { Execution } from '@/automation/types';
-import type { RunJob } from '@/github/run-state.ts';
-import { classifyJob, classifyRun } from '@/github/run-state.ts';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
-import { runStateLabel } from '@/server/releases';
+} from '@/release/domain/execution/execution.ts';
+import { githubFailureReason } from '@/release/domain/execution/run-labels.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { runStateLabel } from '@/release/domain/summaries.ts';
 
 function execution(): Execution {
 	return decodeExecutionV1({

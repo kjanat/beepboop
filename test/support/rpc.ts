@@ -1,5 +1,6 @@
 import type { deserialize } from 'bun:jsc';
 import { cloned, durableObjectState, MemoryStorage } from '@root/test/support/do-storage.ts';
+import type { StorageTrace } from '@root/test/support/storage-trace.ts';
 
 export interface RpcCall {
 	object: string;
@@ -34,11 +35,12 @@ export class FakeNamespace<T extends Rpc.DurableObjectBranded> {
 	constructor(
 		readonly className: string,
 		private readonly create: (state: DurableObjectState) => T,
+		private readonly trace?: StorageTrace,
 	) {}
 	instance(name: string): Instance<T> {
 		const existing = this.instances.get(name);
 		if (existing) return existing;
-		const storage = new MemoryStorage();
+		const storage = new MemoryStorage(`${this.className}:${name}`, this.trace);
 		const created = { name, object: this.create(durableObjectState(name, storage)), storage };
 		this.instances.set(name, created);
 		return created;

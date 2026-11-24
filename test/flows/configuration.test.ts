@@ -10,6 +10,8 @@ import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/su
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
+import { decodeRepositoryV1 } from '@/discovery/repositories/codec-v1.ts';
+import { validateAgainst } from '@/discovery/validation/validate.ts';
 import type { ManagerName } from '@/domain/catalog.ts';
 import { parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
 import { configurationSchema, issueMessage, refPolicyValue } from '@/domain/configuration/schema.ts';
@@ -20,7 +22,7 @@ import {
 	parseReleaseIdentity,
 	releaseIdentity,
 } from '@/domain/package-identity.ts';
-import { validateAgainst } from '@/domain/validate';
+import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/domain/purl/index.ts';
 import { workflowSetup } from '@/domain/workflow-setup.ts';
 import { record } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
@@ -36,10 +38,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/package-url';
 import { storedConfiguration } from '@/persistence/codecs/configuration';
-import { decodeRepositoryV1 } from '@/persistence/codecs/v1';
-import { executionId, planIdentity, releaseEventId } from '@/persistence/identity-keys';
+import { executionId, planIdentity, releaseEventId } from '@/release/domain/identity-keys.ts';
 import { assertCurrent, schemaPath } from '@/tooling/schema/render';
 
 let world: World;

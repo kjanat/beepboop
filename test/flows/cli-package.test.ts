@@ -1,0 +1,72 @@
+import { expect, test } from 'bun:test';
+import { Effect, Exit } from 'effect';
+import { generatedJsr, leakedSpecifiers } from '@/tooling/cli/manifest';
+
+test('the CLI bundle check finds workspace specifiers in every import form', () => {
+	const bundle = [
+		'#!/usr/bin/env bun',
+		"import { Effect } from 'effect';",
+		"import { routes } from '@/contract/routes';",
+		'export * from "@beepboop/kernel";',
+		"const views = await import('@beepboopbot/discovery/contract.ts');",
+		"require('@/cli/main');",
+		"import '@/contract/views';",
+		'import x from"@/a";export{y}from"@/b";',
+		'import(/* keep */ "@/c"); import /* keep */ "@/d";',
+		"var __require = createRequire(import.meta.url); __require('@/e'); require.resolve('@/f', { paths: [] });",
+		"import { cli } from '@kjanat/dreamcli';",
+	].join('\n');
+	expect(leakedSpecifiers(bundle)).toEqual([
+		'@/contract/routes',
+		'@beepboop/kernel',
+		'@beepboopbot/discovery/contract.ts',
+		'@/cli/main',
+		'@/contract/views',
+		'@/a',
+		'@/b',
+		'@/c',
+		'@/d',
+		'@/e',
+		'@/f',
+	]);
+});
+
+test('the CLI bundle check ignores import-like text in strings and comments', () => {
+	const bundle = [
+		"import { cli } from '@kjanat/dreamcli';",
+		"const help = 'Run beepboop auth login, see @/docs';",
+		'const example = `import "@/example";`;',
+		"// import { routes } from '@/contract/routes';",
+		'/* require("@beepboop/kernel") */',
+		'// __require("@/contract/views")',
+	].join('\n');
+	expect(leakedSpecifiers(bundle)).toEqual([]);
+});
+
+test('the CLI bundle check ignores helper-call text in template literals and finds helper calls with template arguments', () => {
+	const text = [
+		'const help = `Example __require("@/example") ${name}`;',
+		'const tagged = tag`Example require.resolve("@/example")`;',
+	].join('\n');
+	expect(leakedSpecifiers(text)).toEqual([]);
+	expect(leakedSpecifiers('__require(`@/real`);')).toEqual(['@/real']);
+	expect(leakedSpecifiers('require.resolve(`@/resolved`, { paths: [] });')).toEqual(['@/resolved']);
+});
+
+const npm = { name: '@kjanat/beepboop', version: '0.8.0' };
+
+test('the build writes the package.json version into jsr.json and keeps its layout', async () => {
+	const tabs = '{\n\t"name": "@kjanat/beepboop",\n\t"version": "0.7.2",\n\t"license": "GPL-3.0-only"\n}\n';
+	expect(await Effect.runPromise(generatedJsr(npm, tabs))).toBe(tabs.replace('0.7.2', '0.8.0'));
+	const spaces = '{\n  "name": "@kjanat/beepboop",\n  "license": "GPL-3.0-only"\n}\n';
+	expect(await Effect.runPromise(generatedJsr(npm, spaces))).toBe(
+		'{\n  "name": "@kjanat/beepboop",\n  "license": "GPL-3.0-only",\n  "version": "0.8.0"\n}\n',
+	);
+	const current = tabs.replace('0.7.2', '0.8.0');
+	expect(await Effect.runPromise(generatedJsr(npm, current))).toBe(current);
+});
+
+test('the build refuses a jsr.json that names another package', async () => {
+	const exit = await Effect.runPromiseExit(generatedJsr(npm, '{ "name": "@kjanat/other", "version": "0.8.0" }'));
+	expect(Exit.isFailure(exit) && String(exit.cause)).toContain('npm and JSR must share a name');
+});

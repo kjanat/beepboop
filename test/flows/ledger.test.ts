@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Result } from 'effect';
-import type { LedgerRecord } from '@/automation/ledger';
+import type { LedgerRecord } from '@/publication/ledger.ts';
 import {
 	availability,
 	claim,
@@ -11,7 +11,7 @@ import {
 	rateLimit,
 	rateLimitAttempts,
 	reuse,
-} from '@/automation/ledger';
+} from '@/publication/ledger.ts';
 
 const now = Date.parse('2026-11-09T10:00:00.000Z');
 const planned: LedgerRecord = {

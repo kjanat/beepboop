@@ -1,15 +1,15 @@
 ---
-import { runFailedNote } from '@/automation/execution';
-import type { Execution } from '@/automation/types.ts';
 import Arrow from '@/components/Arrow.astro';
 import Badge from '@/components/Badge.astro';
 import Commit from '@/components/Commit.astro';
 import Field from '@/components/Field.astro';
 import RecoverForm from '@/components/RecoverForm.astro';
 import Time from '@/components/Time.astro';
-import { githubHref } from '@/contract/links';
 import { packageLabel } from '@/domain/package-label';
-import { runStateLabel } from '@/server/releases';
+import { githubHref } from '@/publication/links.ts';
+import { runFailedNote } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { runStateLabel } from '@/release/domain/summaries.ts';
 import { runCard } from '@/server/views/runs.ts';
 import { executionTone, publicationTone } from '@/server/views/tone.ts';
 
@@ -147,6 +147,40 @@ const card = runCard(run, now);
 			</ul>
 			<button class="primary" disabled hidden={card.automatic}>
 				{run.version ? `Publish ${run.version}` : 'Publish this commit'}
+			</button>
+		</form>
+	)}
+	{card.checksStop && (
+		<form
+			data-action="checks"
+			method="post"
+			action="/api/executions/checks"
+			class="actions"
+		>
+			<input type="hidden" name="id" value={run.id}>
+			{card.rerunnable && (
+				<button
+					class="primary"
+					name="choice"
+					value="rerun"
+					title="Rerun the failed jobs of each failing check and publish once they pass"
+				>
+					Rerun and wait
+				</button>
+			)}
+			<button
+				name="choice"
+				value="skip"
+				title="This release ignores the checks that stop it"
+			>
+				Release without the check
+			</button>
+			<button
+				name="choice"
+				value="always"
+				title="Every later release of this stream ignores these checks"
+			>
+				Always release without the check
 			</button>
 		</form>
 	)}

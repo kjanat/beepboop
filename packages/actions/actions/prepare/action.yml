@@ -1,0 +1,32 @@
+name: Prepare release changes
+description: Apply an immutable release plan or submit generated release files for a pull request
+inputs:
+  context:
+    description: JSON context returned by begin, including its runner-local contextFile
+    required: true
+  mode:
+    description: apply before generators, submit after generators and checks
+    required: true
+  service:
+    description: Release automation service origin
+    default: https://beepboop.kjanat.dev
+outputs:
+  result:
+    description: Prepared pull request result
+    value: ${{ steps.submit.outputs.result }}
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      id: bun
+      uses: $/packages/actions/actions/deps/bun
+    - name: Prepare changes
+      shell: bash
+      env: { RELEASE_CONTEXT: "${{ inputs.context }}", PREPARATION_MODE: "${{ inputs.mode }}" }
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/prepare.ts"
+    - name: Submit changes
+      id: submit
+      if: inputs.mode == 'submit'
+      shell: bash
+      env: { SERVICE_ORIGIN: "${{ inputs.service }}" }
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" prepared

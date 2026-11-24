@@ -10,7 +10,7 @@ app-manifest.json
 # Generated application bundles
 /dist/
 /src/**/dist/
-/actions/**/dist/
+/packages/actions/actions/**/dist/
 
 .astro/
 

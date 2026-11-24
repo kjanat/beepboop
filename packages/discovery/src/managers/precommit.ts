@@ -1,0 +1,85 @@
+import { Effect, Result } from 'effect';
+import type { Scalar } from 'yaml';
+import { isMap, isScalar, isSeq } from 'yaml';
+import { hookConfig } from '@/domain/catalog.ts';
+import type { Edit, HookReference, Snapshot } from '@/domain/inventory.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import { validYaml } from '@/kernel/parse/yaml.ts';
+import { shaPattern } from '@/kernel/schema/ids.ts';
+
+interface Entry {
+	repository: string;
+	rev: Scalar;
+	range: [number, number, number];
+}
+function entries(source: string): Result.Result<Entry[], DomainError> {
+	return Result.gen(function*() {
+		const doc = yield* validYaml(source, 'Invalid pre-commit configuration');
+		const repos = doc.get('repos', true);
+		if (!isSeq(repos)) return yield* Result.fail(precondition('Expected pre-commit repos sequence'));
+		const found: Entry[] = [];
+		for (const item of repos.items) {
+			if (!isMap(item)) return yield* Result.fail(precondition('Invalid pre-commit repository'));
+			const repo = item.get('repo');
+			if (repo === 'local' || repo === 'meta') continue;
+			if (typeof repo !== 'string') return yield* Result.fail(precondition('Expected hook repository URL'));
+			const repository = repo.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/)?.[1];
+			if (!repository) continue;
+			const rev = item.get('rev', true);
+			if (!isScalar(rev) || typeof rev.value !== 'string' || !rev.range) {
+				return yield* Result.fail(precondition('Expected scalar hook revision'));
+			}
+			found.push({ repository, rev, range: rev.range });
+		}
+		return found;
+	});
+}
+export function discoverHooks(snapshot: Snapshot): Result.Result<HookReference[], DomainError> {
+	return Result.gen(function*() {
+		const references: HookReference[] = [];
+		for (const [path, source] of Object.entries(snapshot.files)) {
+			if (!hookConfig.test(path)) continue;
+			for (const entry of yield* entries(source)) {
+				references.push({ path, repository: entry.repository, ref: String(entry.rev.value) });
+			}
+		}
+		return references;
+	});
+}
+export interface HookRelease {
+	repository: { name: string };
+	commit: string;
+	tag?: string;
+}
+export function planHookUpdates(snapshot: Snapshot, release: HookRelease): Effect.Effect<Edit[], DomainError> {
+	return Effect.gen(function*() {
+		const edits: Edit[] = [];
+		for (const [path, before] of Object.entries(snapshot.files)) {
+			if (!hookConfig.test(path)) continue;
+			const updates = (yield* Effect.fromResult(entries(before))).filter(entry =>
+				entry.repository.toLowerCase() === release.repository.name.toLowerCase()
+			);
+			let after = before;
+			for (const { rev, range } of updates.sort((a, b) => b.range[0] - a.range[0])) {
+				const target = shaPattern.test(String(rev.value)) ? release.commit : release.tag;
+				if (!target) return yield* precondition('Hook update requires an upstream version tag');
+				if (!shaPattern.test(release.commit)) return yield* precondition('Invalid upstream release commit');
+				const original = before.slice(range[0], range[1]);
+				const replacement = original.startsWith("'")
+					? `'${target.replaceAll("'", "''")}'`
+					: original.startsWith('"')
+					? JSON.stringify(target)
+					: /^[A-Za-z0-9_./-]+$/.test(target)
+					? target
+					: JSON.stringify(target);
+				after = after.slice(0, range[0]) + replacement + after.slice(range[1]);
+			}
+			if (after !== before) {
+				yield* Effect.fromResult(entries(after));
+				edits.push({ path, before, after });
+			}
+		}
+		return edits;
+	});
+}

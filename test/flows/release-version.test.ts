@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Effect, Exit } from 'effect';
-import { resolvePackageVersion, unreleasedManifestVersion } from '@/automation/release-version';
 import type { Package } from '@/domain/inventory.ts';
+import { resolvePackageVersion, unreleasedManifestVersion } from '@/release/domain/version.ts';
 
 function manifest(version = '1.2.0'): Package {
 	return {

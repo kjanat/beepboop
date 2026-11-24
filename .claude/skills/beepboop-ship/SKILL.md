@@ -10,10 +10,13 @@ Pipe every command that may print configuration through `envctl redact`.
 Never hide output with `head`, `tail` or `>/dev/null`; write long output to a
 file in the scratchpad and search it with `rg`.
 
-Every agent shares the scratchpad. Start the name of every scratch file with
-the branch name, with each `/` replaced by `-`: branch `fix/release-status`
-writes `fix-release-status-msg.txt`, `fix-release-status-gate.log` and
-`fix-release-status-pr.md`.
+Every agent shares the scratchpad. Keep all scratch files in a directory of your
+own, `<scratchpad>/<branch>/`, with each `/` in the branch name replaced by `-`:
+branch `fix/release-status` writes `<scratchpad>/fix-release-status/msg.txt`,
+`<scratchpad>/fix-release-status/gate.log` and
+`<scratchpad>/fix-release-status/pr.md`. Call that directory `<scratch>`. Create
+it with `mkdir` before the first file. Never delete scratch files by prefix or
+glob.
 
 ## 1. Branch
 
@@ -28,8 +31,8 @@ Never stash. Never use `git checkout --` or `git restore`.
   and restoring it with Edit.
 - Format: `bunx @kjanat/fmt`. Organize imports: `bunx biome check --write <files>`.
   Unused imports: `bunx biome check --write --unsafe <files>`.
-- Gate: `run gate 2>&1 | envctl redact > <scratch>/<branch>-gate.log`, then
-  `rg -n "finished in|^\[test *\] +[0-9]+ (pass|fail)|\(fail\)|Ran [0-9]+ tests|exit [1-9]|×" <scratch>/<branch>-gate.log`.
+- Gate: `run gate 2>&1 | envctl redact > <scratch>/gate.log`, then
+  `rg -n "finished in|^\[test *\] +[0-9]+ (pass|fail)|\(fail\)|Ran [0-9]+ tests|exit [1-9]|×" <scratch>/gate.log`.
   Every task must exit 0 and `0 fail`.
 - Worker build: `run deploy:dry` when `src/` changed.
 - Browser: `run test:browser` when `src/components`, `src/ui` or styles changed.
@@ -38,7 +41,7 @@ Never stash. Never use `git checkout --` or `git restore`.
 
 ## 3. Commit
 
-Write the message to `<scratch>/<branch>-msg.txt`. Subject at most 50
+Write the message to `<scratch>/msg.txt`. Subject at most 50
 characters, imperative, active voice. Body says what the change does in plain
 sentences. Set `msg` to that path, then lint it:
 
@@ -49,13 +52,13 @@ node .claude/skills/beepboop-ship/cop/run.mjs "$msg"
 `[]` means clean. Fix every finding (stock words such as "Keep", "named",
 "latest", "records", "no longer", and participial post-modifiers) and lint
 again. Stage named files with `git add <files>` in its own command, then
-`git commit --file <scratch>/<branch>-msg.txt` in its own command. The
+`git commit --file <scratch>/msg.txt` in its own command. The
 pre-commit hook reruns the gate; send its output to a file. Never name an AI
 model in the commit.
 
 Run `git log -1` and compare its subject and body with your message file. If
 the commit carries another message, amend it with
-`git commit --amend --file <scratch>/<branch>-msg.txt` before you push.
+`git commit --amend --file <scratch>/msg.txt` before you push.
 
 ## 4. Rebase and push
 
@@ -67,11 +70,11 @@ rerun `run check` and the tests, then push. First push:
 
 ## 5. Pull request
 
-Body file `<scratch>/<branch>-pr.md`: the problem in one or two sentences, the fix, a
+Body file `<scratch>/pr.md`: the problem in one or two sentences, the fix, a
 `Proof:` line naming the gate result and each test that fails without the
 change, and a last line `Created with <model> in Claude Code.` No bare `@name`.
 Open it with
-`gh pr create --repo kjanat/beepboop --base master --head <branch> --title "<subject>" --body-file <scratch>/<branch>-pr.md`.
+`gh pr create --repo kjanat/beepboop --base master --head <branch> --title "<subject>" --body-file <scratch>/pr.md`.
 
 ## 6. Wait
 
@@ -86,14 +89,19 @@ It reads Codex state only from comments by `chatgpt-codex-connector[bot]`. When
 `code_review` for the head commit, it prints the check conclusions and the Codex
 state. It exits 0 when `code_review.has_any_findings` is `false` and 3
 otherwise. It exits 1 when a check failed before Codex finished, and 2 after an
-hour without a result.
+hour without a result. It exits 4 and prints `conflicting` as soon as GitHub
+reports `mergeable` as `CONFLICTING`, because GitHub runs no CI on a
+conflicting PR. `UNKNOWN` keeps polling. A failed or undecodable `gh` call is
+retried up to 5 times, 2 to 30 seconds apart. When the retries run out it prints
+`gh error: <message>` and exits 5. Exit 5 says nothing about the checks.
 
 ## 7. Merge gate
 
 Merge only when all hold on the head commit:
 
 - `verify`, `CodeQL` and `browser` concluded `SUCCESS`.
-- `wait.ts` exited 0. On exit 3, read the inline review comments
+- `wait.ts` exited 0. On exit 5, run `wait.ts` again. On exit 4, `git fetch origin master`, rebase onto
+  `origin/master`, rerun the gate, force-push with lease, and wait again. On exit 3, read the inline review comments
   (`gh api repos/kjanat/beepboop/pulls/<pr>/comments`), fix each real finding
   with a failing test, push, and wait again. Reply to each finding, prefixed by
   `> [!NOTE]\n> 🤖 **<model> responding on behalf of kjanat**`, naming the
@@ -108,7 +116,10 @@ Merge only when all hold on the head commit:
 Run the check and the merge as separate commands:
 `gh pr merge <pr> --repo kjanat/beepboop --squash --match-head-commit <sha>`.
 
-## 8. Report
+## 8. Clean up and report
+
+Delete your scratch directory by its literal path, for example
+`rm -r /path/to/scratchpad/fix-release-status`. Never delete by prefix or glob.
 
 Return the PR URL, the merge state, the merge time, the test names that prove
 the change, and any decision the caller must know about. Nothing else.

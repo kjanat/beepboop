@@ -2,15 +2,16 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { publishRefs } from '@root/actions/runtime/refs.ts';
 import { commitAll, gitOutput, materialize } from '@root/test/support/actions.ts';
 import { Effect, Exit, Schema } from 'effect';
+import { publishRefs } from '@/actions/refs.ts';
 import type { Package } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { registry } from '@/domain/package-publication.ts';
 import type { RefPolicy } from '@/domain/refs.ts';
-import { moduleTagPrefixes, planRefs, versionTagged } from '@/domain/refs.ts';
 import { semVer } from '@/domain/version.ts';
+import { moduleTagPrefixes, planRefs, versionTagged } from '@/release/domain/refs.ts';
+import { refsRequest } from '@/release/domain/refs-request.ts';
 
 const commit = 'a'.repeat(40), other = 'b'.repeat(40), oid = 'c'.repeat(40);
 const policy: RefPolicy = { phase: 'version', prefix: 'rshellcheck-v', aliases: [], signed: false };
@@ -227,4 +228,28 @@ test('a replacing ref plan that already landed pushes again without failing its 
 	} finally {
 		dispose();
 	}
+});
+
+test('a ref call becomes a plan, a plan from an artifact or a completion, and an artifact rides alone', async () => {
+	const artifact = { id: 7, digest: `sha256:${'d'.repeat(64)}` };
+	const file = { path: 'dist/index.js', before: '', after: 'export {};\n' };
+	const decided = (...args: Parameters<typeof refsRequest>) =>
+		Effect.runPromise(
+			refsRequest(...args).pipe(Effect.match({ onFailure: error => error.message, onSuccess: request => request })),
+		);
+	expect(
+		await Promise.all([
+			decided(false, [file], undefined),
+			decided(false, [], artifact),
+			decided(true, [], undefined),
+			decided(true, [], artifact),
+			decided(false, [file], artifact),
+		]),
+	).toEqual([
+		{ _tag: 'PlanRefs', files: [file] },
+		{ _tag: 'PlanFromArtifact', artifact },
+		{ _tag: 'CompleteRefs' },
+		'Unexpected distribution artifact',
+		'Unexpected distribution artifact',
+	]);
 });

@@ -15,7 +15,7 @@ These files in this repository define the behaviour:
 - `packages/domain/src/configuration/schema.ts` holds the zod schema for `.github/beepboop.json`.
   `schemas/v1.json` is generated from it and is served at
   `https://beepboop.kjanat.dev/schema/v1.json`.
-- `src/contract/setup.ts` holds `setupChoicesSchema` for the choices file.
+- `packages/setup/src/contract.ts` holds `setupChoicesSchema` for the choices file.
 - `docs/automation.md`, `docs/cli.md` and `docs/release-planning.md` explain
   the behaviour.
 

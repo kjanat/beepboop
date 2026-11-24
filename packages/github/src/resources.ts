@@ -14,7 +14,7 @@ export const installationSchema = mutableStruct({
 	suspended_at: looseSchema,
 	permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
-export const accessTokenSchema = mutableStruct({ token: textSchema });
+export const accessTokenSchema = mutableStruct({ token: textSchema, expires_at: Schema.optional(Schema.String) });
 export const repositorySchema = mutableStruct({
 	id: countSchema,
 	full_name: Schema.String,
@@ -48,6 +48,10 @@ export const createdTagSchema = mutableStruct({
 export const treeSchema = mutableStruct({
 	truncated: looseSchema,
 	tree: mutableArray(mutableStruct({ path: textSchema, type: textSchema, mode: textSchema })),
+});
+export const blobTreeSchema = mutableStruct({
+	truncated: looseSchema,
+	tree: mutableArray(mutableStruct({ path: textSchema, type: textSchema, mode: textSchema, sha: textSchema })),
 });
 export const contentSchema = mutableStruct({ encoding: looseSchema, content: looseSchema, size: looseSchema });
 export const namedSchema = mutableStruct({ name: textSchema });

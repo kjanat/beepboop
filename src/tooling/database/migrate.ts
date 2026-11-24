@@ -26,6 +26,7 @@ const backfillMessage = Schema.Union([
 interface Migration {
 	mode: 'local' | 'remote';
 	persistTo?: string;
+	migrations?: string;
 }
 
 const messages = {
@@ -43,7 +44,9 @@ class MigrationFailure extends Error {
 	}
 }
 
-export async function migrateDatabase({ mode, persistTo }: Migration) {
+export async function migrateDatabase(
+	{ mode, persistTo, migrations = join(root, 'packages/persistence/migrations') }: Migration,
+) {
 	if (mode === 'remote' && persistTo !== undefined) throw new MigrationFailure('arguments');
 	let stage: Stage = 'configuration';
 	let failure: MigrationFailure | undefined;
@@ -66,7 +69,7 @@ export async function migrateDatabase({ mode, persistTo }: Migration) {
 				compatibility_date: source.compatibility_date,
 				d1_databases: [{
 					...database,
-					migrations_dir: join(root, 'packages/persistence/migrations'),
+					migrations_dir: migrations,
 					...(mode === 'remote' ? { remote: true } : {}),
 				}],
 			}),

@@ -7,12 +7,18 @@
 			"@root/*": ["./*"],
 			"@/kernel/*": ["./packages/kernel/src/*"],
 			"@/host/*": ["./packages/host/src/*"],
-			"@/package-url": ["./packages/domain/src/purl/index.ts"],
-			"@/package-url/*": ["./packages/domain/src/purl/*"],
 			"@/persistence/*": ["./packages/persistence/src/*"],
 			"@/cli/*": ["./packages/cli/src/*"],
 			"@/domain/*": ["./packages/domain/src/*"],
-			"@/github/*": ["./packages/github/src/*"]
+			"@/github/*": ["./packages/github/src/*"],
+			"@/credentials/*": ["./packages/credentials/src/*"],
+			"@/auth/*": ["./packages/auth/src/*"],
+			"@/discovery/*": ["./packages/discovery/src/*"],
+			"@/notifications/*": ["./packages/notifications/src/*"],
+			"@/publication/*": ["./packages/publication/src/*"],
+			"@/actions/*": ["./packages/actions/src/*"],
+			"@/setup/*": ["./packages/setup/src/*"],
+			"@/release/*": ["./packages/release/src/*"]
 		},
 		"target": "ES2022",
 		"module": "ESNext",
@@ -40,7 +46,6 @@
 		"src/**/*.astro",
 		"src/**/*.ts",
 		"scripts/**/*.ts",
-		"actions/**/*.ts",
 		"packages/*/src/**/*.ts",
 		"test/**/*.ts"
 	]

@@ -1,18 +1,20 @@
 import { Effect } from 'effect';
-import { packageWatches } from '@/automation/package-watch.ts';
+import type { CLISessionRow } from '@/auth/adapters/d1/cli-sessions.ts';
 import type { Automation, AutomationBindings, AutomationService } from '@/automation/service.ts';
 import { withAutomation } from '@/automation/service.ts';
-import type { UnreadableExecution, UnreadableRepository } from '@/automation/store.ts';
-import { readableValues } from '@/automation/store.ts';
-import type { Execution } from '@/automation/types.ts';
-import { parseGrant } from '@/automation/vault.ts';
+import type { UnreadableExecution } from '@/automation/store.ts';
+import type { ActiveCredential } from '@/credentials/adapters/d1/credentials.ts';
+import type { CredentialDeliveryRow } from '@/credentials/adapters/d1/secret-deliveries.ts';
+import { grantRow } from '@/credentials/grant.ts';
+import type { UnreadableRepository } from '@/discovery/adapters/d1/repositories.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { recover } from '@/kernel/errors/classify.ts';
 import type { Readable } from '@/kernel/errors/decoding.ts';
+import { readableValues } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
-import type { CLISessionRow } from '@/persistence/d1/cli-sessions.ts';
-import type { ActiveCredential, DeliveryRow } from '@/persistence/d1/credentials.ts';
+import { packageWatches } from '@/notifications/package-watch.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
 import type { Section } from '@/server/sections.ts';
 
 export interface LoaderContext {
@@ -36,7 +38,7 @@ export function panel<T, R>(name: string, work: Effect.Effect<T, DomainError, R>
 }
 
 export type SecretSummary = ActiveCredential;
-export type DeliverySummary = DeliveryRow;
+export type DeliverySummary = CredentialDeliveryRow;
 export type CLISession = CLISessionRow;
 
 interface Rows<T, U> {
@@ -53,7 +55,7 @@ function split<T, U extends { kind: 'unreadable' }>(rows: (Readable<T> | U)[]): 
 function repositories(
 	service: AutomationService,
 ): Effect.Effect<Rows<RepositoryRecord, UnreadableRepository>, DomainError> {
-	return service.store.readRepositories().pipe(Effect.map(split));
+	return service.store.repositories.read().pipe(Effect.map(split));
 }
 function executions(
 	service: AutomationService,
@@ -71,9 +73,7 @@ function runsWithCompletions(service: AutomationService, repositoryId?: number) 
 	);
 }
 function grants(service: AutomationService) {
-	return service.credentials.grantDocuments().pipe(
-		Effect.flatMap(documents => Effect.forEach(documents, parseGrant)),
-	);
+	return service.grants.list().pipe(Effect.map(grants => grants.map(grantRow)));
 }
 const concurrent = { concurrency: ioConcurrency } as const;
 
@@ -112,7 +112,7 @@ export const loaders = {
 			], concurrent);
 			return {
 				section: 'packages' as const,
-				packages: yield* packageWatches(service.store, repositoryRows.readable),
+				packages: yield* packageWatches(service.store.db, repositoryRows.readable),
 				destinations,
 				subscriptions,
 			};
@@ -177,7 +177,7 @@ export const loaders = {
 			service.authentication.authenticators.list(actor),
 			service.credentials.active(),
 			grants(service),
-			service.credentials.deliveries(),
+			service.secretDeliveries.list(),
 			repositories(service),
 		], concurrent).pipe(
 			Effect.map(([keys, secretRows, grantRows, deliveryRows, repositoryRows]) => ({

@@ -1,0 +1,48 @@
+name: Generate WinGet manifests
+description: Generate validated version, installer and locale manifests from package metadata and release checksums
+inputs:
+  config:
+    description: Package metadata JSON file
+    required: true
+  version:
+    description: Stable release version
+    required: true
+  tag:
+    description: Release tag (defaults to v followed by the version)
+  checksums:
+    description: Release SHA256 checksums file
+    required: true
+  release-notes:
+    description: Markdown release notes file
+    required: true
+  release-date:
+    description: Release date in YYYY-MM-DD format
+    required: true
+  out:
+    description: Output directory
+    required: true
+outputs:
+  directory:
+    description: Absolute output directory
+    value: ${{ steps.generate.outputs.directory }}
+  files:
+    description: JSON array of generated manifest paths
+    value: ${{ steps.generate.outputs.files }}
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      id: bun
+      uses: $/packages/actions/actions/deps/bun
+    - name: Generate manifests
+      id: generate
+      shell: bash
+      env:
+        WINGET_CHECKSUMS: ${{ inputs.checksums }}
+        WINGET_CONFIG: ${{ inputs.config }}
+        WINGET_OUT: ${{ inputs.out }}
+        WINGET_RELEASE_DATE: ${{ inputs.release-date }}
+        WINGET_RELEASE_NOTES: ${{ inputs.release-notes }}
+        WINGET_TAG: ${{ inputs.tag }}
+        WINGET_VERSION: ${{ inputs.version }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/generate-winget.ts"

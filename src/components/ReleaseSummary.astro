@@ -4,8 +4,8 @@ import Badge from '@/components/Badge.astro';
 import Commit from '@/components/Commit.astro';
 import Field from '@/components/Field.astro';
 import { packageLabel } from '@/domain/package-label';
-import type { releaseSummaries } from '@/server/releases.ts';
-import { runStateLabel } from '@/server/releases.ts';
+import type { releaseSummaries } from '@/release/domain/summaries.ts';
+import { runStateLabel } from '@/release/domain/summaries.ts';
 import {
 	executionTone,
 	publicationTone,

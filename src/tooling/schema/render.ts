@@ -1,5 +1,5 @@
 import { Effect, Schema, SchemaRepresentation } from 'effect';
-import { targetsSchema } from '@/contract/targets';
+import { targetsSchema } from '@/discovery/managers/targets.ts';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attempt, format, readText, refuse } from '@/tooling/runtime';

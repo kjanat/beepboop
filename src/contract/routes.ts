@@ -1,30 +1,20 @@
 import { Schema } from 'effect';
 import { changesResponse } from '@/contract/changes';
 import {
-	claimStep,
-	nextStep,
-	publishClaimRequest,
-	publishNextRequest,
-	publishReportRequest,
-	reportStep,
-} from '@/contract/ledger';
-import { destinationInput, subscriptionInput, watchInput } from '@/contract/notifications';
-import {
 	acknowledged,
 	approvalReadiness,
 	binaryProgress,
 	credentialsView,
 	executionStates,
 	executionView,
-	notificationsView,
 	packageTagPage,
 	planReview,
-	repositoryView,
 	securityChallenge,
 	securityProof,
 	streamGates,
 } from '@/contract/views';
-import { releaseGate } from '@/domain/release-gates.ts';
+import { repositoryView } from '@/discovery/contract.ts';
+import { checkChoices, releaseGate } from '@/domain/release-gates.ts';
 import { versionPrMerge } from '@/domain/setup-terms.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { shaSchema as sha, textSchema as text } from '@/kernel/schema/result.ts';
@@ -37,6 +27,16 @@ import {
 	numberFromInput,
 	refined,
 } from '@/kernel/schema/structs.ts';
+import { destinationInput, notificationsView, subscriptionInput, watchInput } from '@/notifications/contract.ts';
+import {
+	claimStep,
+	nextStep,
+	publishClaimRequest,
+	publishNextRequest,
+	publishReportRequest,
+	reportStep,
+} from '@/publication/contract.ts';
+import { setupApplyRequest, setupApplyResponse, setupPreviewRequest } from '@/setup/contract.ts';
 
 export type Method = 'GET' | 'POST';
 export type Auth = 'admin' | 'elevated' | 'workflow' | 'workflow-token';
@@ -207,7 +207,7 @@ export const routes = {
 		path: '/api/repositories/setup/preview',
 		auth: 'admin',
 		idempotent: true,
-		request: mutableStruct({ repository: text, choices: Schema.optional(Schema.Unknown) }),
+		request: setupPreviewRequest,
 		response: Schema.Unknown,
 	}),
 	setupApply: route({
@@ -215,15 +215,8 @@ export const routes = {
 		path: '/api/repositories/setup/apply',
 		auth: 'admin',
 		idempotent: false,
-		request: mutableStruct({
-			repository: text,
-			choices: Schema.optional(Schema.Unknown),
-			planId: Schema.String,
-			sourceSha: Schema.String,
-			setupHead: Schema.NullOr(Schema.String),
-			takeOver: Schema.optional(Schema.Boolean),
-		}),
-		response: looseStruct({ url: Schema.String }),
+		request: setupApplyRequest,
+		response: setupApplyResponse,
 	}),
 	hooksUpdate: route({
 		method: 'POST',
@@ -343,6 +336,14 @@ export const routes = {
 			...executionRef.fields,
 			...{ action: Schema.Literals(['retry', 'reconcile', 'redispatch']) },
 		}),
+		response: executionView,
+	}),
+	executionsChecks: route({
+		method: 'POST',
+		path: '/api/executions/checks',
+		auth: 'admin',
+		idempotent: false,
+		request: mutableStruct({ ...executionRef.fields, choice: Schema.Literals(checkChoices) }),
 		response: executionView,
 	}),
 	cliSessionsRevoke: route({

@@ -1,0 +1,213 @@
+import { Effect, Result } from 'effect';
+import { object } from '@/discovery/managers/manifest-editing.ts';
+import { cargoJobPackages } from '@/discovery/release-graph/graph.ts';
+import { publishingJobs } from '@/discovery/workflow-analysis/publishing-jobs.ts';
+import { references, usedActions } from '@/discovery/workflow-analysis/workflow-references.ts';
+import type { Inventory, Snapshot } from '@/domain/inventory.ts';
+import { packageId } from '@/domain/package-identity.ts';
+import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { precondition } from '@/kernel/errors/domain-error.ts';
+import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import { ioConcurrency } from '@/kernel/http/retry.ts';
+import { cargoManager } from '@/publication/registries/cargo.ts';
+import type { VerificationContext } from '@/publication/registries/context.ts';
+import { trustedPublisher } from '@/publication/setup/crates.ts';
+import type { PublishingCheck, SetupChoices } from '@/setup/types.ts';
+
+export interface PublishingAccess {
+	request: Fetcher;
+	github: VerificationContext['github'];
+	cargoToken(file: string, secrets: string[]): Effect.Effect<string | undefined, DomainError>;
+}
+
+export function checkPublishing(
+	snapshot: Snapshot,
+	inventory: Inventory,
+	choices: SetupChoices,
+	access: PublishingAccess,
+): Effect.Effect<PublishingCheck[]> {
+	return Effect.gen(function*() {
+		const checks: PublishingCheck[] = [];
+		const packages = new Map(
+			inventory.packages.filter(pkg => pkg.manager === 'cargo').map(pkg => [packageId(pkg), pkg]),
+		);
+		const files = new Map<string, Set<string>>();
+		for (const stream of choices.streams) {
+			for (const entry of stream.observe ?? []) {
+				const ids = entry.publications.filter(id => packages.has(id));
+				if (ids.length) files.set(entry.file, new Set([...(files.get(entry.file) ?? []), ...ids]));
+			}
+		}
+		if (!files.size) return checks;
+		const root = `/repos/${snapshot.repository.name}`;
+		const cache = new Map<string, Effect.Effect<unknown, DomainError>>();
+		const github = (path: string) => Effect.gen(function*() {
+			let found = cache.get(path);
+			if (!found) {
+				found = yield* Effect.cached(access.github(path));
+				cache.set(path, found);
+			}
+			return yield* found;
+		});
+		const named = (kind: 'secrets' | 'variables', name: string, environment?: string) => Effect.gen(function*() {
+			const paths = [
+				...(environment ? [`${root}/environments/${encodeURIComponent(environment)}/${kind}/${name}`] : []),
+				`${root}/actions/${kind}/${name}`,
+			];
+			for (const path of paths) {
+				const item = yield* github(path);
+				if (item !== null) return object(item);
+			}
+			for (let page = 1; page <= 100; page++) {
+				const body = yield* github(`${root}/actions/organization-${kind}?per_page=100&page=${page}`);
+				if (body === null) return undefined;
+				const items = object(body)[kind];
+				if (!Array.isArray(items)) return yield* precondition(`Invalid GitHub ${kind} response`);
+				const found = items.map(object).find(item => item.name === name);
+				if (found) return found;
+				if (items.length < 100) return undefined;
+			}
+			return yield* precondition(`GitHub ${kind} pagination limit exceeded`);
+		});
+		const versions = new Map(
+			yield* Effect.forEach([...new Set([...files.values()].flatMap(ids => [...ids]))], id =>
+				Effect.gen(function*() {
+					const pkg = packages.get(id);
+					if (!pkg) return [id, undefined] as const;
+					return [id, yield* cargoManager.latest(pkg, access.request)] as const;
+				}), { concurrency: ioConcurrency }),
+		);
+		for (const [file, ids] of files) {
+			const add = (subject: string, status: PublishingCheck['status'], message: string) =>
+				checks.push({ file, subject, status, message });
+
+			for (const id of ids) {
+				const pkg = packages.get(id), version = versions.get(id);
+				if (!pkg || !version) continue;
+				if (version._tag === 'Published') {
+					add(pkg.name, 'passed', `crates.io contains ${pkg.name} (latest ${version.version}).`);
+				} else if (version._tag === 'Missing') {
+					add(
+						pkg.name,
+						'action-required',
+						`crates.io returned 404 for ${pkg.name}. Publish its first version with a crates.io API token before using Trusted Publishing, then configure its trusted publisher.`,
+					);
+				} else {
+					add(
+						pkg.name,
+						'failed',
+						`crates.io lookup failed for ${pkg.name}: ${version.reason} (${version.url}). Retry adoption after resolving the lookup failure.`,
+					);
+				}
+			}
+			const publishers = publishingJobs(snapshot, file);
+			for (const failure of publishers.failures) add(file, 'failed', failure);
+			for (const publisher of publishers.jobs) {
+				const { job, raw, document } = publisher;
+				const selected = cargoJobPackages(snapshot, inventory, publisher.file, job).filter(id => ids.has(id));
+				if (!selected.length) continue;
+				const subject = publisher.path;
+				const configured = { env: document?.env, job: raw };
+				const secretNames = references(configured, 'secrets').filter(name => name.toUpperCase() !== 'GITHUB_TOKEN');
+				const declaredEnvironment = typeof raw.environment === 'string'
+					? raw.environment
+					: object(raw.environment).name;
+				let environment = typeof declaredEnvironment === 'string' ? declaredEnvironment : undefined;
+				const checked = yield* Effect.result(Effect.gen(function*() {
+					if (typeof environment === 'string') {
+						for (const name of references(environment, 'vars')) {
+							const variable = yield* named('variables', name);
+							if (typeof variable?.value !== 'string') {
+								return yield* precondition(`Environment variable vars.${name} is missing`);
+							}
+							environment = (environment ?? '').replace(
+								new RegExp(`\\$\\{\\{\\s*vars\\.${name}\\s*\\}\\}`, 'g'),
+								variable.value,
+							);
+						}
+						if (environment?.includes('${{')) {
+							return yield* precondition(
+								'The publishing environment uses an expression that cannot be resolved during adoption',
+							);
+						}
+						if ((yield* github(`${root}/environments/${encodeURIComponent(environment ?? '')}`)) === null) {
+							return yield* precondition(`Publishing environment ${environment} does not exist`);
+						}
+					}
+					for (const name of references(configured, 'vars')) {
+						const variable = yield* named('variables', name, typeof environment === 'string' ? environment : undefined);
+						add(
+							subject,
+							variable ? 'passed' : 'action-required',
+							variable
+								? `GitHub Actions variable ${name} is available.`
+								: `GitHub Actions variable ${name} is missing; configure it before publishing.`,
+						);
+					}
+					const effectiveSecrets = new Map<string, string>();
+					for (const name of secretNames) {
+						const source = publisher.secret(name);
+						const local = source && environment
+							? yield* github(`${root}/environments/${encodeURIComponent(environment)}/secrets/${name.toUpperCase()}`)
+							: null;
+						const secret = local ?? (source ? yield* named('secrets', source) : undefined);
+						if (source) effectiveSecrets.set(name.toUpperCase(), local ? name.toUpperCase() : source);
+						add(
+							subject,
+							secret ? 'passed' : 'action-required',
+							secret
+								? `GitHub Actions secret ${name} is available.`
+								: `GitHub Actions secret ${name} is missing; configure it before publishing.`,
+						);
+					}
+					const oidc = usedActions(snapshot, raw.steps).some(action =>
+						/^rust-lang\/crates-io-auth-action@/.test(action)
+					);
+					if (!oidc) return;
+					const allowed = publisher.oidc;
+					add(
+						subject,
+						allowed ? 'passed' : 'action-required',
+						allowed
+							? 'The crates.io authentication action has id-token: write.'
+							: 'The crates.io authentication action needs id-token: write on this job.',
+					);
+					const steps = Array.isArray(raw.steps) ? raw.steps.map(object) : [];
+					const tokenSources = [document?.env, raw.env, ...steps.map(step => step.env)].flatMap(env =>
+						Object.entries(object(env)).filter(([key]) => /^CARGO_REGISTR(?:Y_TOKEN|IES_CRATES_IO_TOKEN)$/.test(key))
+							.map(([, value]) => value)
+					);
+					const published = selected.filter(id => versions.get(id)?._tag === 'Published');
+					if (!published.length) return;
+					const token = yield* access.cargoToken(
+						file,
+						references(tokenSources, 'secrets').flatMap(name => effectiveSecrets.get(name.toUpperCase()) ?? []),
+					);
+					for (const id of published) {
+						const pkg = packages.get(id);
+						if (!pkg) continue;
+						const result = yield* trustedPublisher(
+							access.request,
+							pkg.name,
+							snapshot.repository.name,
+							file,
+							typeof environment === 'string' ? environment : undefined,
+							token,
+						);
+						add(`${subject} / ${pkg.name}`, result.status, result.message);
+					}
+				}));
+				if (Result.isFailure(checked)) {
+					add(
+						subject,
+						'failed',
+						checked.failure.message.startsWith('GitHub App installation lacks')
+							? checked.failure.message
+							: `Publishing configuration check failed: ${checked.failure.message}.`,
+					);
+				}
+			}
+		}
+		return checks;
+	});
+}

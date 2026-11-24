@@ -1,11 +1,9 @@
 import { expect, test } from 'bun:test';
 import { Validator } from '@cfworker/json-schema';
 import { Effect, Schema, Struct } from 'effect';
-import { npmManager } from '@/automation/managers/npm';
-import { discoverNpmTargets } from '@/automation/managers/npm-targets';
-import { emptyInventory } from '@/automation/managers/registry';
-import { assetName, binaryJobs } from '@/automation/setup-binaries';
-import { targetsSchema } from '@/contract/targets';
+import { discoverNpmTargets } from '@/discovery/managers/npm-targets.ts';
+import { emptyInventory } from '@/discovery/managers/registry.ts';
+import { targetsSchema } from '@/discovery/managers/targets.ts';
 import { binaries, defaultBinaryTargets } from '@/domain/binary-platforms.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
@@ -21,6 +19,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { npmManager } from '@/publication/registries/npm.ts';
+import { assetName, binaryJobs } from '@/setup/workflows/binaries.ts';
 import { assertTargetsCurrent } from '@/tooling/schema/render';
 
 const fixture = (name: string) => Bun.file(new URL(`../fixtures/targets/${name}.json`, import.meta.url));

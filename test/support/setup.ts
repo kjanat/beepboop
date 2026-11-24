@@ -3,9 +3,22 @@ import type { Pull, Repository } from '@root/test/support/github.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import type { Api, Reply } from '@root/test/support/http.ts';
 import type { World } from '@root/test/support/world.ts';
-import { Effect } from 'effect';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices, SetupPlan } from '@/automation/setup-types';
+import { Effect, Predicate, Result } from 'effect';
+import { builtinPresets } from '@/domain/configuration/builtin-presets.ts';
+import { mergeConfiguration } from '@/domain/configuration/presets.ts';
+import { defaultPreset } from '@/domain/preset.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import type { SetupChoices, SetupPlan } from '@/setup/types.ts';
+
+export function withDefaultPreset(file: string): unknown {
+	const value: unknown = JSON.parse(file);
+	const base = builtinPresets.default;
+	if (
+		!Predicate.isObject(value) || !Array.isArray(value.extends) || !value.extends.includes(defaultPreset)
+		|| !Predicate.isObject(base)
+	) return value;
+	return Result.getOrThrow(mergeConfiguration({ ...base }, { ...value }));
+}
 
 export async function previewSetup(api: Api, repository: string, choices?: SetupChoices): Promise<SetupPlan> {
 	const preview = await api(

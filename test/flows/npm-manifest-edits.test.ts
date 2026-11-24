@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test';
 import { Effect } from 'effect';
-import { discover, planRelease } from '@/automation/managers';
-import { npmManager } from '@/automation/managers/npm';
+import { discover } from '@/discovery/discover.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
+import { npmManager } from '@/publication/registries/npm.ts';
+import { planRelease } from '@/release/domain/planning/managers.ts';
 
 const root = [
 	'{',

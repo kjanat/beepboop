@@ -1,13 +1,11 @@
 import { expect, test } from 'bun:test';
 import type { Repository } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
-import { applyChoices, editPull, previewSetup } from '@root/test/support/setup.ts';
+import { applyChoices, editPull, previewSetup, withDefaultPreset } from '@root/test/support/setup.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Schema, Struct } from 'effect';
 import { parse } from 'yaml';
-import { optionId } from '@/automation/setup';
-import type { SetupChoices } from '@/automation/setup-types';
 import { binaries, defaultBinaryTargets } from '@/domain/binary-platforms.ts';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
 import { alwaysStarted, startFromEffect, startFromQuestion, versionPrMergeSentences } from '@/domain/setup-terms.ts';
@@ -26,6 +24,8 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import { optionId } from '@/setup/options.ts';
+import type { SetupChoices } from '@/setup/types.ts';
 
 let world: World;
 eachWorld(created => {
@@ -381,7 +381,7 @@ const releaseMode = mutableStruct({
 });
 function modeOf(repository: Repository, ref?: string) {
 	const { main } =
-		decodeSync(releaseMode, JSON.parse(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'))
+		decodeSync(releaseMode, withDefaultPreset(world.github.file(repository, '.github/beepboop.json', ref) ?? '{}'))
 			.streams;
 	for (const legacy of ['start', 'versioning', 'required']) expect(main).not.toHaveProperty(legacy);
 	expect(main.promote).not.toHaveProperty('approval');

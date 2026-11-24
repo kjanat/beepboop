@@ -4,18 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnvironment } from '@root/test/support/process.ts';
 import { Effect, Schema, Struct } from 'effect';
-import { verifyPublication } from '@/automation/managers';
-import { managerRegistry } from '@/automation/managers/builtins';
-import { cargoManager, crateIndexUrl } from '@/automation/managers/cargo';
-import type { Publication } from '@/automation/types';
-import type { HomebrewConfiguration } from '@/distribution/homebrew/generate';
-import { generateCask } from '@/distribution/homebrew/generate';
-import { writeRendered } from '@/distribution/output';
-import type { ScoopConfiguration } from '@/distribution/scoop/generate';
-import { generateManifest, scoopConfiguration } from '@/distribution/scoop/generate';
-import { generateManifests, wingetConfiguration } from '@/distribution/winget/generate';
 import { managerNames, managerSpec } from '@/domain/catalog.ts';
 import type { Package } from '@/domain/inventory.ts';
+import { writeRendered } from '@/host/rendered-file.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
 	decodeSync,
@@ -29,6 +20,19 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
+import type { HomebrewConfiguration } from '@/publication/distribution/homebrew.ts';
+import { generateCask } from '@/publication/distribution/homebrew.ts';
+import type { ScoopConfiguration } from '@/publication/distribution/scoop.ts';
+import { generateManifest, scoopConfiguration } from '@/publication/distribution/scoop.ts';
+import { generateManifests, wingetConfiguration } from '@/publication/distribution/winget/generate.ts';
+import type { Publication } from '@/publication/publication.ts';
+import { managerRegistry } from '@/publication/registries/builtins.ts';
+import { cargoManager, crateIndexUrl } from '@/publication/registries/cargo.ts';
+import type { CheckOutcome } from '@/publication/registries/outcome.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
+import { verifiedPublication } from '@/publication/registries/verification.ts';
+import { verifyPublication } from '@/publication/registries/verify.ts';
+import { vscodeManager } from '@/publication/registries/vscode.ts';
 import { ToolFailure } from '@/tooling/runtime';
 
 const digest = (character: string) => character.repeat(64);
@@ -439,6 +443,106 @@ test('WinGet manifests keep uppercase hashes from the shared checksum parser', a
 	expect(result.success.installer.Installers.map(installer => installer.InstallerSha256)).toEqual([digest('E')]);
 });
 
+test('verification outcomes keep the stored publication shape', () => {
+	const publication: Publication = {
+		id: 'pkg:cargo/svg-data',
+		manager: 'cargo',
+		name: 'svg-data',
+		version: '0.5.0',
+		digest: 'a'.repeat(64),
+		outcome: 'pending',
+		required: true,
+	};
+	const url = 'https://index.crates.io/sv/g-/svg-data';
+	const stored = (outcome: CheckOutcome) => JSON.stringify(verifiedPublication(publication, outcome));
+	expect(stored(VerificationOutcome.Published({ version: '0.5.0', url, digest: 'b'.repeat(64) })))
+		.toBe(JSON.stringify({ ...publication, outcome: 'succeeded', url, digest: 'b'.repeat(64) }));
+	expect(stored(VerificationOutcome.Published({ version: '0.5.0', url })))
+		.toBe(JSON.stringify({ ...publication, outcome: 'succeeded', url }));
+	expect(stored(VerificationOutcome.Pending({ url }))).toBe(
+		JSON.stringify({ ...publication, outcome: 'pending', url }),
+	);
+	expect(stored(VerificationOutcome.Rejected({ url }))).toBe(
+		JSON.stringify({ ...publication, outcome: 'failed', url }),
+	);
+	expect(stored(VerificationOutcome.Rejected({}))).toBe(JSON.stringify({ ...publication, outcome: 'failed' }));
+	expect(stored(VerificationOutcome.LookupFailed({ url, reason: 'HTTP 503' })))
+		.toBe(JSON.stringify({ ...publication, outcome: 'uncertain', url }));
+	expect(stored(VerificationOutcome.Unverifiable())).toBe(JSON.stringify({ ...publication, outcome: 'uncertain' }));
+});
+
+test('registry checks return a verification outcome for each verdict', async () => {
+	const publication = (manager: Publication['manager'], name: string, version = '1.0.0'): Publication => ({
+		id: `pkg:${manager}/${name}`,
+		manager,
+		name,
+		version,
+		outcome: 'pending',
+		required: true,
+	});
+	const unused = () => Promise.reject(new Error('unexpected request'));
+	const check = (effect: Effect.Effect<CheckOutcome>) => Effect.runPromise(effect);
+	expect(await check(verifyPublication(publication('workflow', 'release'), unused)))
+		.toEqual(VerificationOutcome.Unverifiable());
+	expect(await check(verifyPublication(publication('jsr', 'widget'), unused))).toEqual(
+		VerificationOutcome.Rejected({}),
+	);
+	expect(await check(verifyPublication(publication('oci', 'quay.io/octo/widget'), unused)))
+		.toEqual(VerificationOutcome.Rejected({}));
+	expect(await check(verifyPublication(publication('goreleaser', 'widget'), unused)))
+		.toEqual(VerificationOutcome.Unverifiable());
+	const release = (found: unknown) => ({ repository: 'octo/widget', github: () => Effect.succeed(found) });
+	const tagUrl = 'https://github.com/octo/widget/releases/tag/v1.0.0';
+	expect(await check(verifyPublication(publication('goreleaser', 'widget'), unused, release(null))))
+		.toEqual(VerificationOutcome.Pending({ url: tagUrl }));
+	expect(
+		await check(verifyPublication(
+			publication('goreleaser', 'widget'),
+			unused,
+			release({ tag_name: 'v1.0.0', draft: false, assets: [{ state: 'uploaded' }] }),
+		)),
+	).toEqual(VerificationOutcome.Published({ version: '1.0.0', url: tagUrl }));
+
+	const openVsx = vscodeManager.secondaryPublication?.['open-vsx'];
+	if (!openVsx) throw new Error('Missing Open VSX check');
+	const extensionUrl = 'https://open-vsx.org/api/octo/widget/1.0.0';
+	expect(await check(openVsx(publication('vscode', 'widget'), unused))).toEqual(VerificationOutcome.Unverifiable());
+	expect(
+		await check(
+			openVsx(publication('vscode', 'octo.widget'), () => Promise.resolve(Response.json({ version: '1.0.0' }))),
+		),
+	)
+		.toEqual(VerificationOutcome.Published({ version: '1.0.0', url: extensionUrl }));
+	expect(
+		await check(
+			openVsx(publication('vscode', 'octo.widget'), () => Promise.resolve(Response.json({ version: '0.9.0' }))),
+		),
+	)
+		.toEqual(VerificationOutcome.LookupFailed({ url: extensionUrl, reason: 'invalid registry response' }));
+
+	const moduleUrl = 'https://proxy.golang.org/example.com/widget/@v/v1.0.0.info';
+	const proxy = () => Promise.resolve(Response.json({ Version: 'v1.0.0' }));
+	expect(await check(verifyPublication(publication('go', 'example.com/widget'), proxy)))
+		.toEqual(VerificationOutcome.Published({ version: '1.0.0', url: moduleUrl }));
+	expect(await check(verifyPublication({ ...publication('go', 'example.com/widget'), digest: 'h1' }, proxy)))
+		.toEqual(VerificationOutcome.LookupFailed({ url: moduleUrl, reason: 'no origin hash' }));
+
+	const manifest = new TextEncoder().encode('{"schemaVersion":2}');
+	const digest = `sha256:${new Bun.CryptoHasher('sha256').update(manifest).digest('hex')}`;
+	const imageUrl = 'https://ghcr.io/v2/octo/widget/manifests/1.0.0';
+	expect(
+		await check(verifyPublication(
+			{ ...publication('oci', 'ghcr.io/octo/widget'), digest, channel: 'latest' },
+			input =>
+				Promise.resolve(
+					String(input).endsWith('/1.0.0')
+						? new Response(manifest, { headers: { 'docker-content-digest': digest } })
+						: new Response(null, { status: 404 }),
+				),
+		)),
+	).toEqual(VerificationOutcome.Pending({ url: imageUrl }));
+});
+
 test('a crate that the crates.io API cannot answer is checked in the sparse index', async () => {
 	const publication: Publication = {
 		id: 'pkg:cargo/svg-data',
@@ -454,21 +558,23 @@ test('a crate that the crates.io API cannot answer is checked in the sparse inde
 		expect(url.toString()).toBe('https://index.crates.io/sv/g-/svg-data');
 		return lines.length ? new Response(`${lines.join('\n')}\n`) : new Response(null, { status: 404 });
 	};
+	const url = 'https://index.crates.io/sv/g-/svg-data';
 	const verify = (lines: string[], expected: Publication = publication) =>
-		Effect.runPromise(verifyPublication(expected, index(lines))).then(found => [found.outcome, found.url]);
-	expect(await verify([])).toEqual(['pending', 'https://index.crates.io/sv/g-/svg-data']);
+		Effect.runPromise(verifyPublication(expected, index(lines)));
+	expect(await verify([])).toEqual(VerificationOutcome.Pending({ url }));
 	expect(await verify([JSON.stringify({ name: 'svg-data', vers: '0.4.0', cksum: 'a'.repeat(64), yanked: false })]))
-		.toEqual(['pending', 'https://index.crates.io/sv/g-/svg-data']);
-	expect(await verify([JSON.stringify({ name: 'svg-data', vers: '0.5.0', cksum: 'b'.repeat(64), yanked: false })]))
-		.toEqual(['succeeded', 'https://index.crates.io/sv/g-/svg-data']);
-	expect(await verify([JSON.stringify({ name: 'svg-data', vers: '0.5.0', cksum: 'b'.repeat(64), yanked: true })]))
-		.toEqual(['failed', 'https://index.crates.io/sv/g-/svg-data']);
-	expect(await verify(['{"name":"svg-data","vers":"0.5.0"', JSON.stringify({ name: 'svg-data', vers: '0.4.0' })]))
-		.toEqual(['uncertain', 'https://index.crates.io/sv/g-/svg-data']);
+		.toEqual(VerificationOutcome.Pending({ url }));
 	const listed = [JSON.stringify({ name: 'svg-data', vers: '0.5.0', cksum: 'b'.repeat(64), yanked: false })];
-	expect((await Effect.runPromise(verifyPublication(publication, index(listed)))).digest).toBe('b'.repeat(64));
-	expect(await verify(listed, { ...publication, digest: 'c'.repeat(64) }))
-		.toEqual(['failed', 'https://index.crates.io/sv/g-/svg-data']);
+	expect(await verify(listed)).toEqual(
+		VerificationOutcome.Published({ version: '0.5.0', url, digest: 'b'.repeat(64) }),
+	);
+	expect(await verify([JSON.stringify({ name: 'svg-data', vers: '0.5.0', cksum: 'b'.repeat(64), yanked: true })]))
+		.toEqual(VerificationOutcome.Rejected({ url }));
+	expect(await verify(['{"name":"svg-data","vers":"0.5.0"', JSON.stringify({ name: 'svg-data', vers: '0.4.0' })]))
+		.toEqual(VerificationOutcome.LookupFailed({ url, reason: 'invalid registry response' }));
+	expect(await verify(listed, { ...publication, digest: 'c'.repeat(64) })).toEqual(
+		VerificationOutcome.Rejected({ url }),
+	);
 	expect(crateIndexUrl('ab')).toBe('https://index.crates.io/2/ab');
 	expect(crateIndexUrl('Abc')).toBe('https://index.crates.io/3/a/abc');
 });
@@ -497,15 +603,14 @@ test('a crate whose latest version the crates.io API cannot answer is read from 
 	const line = (vers: string, yanked = false) =>
 		JSON.stringify({ name: 'svg-data', vers, cksum: 'a'.repeat(64), yanked });
 	expect(await latest([line('0.3.0'), line('0.4.0'), line('0.5.0-rc.1'), line('0.4.1', true)].join('\n')))
-		.toEqual({ kind: 'published', version: '0.4.0' });
+		.toEqual(VerificationOutcome.Published({ version: '0.4.0' }));
 	expect(await latest([line('1.1.0'), line('1.2.0+vendor-build')].join('\n')))
-		.toEqual({ kind: 'published', version: '1.2.0+vendor-build' });
-	expect(await latest(null)).toEqual({ kind: 'missing', url: 'https://index.crates.io/sv/g-/svg-data' });
-	expect(await latest('{"name"')).toEqual({
-		kind: 'failed',
+		.toEqual(VerificationOutcome.Published({ version: '1.2.0+vendor-build' }));
+	expect(await latest(null)).toEqual(VerificationOutcome.Missing({ url: 'https://index.crates.io/sv/g-/svg-data' }));
+	expect(await latest('{"name"')).toEqual(VerificationOutcome.LookupFailed({
 		url: 'https://index.crates.io/sv/g-/svg-data',
 		reason: 'invalid registry response',
-	});
+	}));
 });
 
 test('the catalog marks a manager verifiable exactly when its adapter verifies publications', () => {

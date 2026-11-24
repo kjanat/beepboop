@@ -323,8 +323,22 @@ Use `extends` to share configuration:
 }
 ```
 
-Publish the [preset templates](../presets/) in your preset repository before you
-reference them. Presets merge in order, and the local configuration merges last.
+Beepboop ships the [preset templates](../presets/) as built-in presets:
+`beepboop:default`, `beepboop:npm`, `beepboop:rust-workspace`,
+`beepboop:github-action` and `beepboop:maintenance`. A built-in preset loads
+from Beepboop itself, so it needs no preset repository. A setup PR that creates
+`.github/beepboop.json` with a `main` stream writes
+`"extends": ["beepboop:default"]` and leaves out the values that preset
+carries. A setup PR for an existing file keeps every value the file states.
+
+A repository without `.github/beepboop.json` releases when a workflow on its
+default branch runs `kjanat/beepboop/actions/begin` and setup would change none
+of its workflows. Beepboop then uses the configuration that the setup PR would
+write. Without such a workflow the repository stays unconfigured until you
+merge its setup PR.
+
+A `github>owner/repository:name` preset reads `name.json` at the root of that
+repository. Presets merge in order, and the local configuration merges last.
 Objects merge by key. Arrays replace the inherited array. Each execution saves
 the resolved preset commit SHAs. On refresh, Beepboop validates the
 configuration with the schema that generates
@@ -590,6 +604,23 @@ again. A commit added to the version PR before the merge ends that: the
 release then follows `promote.publishWhen`. Failing checks or package metadata problems stop the release with a
 reason on the runs page. Starting the same version again restarts a stopped
 release whose workflow has not run yet, and Retry on the runs page does the same.
+
+When the commit signature, a check, the commit status or package metadata
+stops a release, `beepboop release` asks what comes next, and the card of the
+release on the runs page shows the same choices as buttons:
+
+- **Rerun and wait** reruns the failed jobs of each finished workflow run with
+  a failed check, waits for the new results and publishes once they pass.
+  It shows when a check failed. `--yes` takes this choice once.
+- **Release without the check** makes this release ignore the failing and
+  running gates that stop it. The activity log names who skipped them.
+- **Always release without the check** switches the failed gates off for every
+  later release of the stream. The repositories page lists them under
+  **Release gates** with **Switch on**.
+- **Stop** leaves the release stopped.
+
+`beepboop runs checks ID --choice rerun`, `skip` or `always` makes the same
+choice from a script.
 
 `beepboop release <version> --force` publishes without waiting on commit
 checks, the commit signature or package metadata, and asks nothing. It also
@@ -1569,7 +1600,7 @@ body. A retried publication leaves one copy.
 ### Releases triggered by a tag
 
 If a tag-triggered workflow already builds its release assets, use
-[`actions/publish-tagged-release`](../actions/publish-tagged-release/README.md).
+[`actions/publish-tagged-release`](../packages/actions/actions/publish-tagged-release/README.md).
 It publishes the existing workflow tag as the Beepboop App and can read notes
 from a Keep a Changelog section. It does not need a tracked execution.
 

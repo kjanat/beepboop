@@ -83,7 +83,7 @@ export function runAction(
 			...variables,
 		};
 		return withConsoleLog((...values: unknown[]) => logs.push(values.map(String).join(' ')), async () => {
-			const action: typeof import('@root/actions/runtime/client') = await import(client);
+			const action: typeof import('@/actions/client.ts') = await import(client);
 			await action.run(mode, variablesForRun);
 			const result = outputs(output);
 			const contextFile = result.context ? JSON.parse(result.context).contextFile : undefined;

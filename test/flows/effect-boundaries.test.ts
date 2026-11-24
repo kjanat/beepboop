@@ -1,30 +1,31 @@
 import { expect, spyOn, test } from 'bun:test';
 import { join } from 'node:path';
-import { identityToken } from '@root/actions/runtime/session';
 import { tokenRequest } from '@root/test/support/actions';
 import type { World } from '@root/test/support/world';
 import { adminSubject, eachWorld, issuer, origin } from '@root/test/support/world';
 import { experimental_AstroContainer } from 'astro/container';
 import { createContext } from 'astro/middleware';
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
-import { applyVersionFiles } from '@/automation/editors';
-import { RepositoryGateway } from '@/automation/github';
-import { goManager } from '@/automation/managers/go';
-import { jsrManager, setUpJsrPackage } from '@/automation/managers/jsr';
-import { pypiManager } from '@/automation/managers/pypi';
-import type { Manager } from '@/automation/managers/registry';
-import { registryLayer } from '@/automation/managers/registry';
-import { verifyRegistry } from '@/automation/managers/verification';
-import { vscodeManager } from '@/automation/managers/vscode';
-import { verifyImage } from '@/automation/oci';
-import type { Publication } from '@/automation/types';
-import { Client } from '@/cli/client';
+import { identityToken } from '@/actions/session.ts';
+import { RepositoryGateway } from '@/automation/gateway.ts';
+import { Client } from '@/cli/client/api';
+import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { fromSync, recover } from '@/kernel/errors/classify.ts';
 import { responseBytes } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { yamlData, yamlDocument } from '@/kernel/parse/yaml.ts';
 import { decodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
 import { onRequest } from '@/middleware';
+import type { Publication } from '@/publication/publication.ts';
+import { goManager } from '@/publication/registries/go.ts';
+import { jsrManager } from '@/publication/registries/jsr.ts';
+import { verifyImage } from '@/publication/registries/oci.ts';
+import { pypiManager } from '@/publication/registries/pypi.ts';
+import type { Manager } from '@/publication/registries/registry.ts';
+import { registryLayer } from '@/publication/registries/registry.ts';
+import { verifyRegistry } from '@/publication/registries/verification.ts';
+import { vscodeManager } from '@/publication/registries/vscode.ts';
+import { setUpJsrPackage } from '@/publication/setup/jsr.ts';
 import { loaders } from '@/server/loaders';
 import { temporaryDirectory } from '@/tooling/runtime';
 
@@ -150,7 +151,7 @@ test('invalid JSR version JSON remains a typed verification failure', async () =
 				? Response.json({ scope: 'octo', name: 'widget', versions: { '1.0.0': {} } })
 				: new Response('{'),
 		)));
-	expect(result.outcome).toBe('uncertain');
+	expect(result._tag).toBe('LookupFailed');
 });
 
 test('Action identity, CLI status, and CLI login response reads cancel and unlock', async () => {

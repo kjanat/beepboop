@@ -1,0 +1,61 @@
+name: Beepboop token
+description: A Beepboop GitHub App token for this repository, using GitHub OIDC
+inputs:
+  service:
+    description: Beepboop service origin
+    default: https://beepboop.kjanat.dev
+  permission-contents:
+    description: Contents permission, read or write
+  permission-pull-requests:
+    description: Pull requests permission, read or write
+  permission-issues:
+    description: Issues permission, read or write
+  permission-checks:
+    description: Checks permission, read or write
+  permission-statuses:
+    description: Commit statuses permission, read or write
+  permission-metadata:
+    description: Metadata permission, read or write
+  permission-workflows:
+    description: Workflows permission, write, for the publish-actions purpose only
+  permissions:
+    description: JSON object of GitHub App permissions, each read or write. Set either this input or the permission-* inputs. Without either, the token gets contents and pull requests write.
+  execution-id:
+    description: Beepboop execution ID, required when Beepboop dispatched the run
+    default: ""
+  purpose:
+    description: Optional publish-actions purpose for the owner-dispatched publication workflow on the current default branch
+    default: ""
+outputs:
+  bot-login:
+    description: Login of the configured Beepboop App bot
+    value: ${{ steps.client.outputs.bot-login }}
+  bot-id:
+    description: Numeric GitHub user ID of the App bot
+    value: ${{ steps.client.outputs.bot-id }}
+  bot-email:
+    description: Git commit email of the App bot
+    value: ${{ steps.client.outputs.bot-email }}
+  gitId:
+    description: JSON object of GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME and GIT_COMMITTER_EMAIL for the App bot
+    value: ${{ steps.client.outputs.gitId }}
+  token:
+    description: Masked installation token scoped to this repository
+    value: ${{ steps.client.outputs.token }}
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      id: bun
+      uses: $/packages/actions/actions/deps/bun
+    - name: Get token
+      id: client
+      shell: bash
+      env:
+        EXECUTION_ID: ${{ inputs.execution-id }}
+        INPUTS: ${{ toJSON(inputs) }}
+        PERMISSIONS: ${{ inputs.permissions }}
+        SERVICE_ORIGIN: ${{ inputs.service }}
+        TOKEN_IDENTITY: "true"
+        TOKEN_PURPOSE: ${{ inputs.purpose }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" token

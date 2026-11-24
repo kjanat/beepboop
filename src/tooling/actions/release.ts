@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs';
-import { publishRefs } from '@root/actions/runtime/refs.ts';
 import { Effect, Schema } from 'effect';
 import { parse } from 'yaml';
+import { publishRefs } from '@/actions/refs.ts';
 import type { RefChange } from '@/domain/refs.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
 import { compareVersions } from '@/domain/semver.ts';
@@ -24,21 +24,21 @@ interface Contract {
 	outputs: Set<string>;
 }
 
-function git(...args: string[]): Effect.Effect<string, ToolFailure> {
-	return attempt(() => runGit(args)).pipe(
+function git(cwd: string, ...args: string[]): Effect.Effect<string, ToolFailure> {
+	return attempt(() => runGit(args, { cwd })).pipe(
 		Effect.flatMap(result =>
 			result.ok ? Effect.succeed(result.stdout) : refuse(`git ${args.join(' ')} failed: ${result.stderr.trim()}`)
 		),
 	);
 }
 
-function contracts(revision: string): Effect.Effect<Map<string, Contract>, ToolFailure> {
+function contracts(cwd: string, revision: string): Effect.Effect<Map<string, Contract>, ToolFailure> {
 	return Effect.gen(function*() {
-		const files = (yield* git('ls-tree', '-r', '--name-only', revision, '--', 'actions')).split('\n')
+		const files = (yield* git(cwd, 'ls-tree', '-r', '--name-only', revision, '--', 'actions')).split('\n')
 			.filter(path => /^actions\/[^/]+\/action\.ya?ml$/.test(path));
 		const entries = yield* Effect.forEach(files, path =>
 			Effect.gen(function*() {
-				const source = yield* git('show', `${revision}:${path}`);
+				const source = yield* git(cwd, 'show', `${revision}:${path}`);
 				const action = yield* decode(actionSchema, yield* attempt((): unknown => parse(source)));
 				const inputs = Object.entries(action.inputs ?? {}).map(([name, input]): [string, boolean] => [
 					name,
@@ -72,14 +72,23 @@ function bump(previous: Map<string, Contract>, next: Map<string, Contract>): Bum
 	return level;
 }
 
-await main(Effect.gen(function*() {
+export const releaseLevel = Effect.fn('releaseLevel')(function*(
+	cwd: string,
+	previous: string,
+	next: string,
+): Effect.fn.Return<Bump, ToolFailure> {
+	return bump(yield* contracts(cwd, previous), yield* contracts(cwd, next));
+});
+
+const release = Effect.gen(function*() {
+	const root = process.cwd();
 	const distribution = process.env.DISTRIBUTION_COMMIT ?? '';
 	const repository = process.env.GITHUB_REPOSITORY ?? '';
 	if (!shaPattern.test(distribution)) return yield* refuse('DISTRIBUTION_COMMIT must be a full commit SHA');
 	if (!repositoryNamePattern.test(repository)) return yield* refuse('GITHUB_REPOSITORY is required');
 
 	const tags = new Map<string, { oid: string; commit: string }>();
-	for (const line of (yield* git('ls-remote', '--tags', 'origin', 'refs/tags/v*')).split('\n').filter(Boolean)) {
+	for (const line of (yield* git(root, 'ls-remote', '--tags', 'origin', 'refs/tags/v*')).split('\n').filter(Boolean)) {
 		const [oid = '', ref = ''] = line.split('\t');
 		const name = ref.replace(/^refs\/tags\//, '').replace(/\^\{\}$/, '');
 		const known = tags.get(name);
@@ -98,8 +107,8 @@ await main(Effect.gen(function*() {
 	}
 	let version = '1.0.0';
 	if (latest && latestCommit) {
-		yield* git('fetch', '--no-tags', 'origin', latestCommit);
-		const level = bump(yield* contracts(`${latestCommit}^1`), yield* contracts(`${distribution}^1`));
+		yield* git(root, 'fetch', '--no-tags', 'origin', latestCommit);
+		const level = yield* releaseLevel(root, latestCommit, distribution);
 		const [major = 0, minor = 0, patch = 0] = latest.slice(1).split('.').map(Number);
 		version = level === 'major'
 			? `${major + 1}.0.0`
@@ -136,4 +145,6 @@ await main(Effect.gen(function*() {
 			)
 		);
 	}
-}));
+});
+
+if (import.meta.main) await main(release);

@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { publishRefs } from '@root/actions/runtime/refs.ts';
 import { gitOutput, materialize } from '@root/test/support/actions.ts';
 import type { SigningKey } from '@root/test/support/signing.ts';
 import { signingKey } from '@root/test/support/signing.ts';
 import { Effect, Result } from 'effect';
+import { publishRefs } from '@/actions/refs.ts';
 import type { DistributionEvidence, RefChange, RefPlan } from '@/domain/refs.ts';
 import { tagObject, tagPayload } from '@/domain/refs.ts';
 
@@ -35,12 +35,14 @@ function exists(dir: string, ref: string): boolean {
 	return spawnSync('git', ['rev-parse', '--verify', ref], { cwd: dir, encoding: 'utf8' }).status === 0;
 }
 
-function fixture(options: {
+interface FixtureOptions {
 	distributionParents?: 'wrong';
 	ancestryParents?: 'reversed';
 	ancestryTree?: 'distribution';
 	unsigned?: 'distribution' | 'ancestry';
-} = {}) {
+}
+
+function build(options: FixtureOptions) {
 	const checkout = materialize({
 		'.gitignore': 'dist/\n',
 		'.github/workflows/ci.yml': 'name: Test source\non: push\njobs: {}\n',
@@ -56,7 +58,7 @@ function fixture(options: {
 	gitOutput(origin, ['config', 'core.hooksPath', join(origin, 'hooks')]);
 	const sourceSha = checkout.sha;
 	const sourceTree = gitOutput(checkout.dir, ['rev-parse', `${sourceSha}^{tree}`]);
-	const wrongParent = signedCommit(checkout.dir, sourceTree, []);
+	const distributionParent = options.distributionParents ? signedCommit(checkout.dir, sourceTree, []) : sourceSha;
 	mkdirSync(join(checkout.dir, 'dist'));
 	writeFileSync(join(checkout.dir, 'dist/main.mjs'), 'export const bundled = true;\n');
 	writeFileSync(join(checkout.dir, 'dist/post.mjs'), 'export const saved = true;\n');
@@ -66,7 +68,7 @@ function fixture(options: {
 	const commit = signedCommit(
 		checkout.dir,
 		tree,
-		[options.distributionParents ? wrongParent : sourceSha],
+		[distributionParent],
 		options.unsigned !== 'distribution',
 	);
 	const ancestryCommit = signedCommit(
@@ -100,10 +102,32 @@ function fixture(options: {
 			{ name: 'v1.2', expected: null, commit, annotated: false, signed: false },
 		],
 	};
+	return { checkout, origin, sourceTree, plan };
+}
+
+const templates = new Map<string, ReturnType<typeof build>>();
+afterAll(() => {
+	for (const { checkout, origin } of templates.values()) {
+		rmSync(checkout.dir, { recursive: true, force: true });
+		rmSync(origin, { recursive: true, force: true });
+	}
+});
+
+function fixture(options: FixtureOptions = {}) {
+	const name = JSON.stringify(options);
+	const template = templates.get(name) ?? build(options);
+	templates.set(name, template);
+	const checkoutDirectory = mkdtempSync(join(tmpdir(), 'beepboop-checkout-'));
+	const origin = mkdtempSync(join(tmpdir(), 'beepboop-distribution-origin-'));
+	cpSync(template.checkout.dir, checkoutDirectory, { recursive: true });
+	cpSync(template.origin, origin, { recursive: true });
+	gitOutput(origin, ['config', 'core.hooksPath', join(origin, 'hooks')]);
+	const checkout = { dir: checkoutDirectory, sha: template.checkout.sha };
+	const plan = structuredClone(template.plan);
 	return {
 		checkout,
 		origin,
-		sourceTree,
+		sourceTree: template.sourceTree,
 		plan,
 		publish: () => Effect.runPromise(publishRefs(plan, checkout.dir, origin).pipe(Effect.result)),
 		dispose: () => {

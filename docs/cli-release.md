@@ -93,7 +93,9 @@ bun run check:cli
 bun run check:jsr
 ```
 
-`check:cli` packs and installs the real tarball into a temporary directory outside
-this repository, then runs its installed executable, version, help, completions,
-release flag and module export. `check:jsr` performs JSR's publication dry run.
+`build:cli` writes the `package.json` version into `jsr.json`. `check:cli`
+fails when `cli.js` still imports a `@/`, `@beepboop/` or `@beepboopbot/`
+workspace module. It packs and installs the real tarball into a temporary
+directory outside this repository, then runs its installed executable,
+version, help, completions, release flag and module export. `check:jsr` performs JSR's publication dry run.
 These checks also run in CI and the preparation/publication workflows.

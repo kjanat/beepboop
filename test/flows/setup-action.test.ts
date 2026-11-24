@@ -1,17 +1,17 @@
 import { expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { requestBody } from '@root/actions/runtime/protocol.ts';
 import { materialize } from '@root/test/support/actions.ts';
 import { npmManifest } from '@root/test/support/repositories.ts';
 import { Effect, Result } from 'effect';
 import { parse, stringify } from 'yaml';
-import { discover } from '@/automation/managers';
-import { previewSetup } from '@/automation/setup';
-import { actionReleaseOffer } from '@/automation/setup-action';
-import { parseSetupPlan } from '@/automation/setup-plan';
-import type { SetupChoices } from '@/automation/setup-types';
+import { requestBody } from '@/actions/protocol.ts';
+import { discover } from '@/discovery/discover.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
+import { previewSetup } from '@/setup/draft.ts';
+import { parseSetupPlan } from '@/setup/plan.ts';
+import type { SetupChoices } from '@/setup/types.ts';
+import { actionReleaseOffer } from '@/setup/workflows/action-release.ts';
 
 function snapshot(files: Record<string, string>): Snapshot {
 	return {

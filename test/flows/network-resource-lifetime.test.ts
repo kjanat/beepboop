@@ -3,21 +3,23 @@ import { virtualTime } from '@root/test/support/time.ts';
 import { Deferred, Effect, Exit, Fiber, Result } from 'effect';
 import { TestClock } from 'effect/testing';
 import { exportPKCS8, generateKeyPair } from 'jose';
-import { RepositoryGateway } from '@/automation/github';
-import { goManager } from '@/automation/managers/go';
-import { jsrManager, setUpJsrPackage } from '@/automation/managers/jsr';
-import { npmLatest } from '@/automation/managers/npm';
-import { pypiManager } from '@/automation/managers/pypi';
-import type { Manager } from '@/automation/managers/registry';
-import { registryLayer } from '@/automation/managers/registry';
-import { verifyRegistry } from '@/automation/managers/verification';
-import { vscodeManager } from '@/automation/managers/vscode';
-import type { Publication } from '@/automation/types';
+import { RepositoryGateway } from '@/automation/gateway.ts';
 import { gitHubRequest } from '@/github/transport.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { responseJson, scopedResponse } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import type { Publication } from '@/publication/publication.ts';
+import { goManager } from '@/publication/registries/go.ts';
+import { jsrManager } from '@/publication/registries/jsr.ts';
+import { npmLatest } from '@/publication/registries/npm.ts';
+import { VerificationOutcome } from '@/publication/registries/outcome.ts';
+import { pypiManager } from '@/publication/registries/pypi.ts';
+import type { Manager } from '@/publication/registries/registry.ts';
+import { registryLayer } from '@/publication/registries/registry.ts';
+import { verifyRegistry } from '@/publication/registries/verification.ts';
+import { vscodeManager } from '@/publication/registries/vscode.ts';
+import { setUpJsrPackage } from '@/publication/setup/jsr.ts';
 
 function openResponse(status: number, cancel: () => void) {
 	return new Response(new ReadableStream<Uint8Array>({ cancel }), { status });
@@ -30,7 +32,7 @@ test('missing GitHub files and registry lookups release unused bodies', async ()
 	let cancellations = 0;
 	const request: Fetcher = async () => openResponse(404, () => cancellations++);
 	expect(await Effect.runPromise(gitHubRequest(request, '/repos/o/r/contents/missing', ''))).toBeNull();
-	expect((await Effect.runPromise(npmLatest('widget', request))).kind).toBe('missing');
+	expect((await Effect.runPromise(npmLatest('widget', request)))._tag).toBe('Missing');
 	expect(cancellations).toBe(2);
 });
 
@@ -74,7 +76,7 @@ test('channel verification releases rejected response after consuming version me
 		},
 		'https://registry.test/widget/tags',
 	));
-	expect(result.outcome).toBe('pending');
+	expect(result).toEqual(VerificationOutcome.Pending({ url: 'https://registry.test/widget/1.0.0' }));
 	expect(calls).toBe(2);
 	expect(cancelled).toBe(true);
 });

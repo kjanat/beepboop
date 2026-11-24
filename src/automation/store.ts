@@ -1,46 +1,27 @@
-import { Clock, Effect, Schema } from 'effect';
-import { executionOrderSql, newestActiveFirst, validJson } from '@/automation/execution-order';
-import type { ActivityEntry, AutomationEvent, Execution, SubscriptionDelivery } from '@/automation/types';
+import { Effect, Schema } from 'effect';
 import type { ExecutionFilter } from '@/contract/routes';
-import type { RepositoryRecord } from '@/domain/inventory.ts';
-import type { Access, RepositoryDiscovery } from '@/domain/repository';
+import { RepositoryStore } from '@/discovery/adapters/d1/repositories.ts';
 import { fromJson, fromSync, recover } from '@/kernel/errors/classify.ts';
 import type { Readable } from '@/kernel/errors/decoding.ts';
-import { decodeError, isDecodingFailure, readEach } from '@/kernel/errors/decoding.ts';
+import { decodeError, isDecodingFailure, readableValues, readEach } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { precondition } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
-import type { Enrollment, RepositoryRow } from '@/persistence/codecs/repository';
-import {
-	decodeEnrollment,
-	decodeRepository,
-	encodeAccess,
-	enrollmentColumns,
-	enrollmentRow,
-	repositoryColumns,
-	repositoryRow,
-} from '@/persistence/codecs/repository';
-import { encodeRepository, identifyRepository } from '@/persistence/codecs/stored';
-import { decodeDeliveryV1, decodeEventV1, decodeExecutionV1 } from '@/persistence/codecs/v1';
 import { AuditStore } from '@/persistence/d1/audit';
 import { backfillPage, drainBackfill } from '@/persistence/d1/backfill-page';
-import type { CompletionCandidate } from '@/persistence/d1/completions';
-import { CompletionStore } from '@/persistence/d1/completions';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { parse, sql } from '@/persistence/d1/database';
-import { documentRow, rowDocument } from '@/persistence/d1/document-row';
+import { rowDocument } from '@/persistence/d1/document-row';
 import { GateSkipStore } from '@/persistence/d1/gate-skips';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import { readyRead } from '@/persistence/d1/ready-read';
+import type { CompletionCandidate } from '@/release/adapters/d1/completions.ts';
+import { CompletionStore } from '@/release/adapters/d1/completions.ts';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import type { ActivityEntry, Execution } from '@/release/domain/execution/types.ts';
+import { executionOrderSql, newestActiveFirst, validJson } from '@/release/domain/execution-order.ts';
 
-export interface UnreadableRepository {
-	kind: 'unreadable';
-	id: number;
-	name: string;
-	error: string;
-}
 export interface UnreadableExecution {
 	kind: 'unreadable';
 	id: string;
@@ -55,16 +36,9 @@ const executionRow = mutableStruct({
 	created: Schema.NullOr(Schema.Finite).pipe(Schema.catchDecoding(() => Effect.succeedSome(null))),
 });
 type ExecutionRow = Decoded<typeof executionRow>;
-function discoveryDocument(discovery: RepositoryDiscovery): Effect.Effect<string, DomainError> {
-	const repository = { ...discovery, access: { kind: 'active' as const } };
-	return fromSync(() => JSON.stringify(encodeRepository(identifyRepository(encodeRepository(repository)))));
-}
 const executionColumns = `id, repository_id, state, document, ${validJson('$.createdAt')} AS created`;
 const executionPage = 200;
 
-export function readableValues<T>(entries: (Readable<T> | { kind: 'unreadable' })[]): T[] {
-	return entries.flatMap(entry => entry.kind === 'readable' ? [entry.value] : []);
-}
 const onboardingRow = mutableStruct({ repository_id: Schema.Finite, document: Schema.String });
 
 export function onboardingPulls(
@@ -83,90 +57,19 @@ export function onboardingPulls(
 export class Store {
 	private readonly auditLog: AuditStore;
 	readonly gateSkips: GateSkipStore;
+	readonly repositories: RepositoryStore;
 	private readonly sql: Sql;
 	constructor(readonly db: SqlDatabase | Sql) {
 		this.auditLog = new AuditStore(db);
 		this.gateSkips = new GateSkipStore(db);
+		this.repositories = new RepositoryStore(db);
 		this.sql = sql(db);
-	}
-	repository(id: number): Effect.Effect<RepositoryRecord | undefined, DomainError> {
-		return this.sql.first(`SELECT ${repositoryColumns} FROM repositories WHERE id=?`, id).pipe(
-			Effect.flatMap(row => row ? fromSync(() => decodeRepository(decodeSync(repositoryRow, row))) : Effect.undefined),
-		);
-	}
-	private repositoryRows(): Effect.Effect<RepositoryRow[], DomainError> {
-		return this.sql.all(
-			`SELECT ${repositoryColumns} FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name`,
-		).pipe(Effect.flatMap(rows => parse(mutableArray(repositoryRow), rows)));
-	}
-	repositories(): Effect.Effect<RepositoryRecord[], DomainError> {
-		return this.repositoryRows().pipe(Effect.flatMap(rows => fromSync(() => rows.map(decodeRepository))));
-	}
-	enrollment(id: number): Effect.Effect<Enrollment | undefined, DomainError> {
-		return this.sql.first(`SELECT ${enrollmentColumns} FROM repositories WHERE id=?`, id).pipe(
-			Effect.flatMap(row => row ? fromSync(() => decodeEnrollment(decodeSync(enrollmentRow, row))) : Effect.undefined),
-		);
-	}
-	enrollments(): Effect.Effect<Enrollment[], DomainError> {
-		return this.sql.all(
-			`SELECT ${enrollmentColumns} FROM repositories ORDER BY COALESCE(added_at, updated_at) DESC, name`,
-		).pipe(Effect.flatMap(rows => fromSync(() => decodeSync(mutableArray(enrollmentRow), rows).map(decodeEnrollment))));
-	}
-	readableRepositories(): Effect.Effect<RepositoryRecord[], DomainError> {
-		return this.readRepositories().pipe(
-			Effect.map(readableValues),
-		);
-	}
-	readRepositories(): Effect.Effect<(Readable<RepositoryRecord> | UnreadableRepository)[], DomainError> {
-		return this.repositoryRows().pipe(
-			Effect.map(rows =>
-				readEach(rows, decodeRepository, (row, error): UnreadableRepository => ({
-					kind: 'unreadable',
-					id: row.id,
-					name: row.name,
-					error,
-				}))
-			),
-		);
 	}
 	onboardingPulls(): Effect.Effect<Map<number, string>, DomainError> {
 		return this.sql.all('SELECT repository_id, document FROM onboarding').pipe(
 			Effect.flatMap(rows => fromSync(() => decodeSync(mutableArray(onboardingRow), rows))),
 			Effect.flatMap(onboardingPulls),
 		);
-	}
-	saveDiscovery(
-		discovery: RepositoryDiscovery,
-	): Effect.Effect<{ repository: RepositoryRecord; document: string }, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const document = yield* discoveryDocument(discovery);
-			const row = yield* this.sql.first(
-				`INSERT INTO repositories(id,name,document,updated_at,added_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,document=excluded.document,updated_at=excluded.updated_at RETURNING ${repositoryColumns}`,
-				discovery.id,
-				discovery.name,
-				document,
-				discovery.updatedAt,
-				discovery.updatedAt,
-			);
-			return { repository: yield* fromSync(() => decodeRepository(decodeSync(repositoryRow, row))), document };
-		});
-	}
-	replaceDiscovery(document: string, discovery: RepositoryDiscovery): Effect.Effect<void, DomainError> {
-		return discoveryDocument(discovery).pipe(
-			Effect.flatMap(next =>
-				this.sql.run('UPDATE repositories SET document=? WHERE id=? AND document=?', next, discovery.id, document)
-			),
-			Effect.asVoid,
-		);
-	}
-	setAccess(id: number, access: Access): Effect.Effect<boolean, DomainError> {
-		const [state, since] = encodeAccess(access);
-		return this.sql.run(
-			"UPDATE repositories SET access=?1, suspended_at=CASE WHEN ?1='active' THEN NULL WHEN access='suspended' THEN suspended_at ELSE ?2 END WHERE id=?3 AND access<>?1",
-			state,
-			since,
-			id,
-		).pipe(Effect.map(result => result.meta.changes > 0));
 	}
 	completionEvidence(visible: readonly CompletionCandidate[]) {
 		return new CompletionStore(this.sql).evidence(visible);
@@ -363,65 +266,14 @@ export class Store {
 			}),
 		);
 	}
-	event(id: string): Effect.Effect<AutomationEvent | undefined, DomainError> {
-		return this.document('release_events', id, decodeEventV1);
-	}
 	private document<T>(
-		table: 'executions' | 'release_events',
+		table: 'executions',
 		id: string,
 		decode: (value: unknown) => T,
 	): Effect.Effect<T | undefined, DomainError> {
 		return this.sql.first(`SELECT document FROM ${table} WHERE id=?`, id).pipe(
 			Effect.flatMap(row => row ? fromSync(() => decode(rowDocument(row))) : Effect.undefined),
 		);
-	}
-	queueEvent(event: AutomationEvent, deliveries: SubscriptionDelivery[]): Effect.Effect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const serialized = JSON.stringify(event);
-			yield* this.sql.batch([
-				this.sql.statement(
-					'INSERT OR IGNORE INTO release_events(id,document,created_at) VALUES(?,?,?)',
-					event.id,
-					serialized,
-					clock.currentTimeMillisUnsafe(),
-				),
-				...deliveries.map(delivery =>
-					this.sql.statement(
-						"INSERT OR IGNORE INTO subscription_deliveries(id,event_id,repository_id,document,state,updated_at) SELECT ?,?,?,?,'pending',? WHERE EXISTS (SELECT 1 FROM release_events WHERE id=? AND document=?)",
-						delivery.id,
-						event.id,
-						delivery.repositoryId,
-						JSON.stringify(delivery),
-						clock.currentTimeMillisUnsafe(),
-						event.id,
-						serialized,
-					)
-				),
-			]);
-			const saved = yield* parse(
-				Schema.NullOr(documentRow),
-				yield* this.sql.first('SELECT document FROM release_events WHERE id=?', event.id),
-			);
-			if (saved?.document !== serialized) return yield* precondition('Event identity changed');
-		});
-	}
-	pendingDeliveries(): Effect.Effect<SubscriptionDelivery[], DomainError> {
-		return this.sql.all(
-			"SELECT document FROM subscription_deliveries WHERE state='pending' ORDER BY updated_at,id LIMIT 100",
-		).pipe(Effect.flatMap(rows => fromSync(() => rows.map(row => decodeDeliveryV1(rowDocument(row))))));
-	}
-	deliveryResult(id: string, succeeded: boolean): Effect.Effect<void, DomainError> {
-		return Effect.clockWith(clock => {
-			return this.sql.run(
-				'UPDATE subscription_deliveries SET state=?,error=?,updated_at=? WHERE id=?',
-				succeeded ? 'delivered' : 'pending',
-				succeeded ? null : 'Delivery awaiting retry',
-				clock.currentTimeMillisUnsafe(),
-				id,
-			).pipe(Effect.asVoid);
-		});
 	}
 	activity(): Effect.Effect<ActivityEntry[], DomainError> {
 		return this.auditLog.recent();

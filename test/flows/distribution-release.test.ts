@@ -9,13 +9,13 @@ import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import type { WorkflowIdentity } from '@/automation/auth';
-import { createExecution, expectedRunTitle } from '@/automation/execution';
+import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { Store } from '@/automation/store';
 import type { Edit } from '@/domain/inventory.ts';
 import type { RefPlan } from '@/domain/refs.ts';
 import { requireReady } from '@/domain/repository';
-import { decodeExecutionV1 } from '@/persistence/codecs/v1';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { createExecution, expectedRunTitle } from '@/release/domain/execution/execution.ts';
 
 let world: World, key: SigningKey | undefined;
 eachWorld(created => {
@@ -127,7 +127,7 @@ async function fixture(
 	const api = bearer(world, await world.cliSession());
 	const discovered = await api('/api/repositories/discover', { repository: repository.name });
 	expect(discovered.status).toBe(200);
-	const record = await Effect.runPromise(new Store(world.db).repository(repository.id));
+	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('Repository missing');
 	const ready = await world.run(requireReady(record));
 	const coordinator = world.coordinator(repository);
@@ -142,7 +142,7 @@ async function fixture(
 			}),
 		);
 		const workflowSha = world.github.head(repository);
-		const identity: WorkflowIdentity = {
+		const identity: RunIdentity = {
 			repositoryId: repository.id,
 			repository: repository.name,
 			ownerId,

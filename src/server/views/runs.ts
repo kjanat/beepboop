@@ -1,18 +1,21 @@
-import { runFailedNote } from '@/automation/execution.ts';
-import type { Execution, Publication } from '@/automation/types.ts';
-import { githubHref, registryHref } from '@/contract/links';
 import type { Status, Tone } from '@/contract/views';
 import { managerSpec } from '@/domain/catalog.ts';
 import { matchesPublication } from '@/domain/package-identity.ts';
 import { packageLabel } from '@/domain/package-label';
+import { rerunnable, stoppedByGates } from '@/domain/release-gates.ts';
 import { startLabels } from '@/domain/release-start.ts';
 import { versionPrMergeSentences } from '@/domain/setup-terms.ts';
 import { defaultTagPolicy, semVer, tagFor } from '@/domain/version.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import { formatTime } from '@/kernel/time.ts';
+import { githubHref, registryHref } from '@/publication/links.ts';
+import type { Publication } from '@/publication/publication.ts';
+import { runFailedNote } from '@/release/domain/execution/execution.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { pipelineStages } from '@/release/domain/stages.ts';
+import type { releaseSummaries } from '@/release/domain/summaries.ts';
+import { byAge, checksPolicy, publishesAutomatically, runStateLabel } from '@/release/domain/summaries.ts';
 import { packageDisplayName } from '@/server/package-name.ts';
-import type { releaseSummaries } from '@/server/releases.ts';
-import { byAge, checksPolicy, publishesAutomatically, runStateLabel } from '@/server/releases.ts';
 import { executionTone, releaseStatus, shownReason } from '@/server/views/tone.ts';
 
 export function waitingUntil(run: Execution, now: number): string | undefined {
@@ -103,39 +106,16 @@ export function runCard(run: Execution, now: number) {
 		release: releaseLink(run),
 		retryable: Boolean(run.workflow) && ['failed', 'cancelled'].includes(run.state)
 			&& !(run.operation === 'prepare' && !run.plan && !run.managed),
+		checksStop: run.operation === 'promote' && stoppedByGates(run.reason)
+			&& (run.state === 'awaiting-approval'
+				|| (run.state === 'failed' && run.attempts === 0 && run.approvedAt === undefined)),
+		rerunnable: rerunnable(run.reason),
 		reconcilable: run.state === 'uncertain',
 		cancellable: !['succeeded', 'cancelled', 'failed'].includes(run.state),
 	};
 }
 
 type Release = ReturnType<typeof releaseSummaries>[number];
-
-function configuredStages(run: Execution): Map<string, string[]> {
-	const stream = run.configuration.streams[run.stream];
-	if (!stream) return new Map();
-	const needs = new Map<string, string[]>([
-		['prepare', stream.prepare.workflow?.needs ?? []],
-		['promote', [...stream.promote.workflow?.needs ?? [], 'prepare']],
-		...Object.entries(stream.workflows).map(([name, binding]): [string, string[]] => [name, binding.needs ?? []]),
-	]);
-	const ordered = new Map<string, string[]>();
-	while (ordered.size < needs.size) {
-		const waiting = [...needs].filter(([name]) => !ordered.has(name));
-		const ready = waiting.filter(([, wanted]) => wanted.every(need => ordered.has(need) || !needs.has(need)));
-		for (const [name, wanted] of ready.length ? ready : waiting) ordered.set(name, wanted);
-	}
-	return ordered;
-}
-
-function follows(stage: string, started: ReadonlySet<string>, needs: ReadonlyMap<string, string[]>): boolean {
-	const seen = new Set<string>();
-	const reaches = (name: string): boolean => {
-		if (seen.has(name)) return false;
-		seen.add(name);
-		return (needs.get(name) ?? []).some(need => started.has(need) || reaches(need));
-	};
-	return reaches(stage);
-}
 
 const urgency: readonly Tone[] = ['error', 'warn', 'active', 'waiting', 'ok', 'neutral'];
 const working: readonly Execution['state'][] = ['ready', 'dispatching', 'running', 'verifying'];
@@ -144,12 +124,7 @@ const inFlight: readonly Execution['state'][] = ['pending', 'ready', 'dispatchin
 /** One release as a row of stages, like a workflow run and its jobs. */
 export function pipeline(release: Release, now: number) {
 	if (release.version === undefined) return undefined;
-	const needs = configuredStages(release.latest);
-	const started = new Set(release.runs.map(run => run.operation));
-	const operations = [
-		...[...needs.keys()].filter(name => started.has(name) || follows(name, started, needs)),
-		...[...started].filter(name => !needs.has(name)),
-	];
+	const operations = pipelineStages(release.latest, release.runs);
 	const newest: Execution[] = [];
 	const stages = operations.map(operation => {
 		const targets = new Map<string, Execution[]>();

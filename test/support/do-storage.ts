@@ -16,6 +16,7 @@ export async function drainBackground(): Promise<void> {
 }
 
 import { deserialize, serialize } from 'bun:jsc';
+import type { StorageTrace } from '@root/test/support/storage-trace.ts';
 
 export interface StorageOperation {
 	kind: 'get' | 'put' | 'delete' | 'list' | 'alarm';
@@ -58,6 +59,7 @@ class Entries {
 }
 
 export class MemoryStorage {
+	constructor(readonly label = 'storage', private readonly trace?: StorageTrace) {}
 	readonly data = new Map<string, SharedArrayBuffer>();
 	readonly operations: StorageOperation[] = [];
 	alarm: number | null = null;
@@ -82,24 +84,31 @@ export class MemoryStorage {
 		if (typeof key === 'string') {
 			this.operations.push({ kind: 'put', keys: 1 });
 			this.entries.write(key, value);
+			this.trace?.write(this.label, 'put', key, value);
 			return;
 		}
 		const entries = Object.entries(key);
 		if (entries.length > 128) throw new RangeError('DurableObjectStorage.put accepts at most 128 keys');
 		this.operations.push({ kind: 'put', keys: entries.length });
-		for (const [name, entry] of entries) this.entries.write(name, entry);
+		for (const [name, entry] of entries) {
+			this.entries.write(name, entry);
+			this.trace?.write(this.label, 'put', name, entry);
+		}
 	}
 	delete(key: string, options?: DurableObjectPutOptions): Promise<boolean>;
 	delete(keys: string[], options?: DurableObjectPutOptions): Promise<number>;
 	async delete(key: string | string[]): Promise<boolean | number> {
 		if (Array.isArray(key)) {
 			this.operations.push({ kind: 'delete', keys: key.length });
+			for (const name of key) this.trace?.write(this.label, 'delete', name);
 			return key.filter(name => this.data.delete(name)).length;
 		}
 		this.operations.push({ kind: 'delete', keys: 1 });
+		this.trace?.write(this.label, 'delete', key);
 		return this.data.delete(key);
 	}
 	async deleteAll(): Promise<void> {
+		this.trace?.write(this.label, 'deleteAll', '<all>');
 		this.data.clear();
 		this.alarm = null;
 	}
@@ -108,6 +117,7 @@ export class MemoryStorage {
 		const alarm = this.alarm;
 		let rolledBack = false;
 		const restore = () => {
+			this.trace?.write(this.label, 'rollback', '<transaction>');
 			this.data.clear();
 			for (const [key, value] of snapshot) this.data.set(key, value);
 			this.alarm = alarm;
@@ -140,8 +150,10 @@ export class MemoryStorage {
 	async setAlarm(scheduledTime: number | Date): Promise<void> {
 		this.operations.push({ kind: 'alarm', keys: 0 });
 		this.alarm = typeof scheduledTime === 'number' ? scheduledTime : scheduledTime.getTime();
+		this.trace?.write(this.label, 'setAlarm', '<alarm>', this.alarm);
 	}
 	async deleteAlarm(): Promise<void> {
+		this.trace?.write(this.label, 'deleteAlarm', '<alarm>');
 		this.alarm = null;
 	}
 	async sync(): Promise<void> {}
