@@ -6,9 +6,9 @@ import { failure } from '@/kernel/errors/classify.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { parseBindings } from '@/server/bindings.ts';
 
-export { AutomationCoordinator } from '@/automation/coordinator.ts';
-export { PublishBudget } from '@/automation/publish-budget.ts';
-export { ReleaseWorkflow } from '@/automation/release-workflow';
+export { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
+export { PublishBudget } from '@/server/durable/publish-budget.ts';
+export { ReleaseWorkflow } from '@/server/durable/release-workflow.ts';
 
 export default {
 	fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {

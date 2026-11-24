@@ -12,10 +12,10 @@ import { executions, only, prepareRelease } from '@root/test/support/releases.ts
 import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
-import { AutomationCoordinator } from '@/automation/coordinator';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
 import { versionPrMergeSentences, versionScopeNames } from '@/domain/setup-terms.ts';
 import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
 import { runCard } from '@/server/views/runs';
 import { behaviourChanges } from '@/setup/changes.ts';
 

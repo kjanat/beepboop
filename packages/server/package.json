@@ -1,0 +1,20 @@
+{
+	"name": "@beepboopbot/server",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./*": "./src/*"
+	},
+	"dependencies": {
+		"@beepboopbot/auth": "workspace:*",
+		"@beepboopbot/domain": "workspace:*",
+		"@beepboopbot/github": "workspace:*",
+		"@beepboopbot/kernel": "workspace:*",
+		"@beepboopbot/persistence": "workspace:*",
+		"@beepboopbot/publication": "workspace:*",
+		"@beepboopbot/release": "workspace:*",
+		"@beepboopbot/setup": "workspace:*",
+		"effect": "^4.1.2"
+	}
+}

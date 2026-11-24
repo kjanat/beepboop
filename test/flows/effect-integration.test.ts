@@ -11,7 +11,6 @@ import { exchange, failureOf } from '@/actions/protocol.ts';
 import { pullRequestTransport } from '@/actions/pull-request.ts';
 import { workflowIdentity } from '@/auth/actions-oidc.ts';
 import { administrator } from '@/auth/admin.ts';
-import { AutomationCoordinator } from '@/automation/coordinator';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { Automation, applicationLayer } from '@/automation/service';
 import { routes } from '@/contract/routes';
@@ -24,6 +23,7 @@ import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { logFailure } from '@/kernel/logging/failure-log.ts';
 import { decodeSync, encodeSync, mapped } from '@/kernel/schema/structs.ts';
 import { encodeConfigurationV1, storedConfiguration } from '@/persistence/codecs/configuration';
+import { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
 
 let world: World;
 eachWorld(created => {

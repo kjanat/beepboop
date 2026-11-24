@@ -216,6 +216,21 @@
         "effect": "^4.1.2",
       },
     },
+    "packages/server": {
+      "name": "@beepboopbot/server",
+      "version": "0.0.0",
+      "dependencies": {
+        "@beepboopbot/auth": "workspace:*",
+        "@beepboopbot/domain": "workspace:*",
+        "@beepboopbot/github": "workspace:*",
+        "@beepboopbot/kernel": "workspace:*",
+        "@beepboopbot/persistence": "workspace:*",
+        "@beepboopbot/publication": "workspace:*",
+        "@beepboopbot/release": "workspace:*",
+        "@beepboopbot/setup": "workspace:*",
+        "effect": "^4.1.2",
+      },
+    },
     "packages/setup": {
       "name": "@beepboopbot/setup",
       "version": "0.0.0",
@@ -317,6 +332,8 @@
     "@beepboopbot/publication": ["@beepboopbot/publication@workspace:packages/publication"],
 
     "@beepboopbot/release": ["@beepboopbot/release@workspace:packages/release"],
+
+    "@beepboopbot/server": ["@beepboopbot/server@workspace:packages/server"],
 
     "@beepboopbot/setup": ["@beepboopbot/setup@workspace:packages/setup"],
 

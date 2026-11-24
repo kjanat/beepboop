@@ -11,13 +11,11 @@ import { Inbox, InboxRouter } from '@/automation/inbox.ts';
 import { ManagedPreparation } from '@/automation/managed-preparation.ts';
 import { PreparationWriter } from '@/automation/preparation-writer.ts';
 import { PublicationRecheck } from '@/automation/publication-recheck.ts';
-import type { PublishBudget } from '@/automation/publish-budget';
 import { Reconciler } from '@/automation/reconciler.ts';
 import { RefPublication } from '@/automation/ref-publication.ts';
 import { ReleaseCommits } from '@/automation/release-commits.ts';
 import { ReleaseEventOutbox } from '@/automation/release-event-outbox.ts';
 import { ReleaseSets } from '@/automation/release-sets.ts';
-import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
 import { ReleaseWorkflowLauncher } from '@/automation/release-workflow-launcher.ts';
 import { RunCallbacks } from '@/automation/run-callbacks.ts';
 import { RunObservation } from '@/automation/run-observation.ts';
@@ -54,6 +52,8 @@ import { RepositoryRevisions } from '@/release/services/coordinator/executions.t
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
 import { AuditTrail } from '@/release/services/coordinator/retry-queue.ts';
+import type { PublishBudget } from '@/server/durable/publish-budget.ts';
+import type { ReleaseWorkflowParams } from '@/server/durable/release-workflow.ts';
 import type { SetupEdit } from '@/setup/types.ts';
 
 export interface CoordinatorBindings extends AutomationBindings {

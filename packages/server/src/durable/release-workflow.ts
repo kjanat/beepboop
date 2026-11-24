@@ -1,11 +1,11 @@
 import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { Effect } from 'effect';
-import type { AutomationCoordinator } from '@/automation/coordinator';
 import { CoordinatorClient } from '@/automation/coordinator-client.ts';
 import type { ReleaseSteps } from '@/automation/release-workflow-driver.ts';
 import { driveRelease } from '@/automation/release-workflow-driver.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
+import type { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
 
 export interface ReleaseWorkflowParams {
 	repositoryId: number;
