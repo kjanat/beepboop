@@ -935,6 +935,10 @@ describe('boundaries', () => {
 					'"@/widget/*": ["./packages/server/src/widgets/*/widget.ts", "./src/widgets/*.ts"]',
 					'"@x/*": ["./a/pre*", "./b/pre*"]',
 					'"@entry": ["./src/entry", "./src/entry.ts"]',
+					'"@fixed/*": ["./fixed/one.ts", "./fixed/two.ts"]',
+					'"@js/foo": ["./ja/foo.ts"]',
+					'"@js/*": ["./ja/*", "./jb/*"]',
+					'"@exact": ["./ex/a*.ts", "./ex/b.ts"]',
 				].join(',\n\t\t\t'),
 			),
 			'packages/server/package.json': '{ "name": "@beepboop/server", "exports": { "./*": "./src/*" } }',
@@ -958,20 +962,29 @@ describe('boundaries', () => {
 			'a/prefile.ts': 'export const file = 1;\n',
 			'b/prefile.ts': 'export const file = 2;\n',
 			'src/entry.ts': 'export const entry = 1;\n',
+			'fixed/one.ts': 'export const one = 1;\n',
+			'fixed/two.ts': 'export const two = 2;\n',
+			'ja/foo.ts': 'export const foo = 1;\n',
+			'jb/foo.d.ts': 'export declare const foo: number;\n',
+			'ex/a.ts': 'export const a = 1;\n',
+			'ex/b.ts': 'export const b = 2;\n',
 		});
 		const report = await Effect.runPromise(checkBoundaries(root));
 
 		expect(report.violations.map(describeViolation)).toEqual([
 			'@/server/durable/shell.ts resolves to packages/server/src/durable/shell.ts and hides src/server/durable/shell.ts',
-			'@/server/main.ts resolves to packages/server/src/main.ts and hides src/server/main.ts',
 			'@/server/esm.mjs resolves to packages/server/src/esm.mts and hides src/server/esm.d.mts',
 			'@/server/layers resolves to packages/server/src/layers/index.ts and hides src/server/layers.ts',
+			'@/server/main.ts resolves to packages/server/src/main.ts and hides src/server/main.ts',
 			'@/server/view resolves to packages/server/src/view.ts and hides src/server/view.tsx',
 			'@server resolves to packages/server/src/main.ts and hides src/server/main.ts',
 			'@/widget/dial resolves to packages/server/src/widgets/dial/widget.ts and hides src/widgets/dial.ts',
 			'@x/file.ts resolves to a/prefile.ts and hides b/prefile.ts',
+			'@fixed/* resolves to fixed/one.ts and hides fixed/two.ts',
+			'@js/foo.js resolves to ja/foo.ts and hides jb/foo.d.ts',
+			'@exact resolves to ex/a.ts and hides ex/b.ts',
 		]);
-		expect(await refusal(boundariesCommand(root))).toContain('8 package boundary violations');
+		expect(await refusal(boundariesCommand(root))).toContain('11 package boundary violations');
 	});
 
 	test('the boundaries script exits non-zero on violations', () => {

@@ -17,6 +17,7 @@ import {
 	repositoryPath,
 	resolveReference,
 	scannedImports,
+	specifierForms,
 	splitQuery,
 	trackedFiles,
 } from '@/tooling/workspace/modules';
@@ -94,49 +95,37 @@ function shadowed(specifier: string, paths: readonly string[]): Violation[] {
 		: [{ _tag: 'ShadowedAlias', specifier, winner, hidden: [first, ...rest] }];
 }
 
-const importForms: readonly (readonly [RegExp, string])[] = [
-	[/(?:\.d)?\.[cm]?[jt]sx?$/, ''],
-	[/\/index\.(?:[cm]?[jt]sx?|astro)$/, ''],
-	[/(?:\.d)?\.mts$/, '.mjs'],
-	[/(?:\.d)?\.cts$/, '.cjs'],
-];
-
 function shadows(aliases: readonly Alias[], files: readonly string[]): Violation[] {
 	const known = new Set(files);
 	const found: Violation[] = [];
 	const reported = new Set<string>();
-	const report = (alias: Alias, specifier: string, rest: string) => {
-		if (matchingAlias(aliases, specifier)?.alias !== alias) return;
-		const paths = resolvedTargets(alias.targets, rest, known);
+	const report = (alias: Alias, specifier: string, paths: readonly string[]) => {
 		const key = JSON.stringify([alias.pattern, ...paths]);
 		if (reported.has(key)) return;
 		reported.add(key);
 		found.push(...shadowed(specifier, paths));
 	};
 	for (const alias of aliases.filter(alias => alias.targets.length > 1)) {
-		if (!alias.pattern.endsWith('*')) {
-			report(alias, alias.pattern, '');
-			continue;
-		}
+		const wildcard = alias.pattern.endsWith('*');
+		const fixed = wildcard ? alias.targets.filter(target => !target.includes('*')) : alias.targets;
+		report(alias, alias.pattern, resolvedTargets(fixed, '', known));
+		if (!wildcard) continue;
 		const prefix = alias.pattern.slice(0, -1);
 		const rests = new Set<string>();
-		for (const target of alias.targets) {
+		for (const target of alias.targets.filter(target => target.includes('*'))) {
 			const [head = '', tail = ''] = target.split('*');
 			const base = repositoryPath(head);
 			const start = base && head.endsWith('/') ? `${base}/` : base;
-			for (const file of files) {
-				if (file.startsWith(start) && file.endsWith(tail) && file.length > start.length + tail.length) {
-					rests.add(file.slice(start.length, file.length - tail.length));
+			for (const file of files.filter(file => file.startsWith(start))) {
+				for (const form of specifierForms(file.slice(start.length))) {
+					if (form.endsWith(tail) && form.length > tail.length) rests.add(form.slice(0, form.length - tail.length));
 				}
 			}
 		}
-		const sorted = [...rests].sort();
-		for (const rest of sorted) report(alias, `${prefix}${rest}`, rest);
-		for (const rest of sorted) {
-			for (const [form, extension] of importForms) {
-				const stem = rest.replace(form, extension);
-				if (stem !== rest && stem !== extension) report(alias, `${prefix}${stem}`, stem);
-			}
+		for (const rest of rests) {
+			const specifier = `${prefix}${rest}`;
+			if (matchingAlias(aliases, specifier)?.alias !== alias) continue;
+			report(alias, specifier, resolvedTargets(alias.targets, rest, known));
 		}
 	}
 	return found;
