@@ -121,6 +121,7 @@ test('storage traces match across random tokens and report changed documents and
 		await traced(directory('before'), run(a, 'beepboop-cli-report-Ab12Cd', { error: 'e', at: 1 }));
 		await traced(directory('same'), run(b, 'beepboop-cli-report-Zz98Yy', { error: 'e', at: 1 }));
 		await traced(directory('reordered'), run(a, 'beepboop-cli-report-Ab12Cd', { at: 1, error: 'e' }));
+		await traced(directory('rerun'), run(cliToken(), 'beepboop-cli-report-second', { at: 1, error: 'e' }));
 		await traced(directory('swapped'), async storage => {
 			await storage.put('quarantine:x', { error: 'e', at: 1 });
 			await run(a, 'beepboop-cli-report-Ab12Cd', { error: 'e', at: 1 })(storage);
@@ -155,7 +156,7 @@ test('storage traces match across random tokens and report changed documents and
 				summary(0, 1),
 			].join('\n'),
 		});
-		expect(await compared(directory('before'), directory('same'), directory('reordered'))).toEqual({
+		expect(await compared(directory('before'), directory('same'), directory('rerun'))).toEqual({
 			code: 0,
 			output: summary(1, 0),
 		});
@@ -236,8 +237,8 @@ test('a key that differs between baseline runs fails when the new run writes nei
 			code: 1,
 			output: [
 				`${traceFile} world 1:`,
-				'- AutomationCoordinator:1 put "execution:<random 1>" {"state":"ready"}',
-				'+ AutomationCoordinator:1 put "execution:<random 1>" {"state":"failed"}',
+				`- AutomationCoordinator:1 put "execution:${stable}" {"state":"ready"}`,
+				`+ AutomationCoordinator:1 put "execution:${stable}" {"state":"failed"}`,
 				summary(0, 1, 1),
 			].join('\n'),
 		});
@@ -382,6 +383,45 @@ test('a fixed commit SHA that changes between runs is a difference', () =>
 			].join('\n'),
 		});
 		expect((await compared(directory('before'), directory('digest'))).code).toBe(1);
+	}));
+
+test('a token that differs between the baseline runs is random and a token both baselines share is fixed', () =>
+	inTemp(async temp => {
+		const directory = (name: string) => join(temp, name);
+		const run = (commit: string, digest: string): Writes => async storage => {
+			const oid = Buffer.from(crypto.getRandomValues(new Uint8Array(20))).toString('hex');
+			await storage.put(`tag:${oid}`, { oid, commit, digest });
+		};
+		const uuidShaped = () => `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll('-', '');
+		const commit = 'a'.repeat(40), digest = uuidShaped();
+		await traced(directory('before'), run(commit, digest));
+		await traced(directory('again'), run(commit, digest));
+		await traced(directory('after'), run(commit, digest));
+		await traced(directory('moved'), run('b'.repeat(40), digest));
+		await traced(directory('rehashed'), run(commit, uuidShaped()));
+
+		expect(await compared(directory('before'), directory('after'), directory('again'))).toEqual({
+			code: 0,
+			output: summary(1, 0, 1),
+		});
+		expect(await compared(directory('before'), directory('moved'), directory('again'))).toEqual({
+			code: 1,
+			output: [
+				`${traceFile} world 1:`,
+				`- AutomationCoordinator:1 put "tag:<random 1>" {"oid":"<random 1>","commit":"${commit}","digest":"${digest}"}`,
+				`+ AutomationCoordinator:1 put "tag:<random 1>" {"oid":"<random 1>","commit":"<random 2>","digest":"${digest}"}`,
+				summary(0, 1, 1),
+			].join('\n'),
+		});
+		expect(await compared(directory('before'), directory('rehashed'), directory('again'))).toEqual({
+			code: 1,
+			output: [
+				`${traceFile} world 1:`,
+				`- AutomationCoordinator:1 put "tag:<random 1>" {"oid":"<random 1>","commit":"${commit}","digest":"${digest}"}`,
+				`+ AutomationCoordinator:1 put "tag:<random 1>" {"oid":"<random 1>","commit":"${commit}","digest":"<random 2>"}`,
+				summary(0, 1, 1),
+			].join('\n'),
+		});
 	}));
 
 test('a trace directory that is not a complete trace is refused', () =>
