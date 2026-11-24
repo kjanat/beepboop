@@ -44,6 +44,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `beepboop release` follows the asset uploads of a release with binary builds. Beepboop reads the draft GitHub release with a token that holds `contents: write`, the push access that GitHub requires for draft releases. The follow stopped with `GitHub HTTP 403 ... Resource not accessible by integration`.
 - The activity log names the workflow run that read a credential as "Workflow run" with its run number, and a credential read during repository setup as "Beepboop setup". It named both "Administrator".
 - A cached installation token that GitHub rejects with HTTP 401 leaves the cache, so the next request mints a new one instead of reusing the rejected token for the rest of its lifetime. A replaced App private key replaces the cached App in the same isolate. A suspension drops the installation's cached tokens, a token without a valid ISO 8601 expiry is never reused, a token is reused for at most 55 minutes, and a token requested by repository name alone is never reused. The owner login and the bot identity refresh every hour, and the installation search reads every page.
 - The dashboard's GitHub status panel works on Workers again. Beepboop stored the global `fetch` and called it as a method, and Workers refused each call with "Illegal invocation". Every default `fetch` now goes through a plain wrapper.
