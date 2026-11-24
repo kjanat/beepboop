@@ -8,6 +8,7 @@ import { discoveredWidget } from '@root/test/support/client.ts';
 import { eachDirectory } from '@root/test/support/directories.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
+import { loggedErrors } from '@root/test/support/process.ts';
 import { promotionsOf } from '@root/test/support/releases.ts';
 import {
 	editableConfiguration,
@@ -2033,8 +2034,14 @@ test('a release published before its failed run is observed settles when the run
 	expect(await publishedBeforeFailedRun(true)).toEqual(['succeeded', runFailedNote]);
 });
 
-test('a failed run stays failed when GitHub cannot list the tags', async () => {
+test('a failed run stays failed and logs the release check when GitHub cannot list the tags', async () => {
+	const logged = loggedErrors();
 	expect((await publishedBeforeFailedRun(false))[0]).toBe('failed');
+	expect(logged.events()).toContainEqual(expect.objectContaining({
+		event: 'release.recheck-failed',
+		executionId: expect.any(String),
+		error: expect.any(String),
+	}));
 });
 
 test('--auto, --no-auto and --merge send this release its version PR merge', async () => {
