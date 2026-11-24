@@ -29,6 +29,10 @@ function token(): Promise<string> {
 	);
 }
 
+function read(target: Repository, issued: string): Promise<unknown> {
+	return world.run(Automation.use(service => service.gateway.call(`/repos/${target.name}`, issued)));
+}
+
 test('requests in one isolate share an installation token until five minutes before it expires', async () => {
 	const mark = world.network.mark();
 	const first = await token();
@@ -42,6 +46,26 @@ test('requests in one isolate share an installation token until five minutes bef
 	expect(renewed).not.toBe(first);
 	expect(await token()).toBe(renewed);
 	expect(calls(mark, 'POST', /\/access_tokens$/)).toBe(2);
+});
+
+test('each repository reads with a token of its own', async () => {
+	const other = world.github.create('octo/gadget', { 'README.md': '# gadget\n' });
+	const first = await token();
+	expect(await read(other, first)).toBeNull();
+	const second = await world.run(
+		Automation.use(service => service.gateway.token(other.name, other.id, { contents: 'read' })),
+	);
+	expect(await read(other, second)).toMatchObject({ full_name: other.name });
+});
+
+test('a request an hour later reads with a token GitHub still accepts', async () => {
+	const first = await token();
+	world.advance(60 * minutes);
+	expect(await read(repository, await token())).toMatchObject({ full_name: repository.name });
+	const refused = await world.run(
+		Automation.use(service => service.gateway.call(`/repos/${repository.name}`, first)).pipe(Effect.flip),
+	);
+	expect(refused.message).toContain('HTTP 401');
 });
 
 test('a slow repository check counts against the five-minute margin', async () => {
