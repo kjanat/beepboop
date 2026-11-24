@@ -182,6 +182,7 @@
       "name": "@beepboopbot/publication",
       "version": "0.0.0",
       "dependencies": {
+        "@beepboopbot/auth": "workspace:*",
         "@beepboopbot/credentials": "workspace:*",
         "@beepboopbot/discovery": "workspace:*",
         "@beepboopbot/domain": "workspace:*",

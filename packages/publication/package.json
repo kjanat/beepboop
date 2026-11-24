@@ -7,6 +7,7 @@
 		"./*": "./src/*"
 	},
 	"dependencies": {
+		"@beepboopbot/auth": "workspace:*",
 		"@beepboopbot/credentials": "workspace:*",
 		"@beepboopbot/discovery": "workspace:*",
 		"@beepboopbot/domain": "workspace:*",
