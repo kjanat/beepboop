@@ -1,6 +1,5 @@
 import { Clock, Context, Effect, Layer } from 'effect';
-import type { RunIdentity } from '@/auth/actions-oidc.ts';
-import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
+import type { RunExpectation, RunIdentity } from '@/auth/actions-oidc.ts';
 import type { Inventory, Package } from '@/domain/inventory.ts';
 import { packageId, parseReleaseIdentity } from '@/domain/package-identity.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
@@ -47,6 +46,11 @@ export class LedgerStore extends Context.Service<LedgerStore, {
 	readonly all: Effect.Effect<Ledger[], DomainError>;
 	readonly put: (ledger: Ledger) => Effect.Effect<void, DomainError>;
 	readonly execution: (id: string) => Effect.Effect<LedgerOwner, DomainError>;
+	readonly bind: (
+		id: string,
+		identity: RunIdentity,
+		expectation: RunExpectation,
+	) => Effect.Effect<LedgerOwner, DomainError>;
 	readonly executions: Effect.Effect<readonly LedgerOwner[], DomainError>;
 	readonly recordPublication: (executionId: string, publication: Publication) => Effect.Effect<void, DomainError>;
 	readonly inventory: (repositoryId: number) => Effect.Effect<Inventory | undefined, DomainError>;
@@ -96,8 +100,7 @@ export class PublicationLedger extends Context.Service<PublicationLedger, {
 			const registry = yield* RegistryVerification;
 
 			const publishing = Effect.fnUntraced(function*(id: string, identity: RunIdentity) {
-				const execution = yield* store.execution(id);
-				yield* WorkflowRunGuard.require(execution, identity, {
+				const execution = yield* store.bind(id, identity, {
 					_tag: 'SameRun',
 					mismatch: 'Publication identity mismatch',
 				});

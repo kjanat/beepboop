@@ -12,6 +12,7 @@ import { ledgerStore } from '@/release/services/coordinator/ledger-store.ts';
 import { ReconcileHistory } from '@/release/services/coordinator/reconcile-history.ts';
 import type { AuditTrail } from '@/release/services/coordinator/retry-queue.ts';
 import { InboxQueue, ObserveQueue, TrackQueue } from '@/release/services/coordinator/retry-queue.ts';
+import { RunBinder } from '@/release/services/coordinator/run-binder.ts';
 
 export type CoordinatorServices =
 	| LedgerStore
@@ -22,6 +23,7 @@ export type CoordinatorServices =
 	| TrackQueue
 	| Journal
 	| ReconcileHistory
+	| RunBinder
 	| AlarmPlanner
 	| DurableStorage;
 
@@ -31,6 +33,7 @@ export function coordinatorLayer(
 	storage: DurableObjectStorage,
 ): Layer.Layer<CoordinatorServices, never, ProjectionSink | AuditTrail | RepositoryRevisions> {
 	return ledgerStore.pipe(
+		Layer.provideMerge(RunBinder.layer),
 		Layer.provideMerge(Layer.mergeAll(Executions.layer, CoordinatorLock.layer, queues)),
 		Layer.provideMerge(AlarmPlanner.sources),
 		Layer.provideMerge(Layer.mergeAll(Journal.layer(journalLayout), ReconcileHistory.layer, AlarmPlanner.layer)),

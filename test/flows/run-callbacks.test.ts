@@ -47,22 +47,27 @@ test('run callbacks refuse a managed preparation and a run that is not bound to 
 		event: 'workflow_dispatch',
 	};
 	const coordinator = world.coordinator(repository);
-	expect(
-		await Promise.all([
-			refusal(coordinator.register(preparation.id, stranger)),
-			refusal(coordinator.prepared(preparation.id, stranger, [])),
-			refusal(coordinator.report(preparation.id, stranger, [], [])),
-			refusal(coordinator.register(promotion.id, stranger)),
-			refusal(coordinator.prepared(promotion.id, stranger, [])),
-			refusal(coordinator.report(promotion.id, stranger, [], [])),
-		]),
-	).toEqual([
-		'Operation is not a workflow',
-		'Operation is not a workflow',
-		'Operation is not a workflow',
+	const purl = 'pkg:npm/widget@1.1.0';
+	const callbacks = (id: string) => [
+		refusal(coordinator.register(id, stranger)),
+		refusal(coordinator.prepared(id, stranger, [])),
+		refusal(coordinator.report(id, stranger, [], [])),
+		refusal(coordinator.refs(id, stranger)),
+		refusal(coordinator.publishRelease(id, stranger)),
+		refusal(coordinator.publishNext(id, stranger)),
+		refusal(coordinator.publishClaim(id, stranger, purl, `sha256:${'0'.repeat(64)}`)),
+		refusal(coordinator.publishReport(id, stranger, { executionId: id, purl, outcome: 'published' })),
+	];
+	expect(await Promise.all(callbacks(preparation.id))).toEqual(Array(8).fill('Operation is not a workflow'));
+	expect(await Promise.all(callbacks(promotion.id))).toEqual([
 		'Workflow binding mismatch',
 		'Preparation run identity mismatch',
 		'Report identity mismatch',
+		'Ref operation identity mismatch',
+		'Release operation identity mismatch',
+		'Publication identity mismatch',
+		'Publication identity mismatch',
+		'Publication identity mismatch',
 	]);
 	expect(await only(api, 'promote')).toEqual(promotion);
 });
