@@ -161,6 +161,8 @@ test('Go files outside the main package build do not decide main.version, and al
 			'package main\n\n// #include <stdio.h>\nimport "C"\n\nvar version = 1\n',
 			'package main\n\nimport (\n\t"fmt"\n\t"C"\n)\n\nvar version = 1\n',
 			'package main\n\nimport("C")\n\nvar version = 1\n',
+			'package main\n\nimport "C" // C bindings\n\nvar version = 1\n',
+			'package main\n\nimport "C"/* C */\n\nvar version = 1\n',
 		]
 	) {
 		expect([source, unsettableVersion([['cgo.go', source], ['main.go', 'package main\n']])]).toEqual([

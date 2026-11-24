@@ -132,7 +132,7 @@ function constrainedName(file: string): boolean {
 	return knownOS.has(last) || knownArch.has(last);
 }
 
-const cgo = /^import\s*(?:\(\s*(?:[^)]*\n\s*)?)?"C"\s*(?:$|\n|\))/m;
+const cgo = /^import\s*(?:\(\s*(?:[^)]*\n\s*)?)?"C"(?=\s|\)|\/[/*]|$)/m;
 
 function built(file: string, source: string): string[] | undefined {
 	if (constrainedName(file) || /^\/\/(?:go:build|\s*\+build)\s/m.test(source) || cgo.test(source)) return undefined;
