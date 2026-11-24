@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { Clock, Context, Effect, Layer, ManagedRuntime, Predicate, Result, Schema } from 'effect';
+import { Clock, Context, Effect, Layer, ManagedRuntime, Option, Predicate, Result, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
@@ -12,6 +12,7 @@ import { RunCallbacks } from '@/automation/run-callbacks.ts';
 import type { AutomationBindings } from '@/automation/service';
 import { Automation, applicationLayer, withAutomation } from '@/automation/service';
 import { repositorySnapshot } from '@/automation/snapshot';
+import { TagSigning } from '@/automation/tag-signing.ts';
 import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
 import { coversBinding } from '@/credentials/grant.ts';
 import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
@@ -32,8 +33,8 @@ import {
 	selectorKey,
 } from '@/domain/package-identity.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
-import type { RefChange, RefPlan, RefState, TagSigner } from '@/domain/refs.ts';
-import { tagObject, tagObjectId, tagPayload } from '@/domain/refs.ts';
+import type { RefPlan, RefState, TagSigner as SignerBinding } from '@/domain/refs.ts';
+import { tagObjectId } from '@/domain/refs.ts';
 import type { CheckChoice, GateSkip, ReleaseGate } from '@/domain/release-gates.ts';
 import { gatedRelease, gateLabel, gateReasons, sameGate } from '@/domain/release-gates.ts';
 import type { ReadyRepository } from '@/domain/repository';
@@ -57,6 +58,7 @@ import {
 } from '@/github/resources.ts';
 import type { GitHubRunResult, RunJob } from '@/github/run-state.ts';
 import { classifyJob, classifyRun, jobProgressState } from '@/github/run-state.ts';
+import { TagSigner } from '@/github/signing.ts';
 import { GitHubRejection } from '@/github/transport.ts';
 import type { InboxEvent } from '@/github/webhooks.ts';
 import { fromPromise, fromSync, recover } from '@/kernel/errors/classify.ts';
@@ -171,7 +173,7 @@ export interface CoordinatorBindings extends AutomationBindings {
 	OWNER_ID: string;
 	RELEASE_WORKFLOW: Workflow<ReleaseWorkflowParams>;
 	PUBLISH_BUDGET: DurableObjectNamespace<PublishBudget>;
-	SIGNER?: TagSigner;
+	SIGNER?: SignerBinding;
 }
 interface ReleaseOperation {
 	id: string;
@@ -262,7 +264,9 @@ type CoordinatorContext =
 	| PublicationLedger
 	| PublishPacing
 	| ReleaseCommits
-	| RunCallbacks;
+	| RunCallbacks
+	| TagSigner
+	| TagSigning;
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, CoordinatorContext>;
 type GateSubject =
 	& Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>
@@ -400,10 +404,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Layer.mergeAll(
 				jsonLogging,
 				committed.pipe(
-					Layer.provideMerge(RunCallbacks.layer),
+					Layer.provideMerge(Layer.merge(RunCallbacks.layer, TagSigning.layer)),
 					Layer.provideMerge(Layer.merge(PreparationWriter.layer, ReleaseCommits.layer)),
 					Layer.provideMerge(PublicationLedger.layer),
 					Layer.provideMerge(Background.layer(work => ctx.waitUntil(work))),
+					Layer.provideMerge(TagSigner.layer(() => env.SIGNER)),
 					Layer.provideMerge(PublishPacing.layer(name => env.PUBLISH_BUDGET.getByName(name))),
 					Layer.provideMerge(registryVerification),
 					Layer.provideMerge(setupEditSource),
@@ -541,7 +546,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			const refs = yield* gateway.tagRefs(repository, repositoryId);
 			const transport = (yield* Automation).dependencies.transport;
 			const context = gateway.verification(repository, repositoryId);
-			const create = (row: PackageTagRow) => this.createPackageTag(repository, repositoryId, row);
+			const signing = yield* TagSigning;
+			const create = (row: PackageTagRow) =>
+				signing.createTag(repository, repositoryId, { name: row.tag, commit: row.commit });
 			const check = (row: PackageTagRow): CoordinatorEffect<PackageTagResult> =>
 				Effect.gen(function*() {
 					const base = { tag: row.tag, version: row.version, commit: row.commit };
@@ -581,35 +588,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						: { ...base, outcome: 'failed', reason: decodeError(created.failure) };
 				});
 			return { rows: rows(refs), check };
-		});
-	}
-	private createPackageTag(
-		repository: string,
-		repositoryId: number,
-		row: PackageTagRow,
-	): CoordinatorEffect<void, DomainError> {
-		const signer = this.env.SIGNER;
-		return Effect.gen({ self: this }, function*() {
-			if (!signer) return yield* precondition('Package tags need the tag signer');
-			const clock = yield* Clock.Clock;
-			const identity = yield* fromPromise(() => signer.identity());
-			const user = /^([^<>\n]+) <([^<>\s]+)>$/.exec(identity.userId);
-			if (!user?.[1] || !user[2]) return yield* precondition('The signing key needs a user ID with a name and email');
-			const seconds = Math.floor(clock.currentTimeMillisUnsafe() / 1000);
-			const change: RefChange = { name: row.tag, expected: null, commit: row.commit, annotated: true, signed: true };
-			const payload = tagPayload(change, row.tag, `${identity.userId} ${seconds} +0000`);
-			const signature = yield* fromPromise(() => signer.sign(payload, `beepboop:${repository}`));
-			yield* (yield* this.gateway).createTag(repository, repositoryId, {
-				name: row.tag,
-				commit: row.commit,
-				message: `${row.tag}\n${signature.endsWith('\n') ? signature : `${signature}\n`}`,
-				tagger: {
-					name: user[1],
-					email: user[2],
-					date: new Date(seconds * 1000).toISOString().replace('.000Z', 'Z'),
-				},
-				signed: true,
-			});
 		});
 	}
 	private putReleaseSet(preparationId: string, record: ReleaseSetRecord): CoordinatorEffect<void, DomainError> {
@@ -1208,7 +1186,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						if (policy.phase !== 'version' || !policy.signed) {
 							return yield* precondition('Distribution publication requires signed version refs');
 						}
-						if (!this.env.SIGNER) return yield* precondition('Distribution publication requires the signing service');
+						const signer = yield* (yield* TagSigner).current;
+						if (Option.isNone(signer)) {
+							return yield* precondition('Distribution publication requires the signing service');
+						}
 						distribution = yield* createDistribution(gateway, {
 							repository: execution.repository,
 							repositoryId: execution.repositoryId,
@@ -1216,7 +1197,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 							version,
 							paths: policy.distribution.files,
 							files,
-							signer: this.env.SIGNER,
+							signer: signer.value,
 						});
 						target = distribution.commit;
 					} else {
@@ -1251,7 +1232,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						yield* this.modulePrefixes(execution),
 						execution.reclaims ?? [],
 					);
-					execution.refPlan = yield* this.signRefs({
+					execution.refPlan = yield* (yield* TagSigning).sign({
 						repository: execution.repository,
 						executionId: id,
 						version,
@@ -1362,34 +1343,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				}
 			}
 			return undefined;
-		});
-	}
-	private signRefs(plan: RefPlan): CoordinatorEffect<RefPlan, DomainError> {
-		const signer = this.env.SIGNER;
-		if (!signer || !plan.changes.some(change => change.annotated)) return Effect.succeed(plan);
-		return Effect.gen(function*() {
-			const clock = yield* Clock.Clock;
-
-			const identity = yield* fromPromise(() => signer.identity());
-			if (!/^[^<>\n]+ <[^<>\s]+>$/.test(identity.userId)) {
-				return yield* precondition('The signing key needs a user ID with a name and email');
-			}
-			const tagger = `${identity.userId} ${Math.floor(clock.currentTimeMillisUnsafe() / 1000)} +0000`;
-			const changes = yield* Effect.forEach(
-				plan.changes,
-				change =>
-					change.annotated && (change.expected === null || change.replaces)
-						? fromPromise(() =>
-							signer.sign(tagPayload(change, `Release ${plan.version}`, tagger), `beepboop:${plan.repository}`)
-						)
-							.pipe(Effect.map(signature => ({
-								...change,
-								signed: true,
-								object: tagObject(change, plan.version, tagger, signature),
-							})))
-						: Effect.succeed(change),
-			);
-			return { ...plan, changes, publicKey: identity.publicKey };
 		});
 	}
 	private promoted(execution: Execution): CoordinatorEffect<boolean, DomainError> {

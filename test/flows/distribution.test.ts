@@ -3,6 +3,7 @@ import { Effect, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import type { Edit } from '@/domain/inventory.ts';
+import { bindingSigner } from '@/github/signing.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { DistributionFile } from '@/release/distribution/validation.ts';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/release/distribution/validation.ts';
@@ -127,13 +128,13 @@ function fixture(options: {
 			throw new Error(`Unexpected ${method} ${path}`);
 		},
 	);
-	const signer = {
+	const signer = bindingSigner({
 		identity: async () => ({ publicKey: 'synthetic-public-key', userId: 'Release Maintainer <release@example.com>' }),
 		sign: async (payload: string, caller: string) => {
 			signatures.push({ payload, caller });
 			return `signature-${signatures.length}`;
 		},
-	};
+	});
 	const run = (input: DistributionFile[] = files, paths = files.map(file => file.path)) =>
 		Effect.runPromise(
 			Effect.gen(function*() {
