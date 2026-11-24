@@ -4,10 +4,13 @@ import { Effect, Result, Schema } from 'effect';
 import type { ToolFailure } from '@/tooling/runtime';
 import { attemptPromise, main, parse, readJson, refuse } from '@/tooling/runtime';
 import { exported, packageName, readWorkspaces } from '@/tooling/workspace/manifests';
+import type { Alias } from '@/tooling/workspace/modules';
 import {
+	candidatePaths,
 	isCode,
 	isLocal,
 	isRelative,
+	matchingAlias,
 	packageOf,
 	readAliases,
 	references,
@@ -32,6 +35,12 @@ export type Violation =
 	| { readonly _tag: 'Unresolved'; readonly file: string; readonly specifier: string }
 	| { readonly _tag: 'Cycle'; readonly packages: readonly string[] }
 	| { readonly _tag: 'DuplicateEffect'; readonly path: string }
+	| {
+		readonly _tag: 'ShadowedAlias';
+		readonly specifier: string;
+		readonly winner: string;
+		readonly hidden: readonly [string, ...string[]];
+	}
 	| { readonly _tag: 'StaleBaseline'; readonly file: string; readonly specifier: string };
 
 export interface BoundaryReport {
@@ -70,6 +79,68 @@ function cycles(edges: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
 	return found;
 }
 
+function resolvedTargets(targets: readonly string[], rest: string, files: ReadonlySet<string>): string[] {
+	return targets.flatMap(target => {
+		const found = candidatePaths(target.replaceAll('*', rest)).find(candidate => files.has(candidate));
+		return found === undefined ? [] : [found];
+	});
+}
+
+function shadowed(specifier: string, paths: readonly string[]): Violation[] {
+	const [winner, first, ...rest] = paths;
+	return winner === undefined || first === undefined
+		? []
+		: [{ _tag: 'ShadowedAlias', specifier, winner, hidden: [first, ...rest] }];
+}
+
+const importForms: readonly (readonly [RegExp, string])[] = [
+	[/(?:\.d)?\.[cm]?[jt]sx?$/, ''],
+	[/\/index\.(?:[cm]?[jt]sx?|astro)$/, ''],
+	[/(?:\.d)?\.mts$/, '.mjs'],
+	[/(?:\.d)?\.cts$/, '.cjs'],
+];
+
+function shadows(aliases: readonly Alias[], files: readonly string[]): Violation[] {
+	const known = new Set(files);
+	const found: Violation[] = [];
+	const reported = new Set<string>();
+	const report = (alias: Alias, specifier: string, rest: string) => {
+		if (matchingAlias(aliases, specifier)?.alias !== alias) return;
+		const paths = resolvedTargets(alias.targets, rest, known);
+		const key = JSON.stringify([alias.pattern, ...paths]);
+		if (reported.has(key)) return;
+		reported.add(key);
+		found.push(...shadowed(specifier, paths));
+	};
+	for (const alias of aliases.filter(alias => alias.targets.length > 1)) {
+		if (!alias.pattern.endsWith('*')) {
+			report(alias, alias.pattern, '');
+			continue;
+		}
+		const prefix = alias.pattern.slice(0, -1);
+		const rests = new Set<string>();
+		for (const target of alias.targets) {
+			const [head = '', tail = ''] = target.split('*');
+			const base = repositoryPath(head);
+			const start = base ? `${base}/` : '';
+			for (const file of files) {
+				if (file.startsWith(start) && file.endsWith(tail) && file.length > start.length + tail.length) {
+					rests.add(file.slice(start.length, file.length - tail.length));
+				}
+			}
+		}
+		const sorted = [...rests].sort();
+		for (const rest of sorted) report(alias, `${prefix}${rest}`, rest);
+		for (const rest of sorted) {
+			for (const [form, extension] of importForms) {
+				const stem = rest.replace(form, extension);
+				if (stem !== rest && stem !== extension) report(alias, `${prefix}${stem}`, stem);
+			}
+		}
+	}
+	return found;
+}
+
 export function describe(violation: Violation): string {
 	switch (violation._tag) {
 		case 'OutsidePackage':
@@ -82,6 +153,8 @@ export function describe(violation: Violation): string {
 			return `Package cycle: ${violation.packages.join(' -> ')}`;
 		case 'DuplicateEffect':
 			return `A second copy of effect is installed at ${violation.path}`;
+		case 'ShadowedAlias':
+			return `${violation.specifier} resolves to ${violation.winner} and hides ${violation.hidden.join(', ')}`;
 		case 'StaleBaseline':
 			return `${baselinePath} lists ${violation.file} importing ${violation.specifier}, which no longer happens`;
 	}
@@ -152,6 +225,7 @@ export const checkBoundaries = Effect.fn('checkBoundaries')(function*(
 			violations.push({ _tag: 'StaleBaseline', file: entry.file, specifier: entry.specifier });
 		}
 	}
+	violations.push(...shadows(aliases, files));
 	for (const cycle of cycles(edges)) violations.push({ _tag: 'Cycle', packages: cycle });
 	const installed = yield* attemptPromise(() =>
 		Array.fromAsync(effectManifests.scan({ cwd: root, dot: true, followSymlinks: false }))

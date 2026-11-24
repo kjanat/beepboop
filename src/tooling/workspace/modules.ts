@@ -553,7 +553,10 @@ function wildcard(alias: Alias): string | undefined {
 	return alias.pattern.endsWith('*') ? alias.pattern.slice(0, -1) : undefined;
 }
 
-function matchingAlias(aliases: readonly Alias[], specifier: string): { alias: Alias; rest: string } | undefined {
+export function matchingAlias(
+	aliases: readonly Alias[],
+	specifier: string,
+): { alias: Alias; rest: string } | undefined {
 	const exact = aliases.find(alias => alias.pattern === specifier);
 	if (exact) return { alias: exact, rest: '' };
 	let best: { alias: Alias; rest: string; length: number } | undefined;
