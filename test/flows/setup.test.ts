@@ -1577,6 +1577,20 @@ test('adoption can add a standalone backfill without delegating promotion public
 		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
 	);
 	expect(plan.blockers).toEqual([]);
+	const observed = await Effect.runPromise(parseSetupPlan(
+		(await api('/api/repositories/setup/preview', {
+			repository: repository.name,
+			choices: {
+				streams: choices.streams.map(stream => ({
+					...stream,
+					observe: [{ name: 'external', file: 'publish.yml', publications: packages }],
+				})),
+			},
+		})).body,
+	));
+	expect(observed.blockers).toEqual([]);
+	expect(observed.edits.find(edit => edit.path === '.github/workflows/npm-backfill.yml')?.after)
+		.toContain('pkg:npm/widget');
 	const configuration = plan.edits.find(edit => edit.path === '.github/beepboop.json');
 	expect(JSON.parse(configuration?.after ?? '{}').streams.main).toMatchObject({
 		promote: { workflow: { publications: [...packages, 'github-release:octo/widget'] } },
@@ -1589,6 +1603,21 @@ test('adoption can add a standalone backfill without delegating promotion public
 	expect(reopened.choices.streams[0]?.operations).toMatchObject([
 		{ name: 'npm-backfill', backfill: true, needs: [], publications: packages },
 	]);
+	const stream = choices.streams[0];
+	const backfill = stream?.operations?.[0];
+	if (!stream || !backfill) throw new Error('Expected a backfill choice');
+	const { backfill: _backfill, ...operation } = backfill;
+	const revision = await Effect.runPromise(parseSetupPlan(
+		(await api('/api/repositories/setup/preview', {
+			repository: repository.name,
+			choices: { streams: [{ ...stream, operations: [{ ...operation, needs: ['promote'] }] }] },
+		})).body,
+	));
+	expect(revision.blockers).toEqual([]);
+	const revisedConfig = revision.edits.find(edit => edit.path === '.github/beepboop.json');
+	const revisedBinding = JSON.parse(revisedConfig?.after ?? '{}').streams.main.workflows['npm-backfill'];
+	expect(revisedBinding.needs).toEqual(['promote']);
+	expect(revisedBinding.backfill).toBe(false);
 });
 
 test('an operation workflow holding plain crate lines is regenerated like the promote workflow', async () => {

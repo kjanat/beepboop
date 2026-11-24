@@ -32,6 +32,9 @@ export interface ExecutionCommitted {
 }
 
 export class RepositoryRevisions extends Context.Service<RepositoryRevisions, {
+	readonly inventoryAt: (
+		execution: Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration'>,
+	) => Effect.Effect<RepositoryRecord['inventory'], DomainError>;
 	readonly get: (
 		repositoryId: number,
 	) => Effect.Effect<Pick<RepositoryRecord, 'defaultBranch' | 'inventory'> | undefined, DomainError>;

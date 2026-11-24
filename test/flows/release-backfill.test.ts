@@ -2,7 +2,8 @@ import { expect, test } from 'bun:test';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import { call, cliTransport } from '@root/test/support/client.ts';
 import { bearer } from '@root/test/support/http.ts';
-import { publishWorkflow, widget } from '@root/test/support/repositories.ts';
+import { withIdentity, workflowCall } from '@root/test/support/ledger.ts';
+import { npmManifest, publishWorkflow, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
@@ -21,6 +22,8 @@ test('an opted-in backfill dispatches current workflow code for a published hist
 	const commit = world.github.head(repository);
 	const backfill = { file: 'backfill.yml', mode: 'dispatch', ref: 'refs/heads/main', publications: ['pkg:npm/widget'] };
 	const current = world.github.push(repository, {
+		'package.json': JSON.stringify({ private: true, workspaces: ['packages/*'] }),
+		'packages/widget/package.json': npmManifest('widget', '1.1.0'),
 		'.github/workflows/backfill.yml': publishWorkflow.replace('operation: promote', 'operation: backfill'),
 		'.github/beepboop.json': JSON.stringify({
 			managers: ['npm', 'workflow'],
@@ -93,6 +96,12 @@ test('an opted-in backfill dispatches current workflow code for a published hist
 		sourceSha: commit,
 		upstreamRelease: { tag: 'v1.0.0', commit },
 	});
+	const next = await withIdentity(
+		world,
+		identity,
+		() => Effect.runPromise(workflowCall(world, '/api/workflow/publish/next', { executionId: started.id })),
+	);
+	expect(next).toMatchObject({ kind: 'publish', package: { manifest: 'package.json' } });
 	world.npm.publish('widget', '1.0.0');
 	await runAction(world, 'report', identity, {
 		EXECUTION_ID: started.id,

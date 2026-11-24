@@ -76,7 +76,7 @@ const binding = {
 	platform: Schema.optional(platformSchema),
 	refs: Schema.optional(refPolicyValue),
 	mode: Schema.optional(Schema.Literals(['observe', 'dispatch'])),
-	backfill: Schema.optional(Schema.Literal(true)),
+	backfill: Schema.optional(Schema.Boolean),
 	each: Schema.optional(Schema.Literal('package')),
 	needs: Schema.optional(strings),
 	needsJobs: Schema.optional(mutableRecord(Schema.String, strings)),
@@ -270,7 +270,7 @@ function bindingSchema() {
 		schedule: Schema.optional(cron),
 		publications: Schema.optional(packageReferences),
 		mode: Schema.optional(Schema.Literals(['observe', 'dispatch'])),
-		backfill: Schema.optional(Schema.Literal(true)).annotate({
+		backfill: Schema.optional(Schema.Boolean).annotate({
 			description: 'Allow this standalone dispatch operation to run for an existing published release',
 		}),
 		each: Schema.optional(Schema.Literal('package')),
@@ -316,7 +316,7 @@ function bindingSchema() {
 		...(binding.platform ? { platform: binding.platform } : {}),
 		...(binding.refs ? { refs: binding.refs } : {}),
 		...(binding.mode === undefined ? {} : { mode: binding.mode }),
-		...(binding.backfill ? { backfill: binding.backfill } : {}),
+		...(binding.backfill === undefined ? {} : { backfill: binding.backfill }),
 		...(binding.each === undefined ? {} : { each: binding.each }),
 		...(binding.needs === undefined && !binding.artifactInputs
 			? {}

@@ -20,7 +20,10 @@ function run<A, E>(memory: MemoryStorage, projected: Projection[], work: Effect.
 			}),
 	});
 	const audit = Layer.succeed(AuditTrail, { record: () => Effect.void });
-	const revisions = Layer.succeed(RepositoryRevisions, { get: () => Effect.undefined });
+	const revisions = Layer.succeed(RepositoryRevisions, {
+		get: () => Effect.undefined,
+		inventoryAt: () => Effect.die('Unexpected snapshot'),
+	});
 	return Effect.runPromiseExit(
 		work.pipe(Effect.provide(coordinatorLayer(memory).pipe(Layer.provide(Layer.mergeAll(sink, audit, revisions))))),
 	);

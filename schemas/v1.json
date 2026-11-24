@@ -485,9 +485,6 @@
 										},
 										"backfill": {
 											"type": "boolean",
-											"enum": [
-												true
-											],
 											"description": "Allow this standalone dispatch operation to run for an existing published release"
 										},
 										"each": {
@@ -1176,9 +1173,6 @@
 										},
 										"backfill": {
 											"type": "boolean",
-											"enum": [
-												true
-											],
 											"description": "Allow this standalone dispatch operation to run for an existing published release"
 										},
 										"each": {
@@ -1995,9 +1989,6 @@
 										},
 										"backfill": {
 											"type": "boolean",
-											"enum": [
-												true
-											],
 											"description": "Allow this standalone dispatch operation to run for an existing published release"
 										},
 										"each": {

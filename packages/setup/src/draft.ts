@@ -467,12 +467,18 @@ function drafted(
 					}.`,
 				);
 			}
+			const workflows = object(current.workflows);
+			const clearBackfill = (name: string) =>
+				object(workflows[name]).backfill === true || resolved?.streams[selection.name]?.workflows[name]?.backfill
+					? { backfill: false }
+					: {};
 			const bindings = Object.fromEntries(
-				Object.entries(object(current.workflows)).filter(([, value]) => object(value).mode !== 'observe'),
+				Object.entries(workflows).filter(([, value]) => object(value).mode !== 'observe'),
 			);
 			for (const entry of selection.observe ?? []) {
 				const observed: Record<string, unknown> = {
-					...object(object(current.workflows)[entry.name]),
+					...object(workflows[entry.name]),
+					...clearBackfill(entry.name),
 					file: entry.file,
 					mode: 'observe',
 					...(entry.ref ? { ref: entry.ref } : {}),
@@ -484,13 +490,13 @@ function drafted(
 				bindings[entry.name] = observed;
 			}
 			for (const entry of selection.operations ?? []) {
-				const previous = object(object(current.workflows)[entry.name]);
+				const previous = object(workflows[entry.name]);
 				const { name: _name, backfill, needs: _needs, needsJobs: _jobs, publications: _publications, ...generator } =
 					entry;
 				const operation: Record<string, unknown> = {
 					...previous,
 					file: entry.file,
-					...(backfill ? { mode: 'dispatch', backfill } : {}),
+					...(backfill ? { mode: 'dispatch', backfill } : clearBackfill(entry.name)),
 					ref: typeof previous.ref === 'string' ? previous.ref : snapshot.repository.defaultBranch,
 					publications: entry.publications,
 					needs: entry.needs,
@@ -676,8 +682,7 @@ function drafted(
 				updated.start = selection.start.flatMap(via => via === 'action' ? [{ via, workflow: startWorkflowFile }] : []);
 			}
 			for (const entry of selection.operations ?? []) {
-				const { name: operation, backfill: _backfill, needs: _needs, needsJobs: _jobs, publications, ...workflow } =
-					entry;
+				const { name: operation, backfill, needs: _needs, needsJobs: _jobs, publications, ...workflow } = entry;
 				if (selectedFiles.has(workflow.file)) {
 					blockers.push(`${workflow.file}: one workflow cannot be assigned to multiple release roles or streams.`);
 				}
@@ -687,7 +692,7 @@ function drafted(
 					selection.name,
 					operation,
 					workflow,
-					published.filter(pkg => publications.includes(packageId(pkg))),
+					(backfill ? selected : published).filter(pkg => publications.includes(packageId(pkg))),
 					choices.actionsRevision,
 					required.filter(id => publications.includes(id)),
 				));

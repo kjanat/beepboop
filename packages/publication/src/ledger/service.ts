@@ -54,6 +54,7 @@ export class LedgerStore extends Context.Service<LedgerStore, {
 	readonly executions: Effect.Effect<readonly LedgerOwner[], DomainError>;
 	readonly recordPublication: (executionId: string, publication: Publication) => Effect.Effect<void, DomainError>;
 	readonly inventory: (repositoryId: number) => Effect.Effect<Inventory | undefined, DomainError>;
+	readonly inventoryFor: (execution: LedgerOwner) => Effect.Effect<Inventory | undefined, DomainError>;
 }>()('beepboopbot/publication/LedgerStore') {}
 
 export class RegistryVerification extends Context.Service<RegistryVerification, {
@@ -154,7 +155,7 @@ export class PublicationLedger extends Context.Service<PublicationLedger, {
 			const ledgerOf = Effect.fnUntraced(function*(execution: LedgerOwner) {
 				const stored = yield* store.get(execution.id);
 				if (stored !== undefined) return yield* acceptedUploads(stored);
-				const inventory = yield* store.inventory(execution.repositoryId);
+				const inventory = yield* store.inventoryFor(execution);
 				if (!inventory) return yield* precondition('Repository is not enrolled');
 				const version = execution.version;
 				if (!version) return yield* precondition('The execution has no version to publish');

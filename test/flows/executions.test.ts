@@ -66,7 +66,10 @@ function run<A, E>(memory: MemoryStorage, audited: Audited[], work: Effect.Effec
 					audited.push([action, target, failure]);
 				}),
 		}),
-		Layer.succeed(RepositoryRevisions, { get: () => Effect.undefined }),
+		Layer.succeed(RepositoryRevisions, {
+			get: () => Effect.undefined,
+			inventoryAt: () => Effect.die('Unexpected snapshot'),
+		}),
 	);
 	setSystemTime(new Date(now));
 	return Effect.runPromiseExit(work.pipe(Effect.provide(coordinatorLayer(memory).pipe(Layer.provide(ports)))))
