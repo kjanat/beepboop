@@ -3428,7 +3428,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	observeRun(repositoryId: number, runId: number): Promise<void> {
-		return this.run(
+		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				yield* (yield* DurableStorage).put(Keys.observe, String(runId), { repositoryId, runId });
 				yield* this.wakeUp();
@@ -3438,7 +3438,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	trackRun(repositoryId: number, runId: number): Promise<void> {
-		return this.run(
+		return this.serial(
 			Effect.gen({ self: this }, function*() {
 				const storage = yield* DurableStorage;
 				if (!(yield* storage.has(Keys.track, String(runId)))) {

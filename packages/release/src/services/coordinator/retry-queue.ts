@@ -67,12 +67,14 @@ export const RetryQueue = {
 					}
 					const entry = stored.value;
 					if ((policy.due(entry) ?? 0) > now) continue;
-					yield* handle(entry).pipe(
-						Effect.flatMap(next =>
-							next === undefined ? storage.remove(policy.space, stored.id) : storage.put(policy.space, stored.id, next)
-						),
-						recover(error => failed(stored.id, entry, error, now)),
+					const outcome = yield* handle(entry).pipe(
+						Effect.map(next => ({ kind: 'handled' as const, next })),
+						recover(error => Effect.as(failed(stored.id, entry, error, now), { kind: 'failed' as const })),
 					);
+					if (outcome.kind === 'failed') continue;
+					yield* outcome.next === undefined
+						? storage.remove(policy.space, stored.id)
+						: storage.put(policy.space, stored.id, outcome.next);
 				}
 			}),
 		};
@@ -83,11 +85,13 @@ export const RetryQueue = {
 function observations(
 	name: 'observe' | 'track',
 	space: Keyspace<Observation>,
+	deadSpace: Keyspace<Observation>,
 	interval: number,
 ): RetryPolicy<Observation> {
 	return {
 		name,
 		space,
+		deadLetters: { space: deadSpace, id: event => String(event.runId) },
 		attempts: observationAttempts,
 		due: event => event.due,
 		attemptsOf: event => event.attempts ?? 0,
@@ -113,8 +117,8 @@ export const inboxPolicy: RetryPolicy<InboxEntry> = {
 	}),
 	describe: (entry, attempts, error) => `${entry.delivery}: ${entry.event.kind} after ${attempts} attempts: ${error}`,
 };
-export const observePolicy = observations('observe', Keys.observe, observeInterval);
-export const trackPolicy = observations('track', Keys.track, trackInterval);
+export const observePolicy = observations('observe', Keys.observe, Keys.observeDead, observeInterval);
+export const trackPolicy = observations('track', Keys.track, Keys.trackDead, trackInterval);
 export function trackLater(event: Observation, now: number): Observation {
 	return { repositoryId: event.repositoryId, runId: event.runId, due: now + trackInterval };
 }
