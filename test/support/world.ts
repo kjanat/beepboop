@@ -7,6 +7,7 @@ import { appId, FakeGitHub, ownerId } from '@root/test/support/github.ts';
 import { Network } from '@root/test/support/network.ts';
 import { FakeNpm } from '@root/test/support/registries.ts';
 import { FakeNamespace } from '@root/test/support/rpc.ts';
+import { finishTrace, startTrace, testFile } from '@root/test/support/storage-trace.ts';
 import { FakeWorkflow } from '@root/test/support/workflows.ts';
 import { Effect, Layer, Schedule } from 'effect';
 import type { JWK } from 'jose';
@@ -118,12 +119,14 @@ export class World {
 		setSystemTime(new Date(epoch));
 		const [actions, openauth, appKey] = await keys;
 		const world = new World(actions, openauth, appKey);
+		startTrace(testFile());
 		for (const key of Object.keys(runtimeEnv)) delete runtimeEnv[key];
 		Object.assign(runtimeEnv, world.env);
 		spyOn(globalThis, 'fetch').mockImplementation(Object.assign(world.network.fetch, { preconnect: fetch.preconnect }));
 		return world;
 	}
 	dispose(): void {
+		finishTrace();
 		mock.restore();
 		setSystemTime();
 	}
@@ -274,8 +277,10 @@ export class World {
 
 export function eachWorld(bind: (world: World) => void): void {
 	let current: World | undefined;
+	const file = testFile();
 	beforeEach(async () => {
 		current = await World.create();
+		startTrace(file);
 		bind(current);
 	});
 	afterEach(async () => {

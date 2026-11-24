@@ -38,7 +38,7 @@ export class FakeNamespace<T extends Rpc.DurableObjectBranded> {
 	instance(name: string): Instance<T> {
 		const existing = this.instances.get(name);
 		if (existing) return existing;
-		const storage = new MemoryStorage();
+		const storage = new MemoryStorage(`${this.className}:${name}`);
 		const created = { name, object: this.create(durableObjectState(name, storage)), storage };
 		this.instances.set(name, created);
 		return created;
