@@ -821,6 +821,52 @@ for (const name of ['octo/tool', 'Octo/Tool']) {
 	});
 }
 
+test('an edit that ticks a target without a build recipe leaves the reason in the pull request', async () => {
+	const repository = world.github.create('octo/mixed', {
+		'Cargo.toml': '[package]\nname = "engine"\nversion = "1.0.0"\nedition = "2024"\n',
+		'src/main.rs': 'fn main() {}\n',
+		'go.mod': 'module github.com/octo/mixed\n\ngo 1.27.0\n',
+		'cmd/tool/main.go': 'package main\n\nfunc main() {}\n',
+	});
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const packages = ['pkg:cargo/engine', 'pkg:golang/github.com/octo/mixed'];
+	await applyChoices(api, repository.name, {
+		streams: [{
+			name: 'main',
+			packages,
+			required: packages,
+			versioning: 'workspace',
+			promote: {
+				file: 'release.yml',
+				job: 'publish',
+				triggers: 'review',
+				commands: 'beepboop publish',
+				publicationSteps: {},
+				binaries: {
+					builds: [{
+						toolchain: 'go',
+						name: 'tool',
+						module: '.',
+						package: './cmd/tool',
+						asset: '{name}-{go.os}-{go.arch}{ext}',
+					}],
+					targets: ['linux-amd64'],
+				},
+			},
+		}],
+	});
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('Missing setup PR');
+	expect(pull.body).toContain('- [ ] <!-- beepboop:choice:target:main:android%2Darm64 -->');
+	const head = pull.head.sha;
+	await editPull(world, repository, pull, tick(pull.body, 'target:main:android%2Darm64'));
+	await world.wait(16_000);
+	expect(pull.body).toContain('Beepboop kept the earlier proposal. This edit is invalid: ');
+	expect(pull.body).toContain('go has no build recipe for android-arm64');
+	expect(pull.head.sha).toBe(head);
+});
+
 test('a ticked target that the binary is expected to fail on stays ticked with a note beside it', async () => {
 	const repository = engineRepository();
 	const api = bearer(world, await world.cliSession());

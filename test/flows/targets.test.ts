@@ -4,7 +4,7 @@ import { Effect, Schema, Struct } from 'effect';
 import { discoverNpmTargets } from '@/discovery/managers/npm-targets.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import { targetsSchema } from '@/discovery/managers/targets.ts';
-import { binaries, defaultBinaryTargets } from '@/domain/binary-platforms.ts';
+import { binaries, binaryTargets, defaultBinaryTargets } from '@/domain/binary-platforms.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
 import {
@@ -20,6 +20,7 @@ import {
 	withValidation,
 } from '@/kernel/schema/structs.ts';
 import { npmManager } from '@/publication/registries/npm.ts';
+import { offeredTargets } from '@/setup/options.ts';
 import { assetName, binaryJobs } from '@/setup/workflows/binaries.ts';
 import { assertTargetsCurrent } from '@/tooling/schema/render';
 
@@ -401,6 +402,17 @@ test('Rust Android and BSD targets install cross and preserve native auditable b
 	expect(JSON.stringify(job)).toContain('cross build');
 	for (const release of [{ builds: [go], targets: ['android-arm64'] }, { builds: [cargo], targets: ['aix-ppc64'] }]) {
 		expect(safeDecode(binaries, release).success).toBe(false);
+	}
+});
+
+test('setup offers a target only when a build has a recipe for it', () => {
+	expect(offeredTargets([go])).not.toContain('android-arm64');
+	expect(offeredTargets([go])).toContain('aix-ppc64');
+	expect(offeredTargets([cargo])).toContain('android-arm64');
+	expect(offeredTargets([cargo])).not.toContain('aix-ppc64');
+	expect(offeredTargets([go, cargo])).toEqual([...binaryTargets]);
+	for (const target of offeredTargets([go])) {
+		expect(safeDecode(binaries, { builds: [go], targets: [target] }).success).toBe(true);
 	}
 });
 
