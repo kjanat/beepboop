@@ -88,6 +88,8 @@ export class PublicationLedger extends Context.Service<PublicationLedger, {
 		repositoryId: number,
 		manager: PacedManager,
 		matches: (pkg: Package) => boolean,
+		reservationId: string,
+		held: PublishKind | undefined,
 	) => Effect.Effect<{ kind: PublishKind; allowedAt: number }, DomainError>;
 	readonly owesReceipts: (execution: LedgerExecution) => Effect.Effect<boolean, DomainError>;
 	readonly settleReceipts: (execution: LedgerExecution) => Effect.Effect<boolean, DomainError>;
@@ -204,10 +206,12 @@ export class PublicationLedger extends Context.Service<PublicationLedger, {
 				repositoryId: number,
 				manager: PacedManager,
 				matches: (pkg: Package) => boolean,
+				reservationId: string,
+				held: PublishKind | undefined,
 			) {
 				const inventory = yield* store.inventory(repositoryId);
-				const kind = reservation(inventory?.packages.find(matches)?.publicationStatus);
-				const allowedAt = yield* pacing.reserve(manager, kind);
+				const kind = held ?? reservation(inventory?.packages.find(matches)?.publicationStatus);
+				const allowedAt = yield* pacing.reserve(manager, kind, reservationId);
 				return { kind, allowedAt };
 			});
 
@@ -290,18 +294,27 @@ export class PublicationLedger extends Context.Service<PublicationLedger, {
 								reason: `${registries[record.manager]} could not confirm whether it has ${label(record)}`,
 							};
 						}
-						if (paced(record.manager) && !record.reservation) {
-							const { kind, allowedAt } = yield* reserve(
+						if (paced(record.manager)) {
+							const slot = yield* reserve(
 								execution.repositoryId,
 								record.manager,
 								pkg => packageId(pkg) === record.id,
+								`${execution.id}:${record.id}`,
+								record.reservation,
 							);
-							record = { ...record, reservation: kind, notBefore: allowedAt };
-							yield* settleRecord(ledger, record);
-							const pace = availability(record, holder, now);
-							if (pace.kind === 'wait') {
-								yield* recordPublication(execution.id, record, pacedPublication(record, pace.until));
-								return { kind: 'wait' as const, until: pace.until, reason: pace.reason };
+							if (!record.reservation || slot.allowedAt > (record.notBefore ?? 0)) {
+								const notBefore = record.reservation ? Math.max(record.notBefore ?? 0, slot.allowedAt) : slot.allowedAt;
+								record = { ...record, reservation: slot.kind, notBefore };
+								yield* settleRecord(ledger, record);
+							}
+							const until = record.notBefore ?? 0;
+							if (until > now) {
+								yield* recordPublication(execution.id, record, pacedPublication(record, until));
+								return {
+									kind: 'wait' as const,
+									until,
+									reason: `${registries[record.manager]} allows ${label(record)} at ${new Date(until).toISOString()}`,
+								};
 							}
 						}
 					}

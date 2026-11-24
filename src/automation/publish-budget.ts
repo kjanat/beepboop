@@ -8,19 +8,39 @@ import { deferSlot, reserveSlot } from '@/publication/publish-pace.ts';
 
 const arrival = Schema.optional(Schema.Finite);
 
+const retention = 86_400_000;
+
 export class PublishBudget extends DurableObject<unknown> {
-	private theoretical(kind: PublishKind): Effect.Effect<number, DomainError> {
-		return fromPromise(() => this.ctx.storage.get(`arrival:${kind}`)).pipe(
-			Effect.flatMap(value => fromSync(() => decodeSync(arrival, value) ?? 0)),
+	private stored(key: string): Effect.Effect<number | undefined, DomainError> {
+		return fromPromise(() => this.ctx.storage.get(key)).pipe(
+			Effect.flatMap(value => fromSync(() => decodeSync(arrival, value))),
 		);
 	}
-	reserve(kind: PublishKind): Promise<number> {
+	private theoretical(kind: PublishKind): Effect.Effect<number, DomainError> {
+		return this.stored(`arrival:${kind}`).pipe(Effect.map(value => value ?? 0));
+	}
+	private prune(now: number): Effect.Effect<void, DomainError> {
+		return fromPromise(async () => {
+			const held = await this.ctx.storage.list({ prefix: 'reservation:' });
+			const expired = [...held].filter(([, value]) => typeof value === 'number' && value < now - retention);
+			const keys = expired.map(([key]) => key);
+			for (let start = 0; start < keys.length; start += 128) {
+				await this.ctx.storage.delete(keys.slice(start, start + 128));
+			}
+		});
+	}
+	reserve(kind: PublishKind, id: string): Promise<number> {
 		return Effect.runPromise(Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
-
-			const slot = reserveSlot(yield* this.theoretical(kind), clock.currentTimeMillisUnsafe(), kind);
-			yield* fromPromise(() => this.ctx.storage.put(`arrival:${kind}`, slot.theoretical));
-			return slot.allowedAt;
+			const now = clock.currentTimeMillisUnsafe();
+			const key = `reservation:${kind}:${id}`;
+			const cooldown = (yield* this.stored('cooldown')) ?? 0;
+			const held = yield* this.stored(key);
+			if (held !== undefined) return Math.max(held, cooldown);
+			const slot = reserveSlot(yield* this.theoretical(kind), now, kind);
+			yield* fromPromise(() => this.ctx.storage.put({ [`arrival:${kind}`]: slot.theoretical, [key]: slot.allowedAt }));
+			yield* this.prune(now);
+			return Math.max(slot.allowedAt, cooldown);
 		}));
 	}
 	defer(until: number): Promise<void> {
@@ -28,6 +48,7 @@ export class PublishBudget extends DurableObject<unknown> {
 			const entries = {
 				'arrival:new': deferSlot(yield* this.theoretical('new'), until, 'new'),
 				'arrival:update': deferSlot(yield* this.theoretical('update'), until, 'update'),
+				cooldown: Math.max((yield* this.stored('cooldown')) ?? 0, until),
 			};
 			yield* fromPromise(() => this.ctx.storage.put(entries));
 		}));

@@ -680,12 +680,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				if (!execution || !target || !paced(target.manager)) {
 					return yield* precondition('Operation is not a paced publication in this release');
 				}
-				if (!execution.reservation) {
-					const { kind, allowedAt } = yield* (yield* PublicationLedger).reserve(
-						execution.repositoryId,
-						target.manager,
-						pkg => matchesPackage(target.id, pkg),
-					);
+				const { kind, allowedAt } = yield* (yield* PublicationLedger).reserve(
+					execution.repositoryId,
+					target.manager,
+					pkg => matchesPackage(target.id, pkg),
+					execution.id,
+					execution.reservation,
+				);
+				if (!execution.reservation || allowedAt > (execution.notBefore ?? 0)) {
 					yield* putExecution({
 						...execution,
 						reservation: kind,

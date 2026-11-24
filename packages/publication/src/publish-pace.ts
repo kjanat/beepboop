@@ -34,17 +34,17 @@ export function paced(manager: ManagerName | undefined): manager is PacedManager
 }
 
 export interface PublishBudgetClient {
-	reserve(kind: PublishKind): Promise<number>;
+	reserve(kind: PublishKind, id: string): Promise<number>;
 	defer(until: number): Promise<void>;
 }
 
 export class PublishPacing extends Context.Service<PublishPacing, {
-	readonly reserve: (manager: PacedManager, kind: PublishKind) => Effect.Effect<number, DomainError>;
+	readonly reserve: (manager: PacedManager, kind: PublishKind, id: string) => Effect.Effect<number, DomainError>;
 	readonly defer: (manager: ManagerName | undefined, until: number) => Effect.Effect<void, DomainError>;
 }>()('beepboopbot/publication/PublishPacing') {
 	static layer(budget: (name: string) => PublishBudgetClient): Layer.Layer<PublishPacing> {
 		return Layer.succeed(PublishPacing, {
-			reserve: (manager, kind) => fromPromise(() => budget(budgets[manager]).reserve(kind)),
+			reserve: (manager, kind, id) => fromPromise(() => budget(budgets[manager]).reserve(kind, id)),
 			defer: (manager, until) =>
 				paced(manager) ? fromPromise(() => budget(budgets[manager]).defer(until)) : Effect.void,
 		});

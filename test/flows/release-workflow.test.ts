@@ -6,7 +6,9 @@ import { dispatchedPublishWorkflow, passChecks } from '@root/test/support/reposi
 import type { WorkflowRecord } from '@root/test/support/workflows.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
+import { Effect } from 'effect';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
+import { roundName, untilSlotHeld } from '@/automation/release-workflow';
 import { routes } from '@/contract/routes';
 
 let world: World;
@@ -249,6 +251,7 @@ test('a paced release operation reserves its slot, sleeps, and waits out a regis
 		'do Load release operations [{"id":"<promote>","operation":"promote pkg:npm/widget","paced":true,"dependencies":[]}]',
 		`do ${label}: reserve 659000`,
 		`sleep ${label}: paced 659000`,
+		`do ${label}: reserve 2 0`,
 		`do ${label}: reconcile 0 "awaiting-approval"`,
 		`do ${label}: delay 0 0`,
 		`wait ${label}: wait 0 ["<promote>","1 hour"]`,
@@ -277,5 +280,32 @@ test('a paced release operation reserves its slot, sleeps, and waits out a regis
 		'do Complete release',
 	]);
 	expect(world.releaseWorkflow.instances.get(workflowId)?.status).toBe('complete');
-	expect(world.budgets.calls.map(entry => entry.method)).toEqual(['reserve', 'defer']);
+	expect(world.budgets.calls.map(entry => entry.method)).toEqual(['reserve', 'reserve', 'defer']);
+});
+
+test('a paced operation reserves again after each sleep until no wait remains', async () => {
+	const waits = [60_000, 30_000, 0];
+	const steps: string[] = [];
+	await Effect.runPromise(untilSlotHeld(
+		round =>
+			Effect.sync(() => {
+				steps.push(roundName('crate: reserve', round));
+				return waits[round - 1] ?? 0;
+			}),
+		(round, wait) =>
+			Effect.sync(() => {
+				steps.push(`${roundName('crate: paced', round)} ${wait}`);
+			}),
+	));
+	expect(steps).toEqual([
+		'crate: reserve',
+		'crate: paced 60000',
+		'crate: reserve 2',
+		'crate: paced 2 30000',
+		'crate: reserve 3',
+	]);
+});
+
+test('the first round keeps the step names of a workflow already running', () => {
+	expect([roundName('crate: reserve', 1), roundName('crate: paced', 1)]).toEqual(['crate: reserve', 'crate: paced']);
 });

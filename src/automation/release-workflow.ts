@@ -14,6 +14,23 @@ interface ReleaseWorkflowBindings {
 	AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
 }
 
+export function roundName(name: string, round: number): string {
+	return round === 1 ? name : `${name} ${round}`;
+}
+
+export function untilSlotHeld(
+	reserve: (round: number) => Effect.Effect<number, DomainError>,
+	sleep: (round: number, wait: number) => Effect.Effect<void, DomainError>,
+): Effect.Effect<void, DomainError> {
+	return Effect.gen(function*() {
+		for (let round = 1;; round++) {
+			const wait = yield* reserve(round);
+			if (wait <= 0) return;
+			yield* sleep(round, wait);
+		}
+	});
+}
+
 /** One durable lifecycle per release set; repository workflows perform the actual work. */
 export class ReleaseWorkflow extends WorkflowEntrypoint<ReleaseWorkflowBindings, ReleaseWorkflowParams> {
 	run(event: WorkflowEvent<ReleaseWorkflowParams>, step: WorkflowStep) {
@@ -64,13 +81,17 @@ export class ReleaseWorkflow extends WorkflowEntrypoint<ReleaseWorkflowBindings,
 						const once = yield* Effect.cached(Effect.gen(function*() {
 							yield* Effect.forEach(operation.dependencies, run, { concurrency: 'unbounded', discard: true });
 							if (operation.paced) {
-								const wait = yield* fromPromise(() =>
-									step.do(
-										`${operation.operation}: reserve`,
-										() => coordinator.reservePublication(preparationId, workflowId, id),
-									)
+								yield* untilSlotHeld(
+									round =>
+										fromPromise(() =>
+											step.do(
+												roundName(`${operation.operation}: reserve`, round),
+												() => coordinator.reservePublication(preparationId, workflowId, id),
+											)
+										),
+									(round, wait) =>
+										fromPromise(() => step.sleep(roundName(`${operation.operation}: paced`, round), wait)),
 								);
-								if (wait > 0) yield* fromPromise(() => step.sleep(`${operation.operation}: paced`, wait));
 							}
 							yield* advance(id, operation.operation);
 						}));
