@@ -131,6 +131,10 @@ const setupPlan: Schema.Codec<SetupPlan, unknown> = mutableStruct({
 		build: binaryBuild,
 		targets: mutableArray(Schema.Literals(binaryTargets)),
 		reason: Schema.optional(Schema.String),
+		unsettableVersion: Schema.optional(Schema.Union([
+			mutableStruct({ file: Schema.String, kind: Schema.Literal('const') }),
+			mutableStruct({ file: Schema.String, kind: Schema.Literal('var'), type: Schema.String }),
+		])),
 	}))),
 	branchConflict: mapped(Schema.Unknown, Schema.Boolean, value => value === true, value => value),
 	prior: Schema.optional(mutableStruct({ url: Schema.String, superseded: Schema.Boolean })),

@@ -120,11 +120,47 @@ export const binaries = withValidation(
 	},
 );
 export type BinaryRelease = Decoded<typeof binaries>;
+export type VersionDeclaration = { kind: 'const' } | { kind: 'var'; type: string };
+export type UnsettableVersion = VersionDeclaration & { file: string };
 export interface BinaryCandidate {
 	package: string;
 	build: BinaryBuild;
 	targets: BinaryTarget[];
 	reason?: string;
+	unsettableVersion?: UnsettableVersion;
+}
+export function candidateOf(
+	candidates: readonly BinaryCandidate[] | undefined,
+	build: BinaryBuild,
+): BinaryCandidate | undefined {
+	const same = (a: string, b: string) => directoryPath(a) === directoryPath(b);
+	return candidates?.find(({ build: found }) =>
+		found.toolchain === 'go'
+			? build.toolchain === 'go' && same(found.module, build.module) && same(found.package, build.package)
+			: build.toolchain === 'cargo' && same(found.manifest, build.manifest) && found.name === build.name
+	);
+}
+function directoryPath(path: string): string {
+	return path.split('/').filter(part => part && part !== '.').join('/');
+}
+export function unconfigured(
+	candidates: readonly BinaryCandidate[],
+	builds: readonly BinaryBuild[],
+): BinaryCandidate[] {
+	const names = new Set(builds.map(build => build.name));
+	return candidates.filter(candidate => {
+		const fresh = !names.has(candidate.build.name) && !builds.some(build => candidateOf([candidate], build));
+		names.add(candidate.build.name);
+		return fresh;
+	});
+}
+export function failsOn(
+	candidates: readonly BinaryCandidate[] | undefined,
+	build: BinaryBuild,
+	target: BinaryTarget,
+): boolean {
+	const candidate = candidateOf(candidates, build);
+	return candidate !== undefined && !candidate.targets.includes(target);
 }
 export function leftOut(candidate: BinaryCandidate): string | undefined {
 	return candidate.reason && `${candidate.build.name} leaves out Windows: ${candidate.reason}.`;

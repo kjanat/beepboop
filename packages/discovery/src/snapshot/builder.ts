@@ -1,4 +1,5 @@
 import { Effect, Result } from 'effect';
+import { goMainSources } from '@/discovery/analysis/binary-candidates.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { pkgbuildFile } from '@/discovery/managers/pkgbuild.ts';
 import { workspaceMembers } from '@/discovery/managers/workspaces.ts';
@@ -292,6 +293,21 @@ export function buildSnapshot(
 			const text = blank.has(path) ? '' : read.get(path);
 			if (text !== undefined) files[path] = text;
 		}
+		const sources = goMainSources(blobs.filter(path => !excluded.test(path))).slice(
+			0,
+			Math.max(0, 400 - requested.size),
+		);
+		const goSources = Object.fromEntries(
+			(yield* Effect.forEach(
+				sources,
+				path =>
+					source.read(path).pipe(
+						Effect.orElseSucceed(() => null),
+						Effect.map((text): [string, string][] => text === null ? [] : [[path, text]]),
+					),
+				{ concurrency: ioConcurrency },
+			)).flat(),
+		);
 		const prefixes = [
 			...new Set([...tagQueries([...new Set([...extraPaths, ...included])]), ...workflowTagPrefixes(read)]),
 		].filter((prefix, _, all) => !all.some(other => other !== prefix && prefix.startsWith(other))).sort();
@@ -305,6 +321,7 @@ export function buildSnapshot(
 			repository: source.repository,
 			sha: source.sha,
 			files,
+			...(sources.length ? { goSources } : {}),
 			paths: blobs,
 			...(links.length ? { links } : {}),
 			...(tags ? { tags } : {}),

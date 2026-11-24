@@ -1,5 +1,5 @@
 import type { BinaryBuild, BinaryTarget } from '@/domain/binary-platforms.ts';
-import { unbuildable } from '@/domain/binary-platforms.ts';
+import { failsOn } from '@/domain/binary-platforms.ts';
 import { packageMarkdown } from '@/domain/package-label';
 import { publicationStages } from '@/domain/publication-stages';
 import { onboardingBranch } from '@/domain/setup-branches.ts';
@@ -133,10 +133,7 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 		if (!builds.length) return [];
 		const release = plan.choices.streams.find(entry => entry.name === stream)?.promote?.binaries;
 		const failing = (target: BinaryTarget) =>
-			(release?.builds ?? []).flatMap(build => {
-				const candidate = plan.binaryCandidates?.find(entry => entry.build.name === build.name);
-				return candidate && unbuildable(candidate, [target]).length ? [build.name] : [];
-			});
+			(release?.builds ?? []).flatMap(build => failsOn(plan.binaryCandidates, build, target) ? [build.name] : []);
 		const targets = own.flatMap(option => {
 			if (option.kind !== 'target') return [];
 			const names = failing(option.target);

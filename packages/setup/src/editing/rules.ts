@@ -1,6 +1,6 @@
 import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { BinaryBuild, BinaryCandidate, BinaryTarget } from '@/domain/binary-platforms.ts';
-import { defaultBinaryTargets } from '@/domain/binary-platforms.ts';
+import { candidateOf, defaultBinaryTargets, unconfigured } from '@/domain/binary-platforms.ts';
 import { publishable } from '@/domain/package-publication.ts';
 import type { ApprovalPolicy, VersionBump } from '@/domain/release-start.ts';
 import { approvalPolicies, versionBumps } from '@/domain/release-start.ts';
@@ -41,10 +41,10 @@ export function offeredBinaries(
 	const existing = previous?.binaries?.builds ?? [];
 	return [
 		...existing.map(build => {
-			const candidate = candidates.find(entry => entry.build.name === build.name);
+			const candidate = candidateOf(candidates, build);
 			return candidate ? { build, candidate } : { build };
 		}),
-		...candidates.filter(candidate => !existing.some(build => build.name === candidate.build.name)).map(
+		...unconfigured(candidates, existing).map(
 			candidate => ({ build: candidate.build, candidate }),
 		),
 	];

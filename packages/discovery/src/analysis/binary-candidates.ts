@@ -1,5 +1,6 @@
 import { Result } from 'effect';
 import { parse as parseToml } from 'smol-toml';
+import { unsettableVersion } from '@/discovery/analysis/go-version.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { BinaryCandidate } from '@/domain/binary-platforms.ts';
 import { supportedTargets } from '@/domain/binary-platforms.ts';
@@ -80,22 +81,41 @@ function cargoCandidates(snapshot: Snapshot, pkg: Package): BinaryCandidate[] {
 	}));
 }
 
+interface GoMain {
+	module: string;
+	directory: string;
+	relative: string;
+}
+function goMainPackages(paths: readonly string[]): GoMain[] {
+	const modules = paths.filter(path => /(?:^|\/)go\.mod$/.test(path)).map(parentDirectory);
+	return paths.flatMap(path => {
+		if (!/(?:^|\/)main\.go$/.test(path)) return [];
+		const directory = parentDirectory(path);
+		const [module] = modules.filter(entry => !entry || directory === entry || directory.startsWith(`${entry}/`))
+			.sort((a, b) => b.length - a.length);
+		if (module === undefined) return [];
+		const relative = directory.slice(module ? module.length + 1 : 0);
+		return skippedGo.test(relative) ? [] : [{ module, directory, relative }];
+	});
+}
+export function goMainSources(paths: readonly string[]): string[] {
+	const directories = new Set(goMainPackages(paths).map(entry => entry.directory));
+	return paths.filter(path =>
+		/(?:^|\/)[^/_.][^/]*\.go$/.test(path) && !path.endsWith('_test.go') && directories.has(parentDirectory(path))
+	);
+}
+
 function goCandidates(snapshot: Snapshot, pkg: Package): BinaryCandidate[] {
 	const module = parentDirectory(pkg.manifest);
-	const prefix = module ? `${module}/` : '';
-	const nested = snapshot.paths.filter(path =>
-		path !== pkg.manifest && path.startsWith(prefix) && path.endsWith('/go.mod')
-	)
-		.map(parentDirectory);
-	return snapshot.paths.flatMap(path => {
-		if (!path.startsWith(prefix) || !path.endsWith('main.go') || !/(?:^|\/)main\.go$/.test(path)) return [];
-		const directory = parentDirectory(path);
-		const relative = directory.slice(prefix.length);
-		if (skippedGo.test(relative) || nested.some(other => directory === other || directory.startsWith(`${other}/`))) {
-			return [];
-		}
+	return goMainPackages(snapshot.paths).filter(entry => entry.module === module).map(({ directory, relative }) => {
 		const name = (relative || pkg.name).split('/').at(-1) ?? pkg.name;
-		return [{
+		const version = unsettableVersion(
+			Object.entries(snapshot.goSources ?? {}).filter(([file]) => parentDirectory(file) === directory).sort((
+				[a],
+				[b],
+			) => a.localeCompare(b)),
+		);
+		return {
 			package: packageId(pkg),
 			build: {
 				toolchain: 'go',
@@ -105,15 +125,13 @@ function goCandidates(snapshot: Snapshot, pkg: Package): BinaryCandidate[] {
 				asset: '{name}-{go.os}-{go.arch}{ext}',
 			},
 			targets: supportedTargets('go'),
-		}];
+			...(version ? { unsettableVersion: version } : {}),
+		};
 	});
 }
 
 export function binaryCandidates(snapshot: Snapshot, inventory: Inventory): BinaryCandidate[] {
-	const candidates = inventory.packages.flatMap(pkg =>
+	return inventory.packages.flatMap(pkg =>
 		pkg.manager === 'cargo' ? cargoCandidates(snapshot, pkg) : pkg.manager === 'go' ? goCandidates(snapshot, pkg) : []
-	);
-	return candidates.filter((candidate, index) =>
-		candidates.findIndex(other => other.build.name === candidate.build.name) === index
 	);
 }
