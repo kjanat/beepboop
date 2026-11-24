@@ -23,7 +23,10 @@ export class PublishBudget extends DurableObject<unknown> {
 		return fromPromise(async () => {
 			const held = await this.ctx.storage.list({ prefix: 'reservation:' });
 			const expired = [...held].filter(([, value]) => typeof value === 'number' && value < now - retention);
-			if (expired.length) await this.ctx.storage.delete(expired.map(([key]) => key));
+			const keys = expired.map(([key]) => key);
+			for (let start = 0; start < keys.length; start += 128) {
+				await this.ctx.storage.delete(keys.slice(start, start + 128));
+			}
 		});
 	}
 	reserve(kind: PublishKind, id: string): Promise<number> {

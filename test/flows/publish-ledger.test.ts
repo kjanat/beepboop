@@ -2442,3 +2442,20 @@ for (const [manager, deferrals] of [['cargo', 2], ['npm', 1]] as const) {
 		60_000,
 	);
 }
+
+test('a budget drops more than 128 expired reservations in one reserve', async () => {
+	const budget = world.budgets.getByName('crates-io');
+	const storage = world.budgets.instance('crates-io').storage;
+	const expired = Date.now() - 2 * 86_400_000;
+	for (let start = 0; start < 300; start += 100) {
+		await storage.put(
+			Object.fromEntries(
+				Array.from({ length: 100 }, (_, index) => [`reservation:update:old:${start + index}`, expired]),
+			),
+		);
+	}
+	await budget.reserve('update', 'run:new');
+	expect([...storage.snapshot().keys()].filter(key => key.startsWith('reservation:'))).toEqual([
+		'reservation:update:run:new',
+	]);
+});

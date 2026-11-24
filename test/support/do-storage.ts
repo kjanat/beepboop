@@ -99,6 +99,7 @@ export class MemoryStorage {
 	delete(keys: string[], options?: DurableObjectPutOptions): Promise<number>;
 	async delete(key: string | string[]): Promise<boolean | number> {
 		if (Array.isArray(key)) {
+			if (key.length > 128) throw new RangeError('DurableObjectStorage.delete accepts at most 128 keys');
 			this.operations.push({ kind: 'delete', keys: key.length });
 			for (const name of key) this.trace?.write(this.label, 'delete', name);
 			return key.filter(name => this.data.delete(name)).length;
