@@ -13,7 +13,6 @@ const random = new RegExp(
 	].join('|'),
 	'g',
 );
-const write = /^(\S+) \S+ ("(?:[^"\\]|\\.)*")/;
 
 type Worlds = Map<string, string[]>;
 
@@ -51,29 +50,6 @@ function same(left: readonly string[], right: readonly string[]): boolean {
 	return left.length === right.length && left.every((line, index) => line === right[index]);
 }
 
-function groupsOf(lines: readonly string[]): string[] {
-	const shapes = new Map<string, Map<string, number>>();
-	return lines.map(line => {
-		const [, storage, key = ''] = write.exec(line) ?? [];
-		const shape = `${storage} ${key.replaceAll(random, '<random>')}`;
-		if (shape === `${storage} ${key}`) return shape;
-		const keys = shapes.get(shape) ?? new Map<string, number>();
-		const index = keys.get(key) ?? keys.size + 1;
-		shapes.set(shape, keys.set(key, index));
-		return `${shape} #${index}`;
-	});
-}
-
-function grouped(lines: readonly string[]): Map<string, string[]> {
-	const groups = new Map<string, string[]>();
-	const names = groupsOf(lines);
-	lines.forEach((line, index) => {
-		const name = names[index] ?? '';
-		groups.set(name, [...(groups.get(name) ?? []), line]);
-	});
-	return groups;
-}
-
 function diff(left: readonly string[], right: readonly string[]): string[] {
 	const width = right.length + 1;
 	const common = new Int32Array((left.length + 1) * width);
@@ -96,23 +72,10 @@ function diff(left: readonly string[], right: readonly string[]): string[] {
 	return lines;
 }
 
-function unstableGroups(left: readonly string[], right: readonly string[]): Set<string> {
-	const old = grouped(left), current = grouped(right);
-	return new Set(
-		[...new Set([...old.keys(), ...current.keys()])].filter(group =>
-			!same(canonical(old.get(group) ?? []), canonical(current.get(group) ?? []))
-		),
-	);
-}
-
 function changes(left: readonly string[], right: readonly string[], baseline: readonly string[] | undefined): string[] {
-	if (!baseline || same(canonical(baseline), canonical(left))) return diff(canonical(left), canonical(right));
-	const unstable = unstableGroups(left, baseline);
-	const stable = (lines: readonly string[]) => {
-		const names = groupsOf(lines);
-		return lines.filter((_, index) => !unstable.has(names[index] ?? ''));
-	};
-	return diff(canonical(stable(left)), canonical(stable(right)));
+	const written = canonical(right);
+	if (baseline && same(canonical(baseline), written)) return [];
+	return diff(canonical(left), written);
 }
 
 await main(Effect.gen(function*() {
@@ -144,7 +107,7 @@ await main(Effect.gen(function*() {
 		differences++;
 	}
 	console.log(
-		`${old.size} worlds, ${writes} writes compared, ${randomized} equal after renaming random tokens or keys that differ between baseline runs, ${differences} differ`,
+		`${old.size} worlds, ${writes} writes compared, ${randomized} equal after renaming random tokens or equal to the second baseline run, ${differences} differ`,
 	);
 	if (differences) return yield* refuse(`${differences} worlds wrote different storage`);
 }));

@@ -22,6 +22,7 @@ async function traced(directory: string, writes: Writes): Promise<void> {
 async function compared(...directories: string[]): Promise<{ code: number; output: string }> {
 	const child = Bun.spawn([process.execPath, 'scripts/storage-trace.ts', ...directories], {
 		cwd: root,
+		env: Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== 'GITHUB_ACTIONS')),
 		stdout: 'pipe',
 		stderr: 'pipe',
 	});
@@ -44,7 +45,7 @@ async function inTemp(work: (temp: string) => Promise<void>): Promise<void> {
 
 function summary(randomized: number, differ: number, writes = 4): string {
 	const report =
-		`1 worlds, ${writes} writes compared, ${randomized} equal after renaming random tokens or keys that differ between baseline runs, ${differ} differ\n`;
+		`1 worlds, ${writes} writes compared, ${randomized} equal after renaming random tokens or equal to the second baseline run, ${differ} differ\n`;
 	return differ ? `${report}${differ} worlds wrote different storage\n` : report;
 }
 
@@ -125,7 +126,7 @@ test('storage traces match across random tokens and report changed documents and
 		});
 		await traced(directory('unsettled'), run(a, 'beepboop-cli-report-Ab12Cd', { error: 'e', at: 2 }));
 		await traced(directory('extra'), async storage => {
-			await run(a, 'beepboop-cli-report-Ab12Cd', { error: 'e', at: 3 })(storage);
+			await run(a, 'beepboop-cli-report-Ab12Cd', { error: 'e', at: 2 })(storage);
 			await storage.put('ledger:y', true);
 		});
 
@@ -145,8 +146,13 @@ test('storage traces match across random tokens and report changed documents and
 			output: summary(1, 0),
 		});
 		expect(await compared(directory('before'), directory('reordered'), directory('unsettled'))).toEqual({
-			code: 0,
-			output: summary(1, 0),
+			code: 1,
+			output: [
+				`${traceFile} world 1:`,
+				'- AutomationCoordinator:1 put "quarantine:x" {"error":"e","at":1}',
+				'+ AutomationCoordinator:1 put "quarantine:x" {"at":1,"error":"e"}',
+				summary(0, 1),
+			].join('\n'),
 		});
 		expect(await compared(directory('before'), directory('same'), directory('reordered'))).toEqual({
 			code: 0,
@@ -154,7 +160,13 @@ test('storage traces match across random tokens and report changed documents and
 		});
 		expect(await compared(directory('before'), directory('extra'), directory('unsettled'))).toEqual({
 			code: 1,
-			output: [`${traceFile} world 1:`, '+ AutomationCoordinator:1 put "ledger:y" true', summary(0, 1)].join('\n'),
+			output: [
+				`${traceFile} world 1:`,
+				'- AutomationCoordinator:1 put "quarantine:x" {"error":"e","at":1}',
+				'+ AutomationCoordinator:1 put "quarantine:x" {"error":"e","at":2}',
+				'+ AutomationCoordinator:1 put "ledger:y" true',
+				summary(0, 1),
+			].join('\n'),
 		});
 		expect(await compared(directory('before'), directory('missing'))).toEqual({
 			code: 1,
@@ -203,6 +215,29 @@ test('a random key that only the second baseline run writes leaves other random 
 				'- AutomationCoordinator:1 put "execution:<random 1>" {"value":1}',
 				'+ AutomationCoordinator:1 put "execution:<random 1>" {"value":2}',
 				summary(0, 1, 2),
+			].join('\n'),
+		});
+	}));
+
+test('a key that differs between baseline runs fails when the new run writes neither baseline value', () =>
+	inTemp(async temp => {
+		const directory = (name: string) => join(temp, name);
+		const stable = crypto.randomUUID();
+		const run = (state: string, transient: boolean): Writes => async storage => {
+			if (transient) await storage.put(`execution:${crypto.randomUUID()}`, { state: 'transient' });
+			await storage.put(`execution:${stable}`, { state });
+		};
+		await traced(directory('before'), run('ready', false));
+		await traced(directory('again'), run('ready', true));
+		await traced(directory('after'), run('failed', false));
+
+		expect(await compared(directory('before'), directory('after'), directory('again'))).toEqual({
+			code: 1,
+			output: [
+				`${traceFile} world 1:`,
+				'- AutomationCoordinator:1 put "execution:<random 1>" {"state":"ready"}',
+				'+ AutomationCoordinator:1 put "execution:<random 1>" {"state":"failed"}',
+				summary(0, 1, 1),
 			].join('\n'),
 		});
 	}));
