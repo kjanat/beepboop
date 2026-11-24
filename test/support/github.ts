@@ -132,7 +132,7 @@ function stringField(value: Record<string, unknown>, name: string): string {
 	return field;
 }
 
-type Route = (match: RegExpExecArray, url: URL, body: Record<string, unknown>) => Response;
+type Route = (match: RegExpExecArray, url: URL, body: Record<string, unknown>, token: string) => Response;
 
 export class FakeGitHub {
 	readonly repositories = new Map<string, Repository>();
@@ -140,6 +140,7 @@ export class FakeGitHub {
 	readonly unhandled: string[] = [];
 	readonly dispatches: { repository: string; file: string; ref: string; inputs: Record<string, string> }[] = [];
 	readonly tokenPermissions: unknown[] = [];
+	private readonly grants = new Map<string, Record<string, unknown>>();
 	private nextId = 1000;
 	private readonly routes: [string, RegExp, Route][] = [];
 	private suspendedAt: string | null = null;
@@ -168,7 +169,9 @@ export class FakeGitHub {
 					throw new HttpError(422, 'There is at least one repository that does not exist or is not accessible');
 				}
 				this.tokenPermissions.push(body.permissions);
-				return json({ token: `ghs_${this.id()}`, expires_at: new Date(Date.now() + 3600_000).toISOString() }, 201);
+				const token = `ghs_${this.id()}`;
+				this.grants.set(token, object(body.permissions));
+				return json({ token, expires_at: new Date(Date.now() + 3600_000).toISOString() }, 201);
 			},
 		);
 		this.route('GET', /^\/users\/([^/]+)$/, match => {
@@ -732,9 +735,13 @@ export class FakeGitHub {
 				].join('\r\n'),
 			});
 		});
-		this.route('GET', new RegExp(`^${repo}/releases/(\\d+)$`), match => {
+		this.route('GET', new RegExp(`^${repo}/releases/(\\d+)$`), (match, _url, _body, token) => {
 			const repository = this.repository(match[1]);
-			return json(this.releaseJson(repository, this.release(repository, Number(match[2]))));
+			const release = this.release(repository, Number(match[2]));
+			if (release.draft && this.grants.get(token)?.contents !== 'write') {
+				throw new HttpError(403, 'Resource not accessible by integration');
+			}
+			return json(this.releaseJson(repository, release));
 		});
 		this.route('PATCH', new RegExp(`^${repo}/releases/(\\d+)$`), (match, _url, body) => {
 			const repository = this.repository(match[1]);
@@ -762,12 +769,13 @@ export class FakeGitHub {
 		const url = new URL(request.url);
 		const text = request.method === 'GET' ? '' : await request.text();
 		const body = text ? object(JSON.parse(text)) : {};
+		const token = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
 		for (const [method, pattern, handler] of this.routes) {
 			if (method !== request.method) continue;
 			const match = pattern.exec(url.pathname);
 			if (!match) continue;
 			try {
-				return handler(match, url, body);
+				return handler(match, url, body, token);
 			} catch (error) {
 				if (error instanceof HttpError) return json({ message: error.message }, error.status);
 				throw error;

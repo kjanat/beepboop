@@ -354,7 +354,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 							? (yield* gateway.read(
 								Schema.NullOr(releaseSchema),
 								`/repos/${execution.repository}/releases/${draft.id}`,
-								token,
+								yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'write' }),
 							))?.assets.map(asset => asset.name) ?? []
 							: [],
 					);
