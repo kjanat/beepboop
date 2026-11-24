@@ -331,6 +331,36 @@ describe('a World started by eachWorld', () => {
 	});
 });
 
+test('a World traces the storage it hands to a hand-built coordinator', () =>
+	inTemp(async temp => {
+		await withEnvironment({ BEEPBOOP_STORAGE_TRACE: temp }, async () => {
+			const world = await World.create();
+			try {
+				await world.storage('AutomationCoordinator:runtime').put('reconcile-at', 5);
+			} finally {
+				await world.dispose();
+			}
+		});
+
+		expect(readFileSync(join(temp, traceFile), 'utf8')).toBe([
+			'## world 1',
+			'AutomationCoordinator:runtime put "reconcile-at" 5',
+			'',
+		].join('\n'));
+	}));
+
+test('traces holding line separator characters in values compare equal', () =>
+	inTemp(async temp => {
+		const directory = (name: string) => join(temp, name);
+		const run: Writes = async storage => {
+			await storage.put('note', { body: 'a b c' });
+		};
+		await traced(directory('before'), run);
+		await traced(directory('after'), run);
+
+		expect(await compared(directory('before'), directory('after'))).toEqual({ code: 0, output: summary(0, 0, 1) });
+	}));
+
 test('a fixed commit SHA that changes between runs is a difference', () =>
 	inTemp(async temp => {
 		const directory = (name: string) => join(temp, name);

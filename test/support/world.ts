@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, mock, setSystemTime, spyOn } from 'bun:test';
 import { env as runtimeEnv } from '@root/test/support/cloudflare-workers.ts';
 import { TestD1 } from '@root/test/support/d1.ts';
-import { deferBackground, drainBackground } from '@root/test/support/do-storage.ts';
+import { deferBackground, drainBackground, MemoryStorage } from '@root/test/support/do-storage.ts';
 import type { Repository } from '@root/test/support/github.ts';
 import { appId, FakeGitHub, ownerId } from '@root/test/support/github.ts';
 import { Network } from '@root/test/support/network.ts';
@@ -126,6 +126,9 @@ export class World {
 		Object.assign(runtimeEnv, world.env);
 		spyOn(globalThis, 'fetch').mockImplementation(Object.assign(world.network.fetch, { preconnect: fetch.preconnect }));
 		return world;
+	}
+	storage(label = 'storage'): MemoryStorage {
+		return new MemoryStorage(label, this.trace);
 	}
 	async dispose(): Promise<void> {
 		this.trace?.finish();
