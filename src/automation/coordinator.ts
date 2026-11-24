@@ -6,11 +6,12 @@ import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/i
 import { preparedSnapshot, restatePreparation } from '@/automation/preparation-pull-requests';
 import { PreparationWriter } from '@/automation/preparation-writer.ts';
 import type { PublishBudget } from '@/automation/publish-budget';
+import { ReleaseCommits } from '@/automation/release-commits.ts';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
+import { RunCallbacks } from '@/automation/run-callbacks.ts';
 import type { AutomationBindings } from '@/automation/service';
 import { Automation, applicationLayer, withAutomation } from '@/automation/service';
 import { repositorySnapshot } from '@/automation/snapshot';
-import { unchangedSince } from '@/automation/unchanged-paths';
 import type { BinaryProgress, GateView, PackageTagPage, StreamGates } from '@/contract/views';
 import { coversBinding } from '@/credentials/grant.ts';
 import { metadataProblems } from '@/discovery/analysis/package-metadata.ts';
@@ -25,7 +26,6 @@ import {
 	identityPackageName,
 	matchesPackage,
 	packageId,
-	parseIdentity,
 	parseReleaseIdentity,
 	publicationIdentity,
 	publishablePackages,
@@ -66,7 +66,7 @@ import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { parseRetryAfter } from '@/kernel/http/http-date.ts';
 import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
-import { approvalShaPattern, sha256DigestPattern } from '@/kernel/schema/ids.ts';
+import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { matches, sha } from '@/kernel/schema/result.ts';
 import { decodeSync, mutableArray, safeDecode } from '@/kernel/schema/structs.ts';
 import type { SqlDatabase } from '@/persistence/d1/database';
@@ -126,10 +126,9 @@ import {
 	settle,
 	settleRun,
 	unreported,
-	validatePublicationIdentity,
 	verifiableCancellation,
 } from '@/release/domain/execution/execution.ts';
-import { mergeArtifacts, resolveInputs } from '@/release/domain/execution/outputs.ts';
+import { resolveInputs } from '@/release/domain/execution/outputs.ts';
 import { githubFailureReason } from '@/release/domain/execution/run-labels.ts';
 import type {
 	Artifact,
@@ -163,7 +162,7 @@ import {
 	versionTagged,
 } from '@/release/domain/refs.ts';
 import { compileReleaseSet } from '@/release/domain/release-set.ts';
-import { manifestProblems, releasePaths } from '@/release/domain/version.ts';
+import { manifestProblems } from '@/release/domain/version.ts';
 import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
 import { Background } from '@/release/services/coordinator/background.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
@@ -279,7 +278,14 @@ function referenceProbe(reference: string, version: string): Publication | undef
 		required: true,
 	};
 }
-type CoordinatorContext = Infrastructure | CoordinatorServices | AuditTrail | Background | PreparationWriter;
+type CoordinatorContext =
+	| Infrastructure
+	| CoordinatorServices
+	| AuditTrail
+	| Background
+	| PreparationWriter
+	| ReleaseCommits
+	| RunCallbacks;
 type CoordinatorEffect<A, E = never> = Effect.Effect<A, E, CoordinatorContext>;
 type GateSubject =
 	& Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration' | 'stream'>
@@ -402,7 +408,8 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			Layer.mergeAll(
 				jsonLogging,
 				committed.pipe(
-					Layer.provideMerge(PreparationWriter.layer),
+					Layer.provideMerge(RunCallbacks.layer),
+					Layer.provideMerge(Layer.merge(PreparationWriter.layer, ReleaseCommits.layer)),
 					Layer.provideMerge(Background.layer(work => ctx.waitUntil(work))),
 					Layer.provideMerge(setupEditSource),
 					Layer.provideMerge(coordinatorLayer(ctx.storage)),
@@ -1091,47 +1098,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		);
 	}
 	prepared(id: string, identity: RunIdentity, edits: Edit[]): Promise<{ url: string; head: string }> {
-		return this.serial(
-			Effect.gen({ self: this }, function*() {
-				const execution = yield* getExecution(id);
-				if (!execution.workflow || execution.managed || execution.operation !== 'prepare' || !execution.plan) {
-					return yield* precondition('Preparation run identity mismatch');
-				}
-				yield* WorkflowRunGuard.require(execution, identity, {
-					_tag: 'SameRun',
-					mismatch: 'Preparation run identity mismatch',
-				});
-				const ordered = [...edits].sort((a, b) => a.path.localeCompare(b.path));
-				if (execution.prepared && JSON.stringify(execution.prepared.edits) !== JSON.stringify(ordered)) {
-					return yield* precondition('Submitted preparation changed; create a new preparation');
-				}
-				if (execution.prepared?.result) return execution.prepared.result;
-				const prepared = execution.prepared ?? { edits: ordered };
-				execution.prepared = prepared;
-				yield* putExecution(execution);
-				const gateway = yield* this.gateway;
-				const source = yield* repositorySnapshot(
-					gateway,
-					execution.repository,
-					execution.repositoryId,
-					execution.sourceSha,
-					ordered.map(edit => edit.path),
-				);
-				const branch = `release/${execution.stream}/${execution.id}`;
-				const title = `chore(release): prepare ${execution.version ?? 'release set'}`;
-				const body = `Source: ${execution.sourceSha}\nPreparation execution: ${execution.id}\n\n${
-					preparationBody(execution)
-				}`;
-				const result = yield* (yield* PreparationWriter).submit(
-					preparationRequest(execution, prepared, source, { branch, title, body, edits: ordered }),
-				);
-				prepared.result = result;
-				yield* putExecution(execution);
-				return result;
-			}),
-			'coordinator.prepared',
-			{ executionId: id },
-		);
+		return this.serial(RunCallbacks.use(callbacks => callbacks.prepared(id, identity, edits)), 'coordinator.prepared', {
+			executionId: id,
+		});
 	}
 	private supersedePending(execution: Execution): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
@@ -1174,82 +1143,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		});
 	}
 	register(id: string, identity: RunIdentity): Promise<Execution> {
-		return this.serial(
-			Effect.gen({ self: this }, function*() {
-				const execution = yield* getExecution(id);
-				const workflow = execution.workflow;
-				if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
-				const dependencies = yield* Effect.forEach(execution.dependencies, id => getExecution(id), {
-					concurrency: 'unbounded',
-				});
-				if (!dependenciesReady(execution, dependencies)) {
-					return yield* precondition('Execution dependencies have not succeeded');
-				}
-				if (execution.attempts === 0 && execution.eventId !== `observed:${identity.runId}`) {
-					return yield* precondition('Execution has not been dispatched');
-				}
-				if (
-					execution.repositoryId !== identity.repositoryId
-					|| execution.repository !== identity.repository
-					|| !['pending', 'ready', 'dispatching', 'uncertain', 'running'].includes(execution.state)
-				) {
-					return yield* precondition('Execution cannot register this run');
-				}
-				const expected = `${identity.repository}/.github/workflows/${workflow.file}@`;
-				if (!identity.workflowRef.startsWith(expected)) return yield* precondition('Workflow binding mismatch');
-				if (execution.runId && execution.runId !== identity.runId) {
-					return yield* precondition('Execution is already bound to a run');
-				}
-				if (execution.supersededRuns?.includes(identity.runId)) {
-					return yield* precondition('A newer run of this execution replaced this run');
-				}
-				if (execution.runAttempt && identity.attempt < execution.runAttempt) {
-					return yield* precondition('Stale run attempt');
-				}
-				const gateway = yield* this.gateway;
-				const token = yield* gateway.token(execution.repository, execution.repositoryId);
-				const run = yield* gateway.read(
-					workflowRunSchema,
-					`/repos/${execution.repository}/actions/runs/${identity.runId}`,
-					token,
-				);
-				if (
-					run.repository.id !== execution.repositoryId
-					|| run.head_sha !== identity.sha
-					|| run.path !== `.github/workflows/${workflow.file}`
-					|| run.run_attempt !== identity.attempt
-				) {
-					return yield* precondition('Run identity mismatch');
-				}
-				if (!(yield* this.contains(execution, run.head_sha, token))) {
-					return yield* precondition(
-						`The run is at ${run.head_sha.slice(0, 12)} but this execution releases ${
-							execution.sourceSha.slice(0, 12)
-						}`,
-					);
-				}
-				if (!matchesRef(workflow.ref, identity.ref)) return yield* precondition('Workflow ref mismatch');
-				if (execution.attempts > 0 && !execution.runId && run.display_title !== expectedRunTitle(execution)) {
-					return yield* precondition('Dispatch correlation mismatch');
-				}
-				const resolvedInputs = yield* resolveInputs(execution, dependencies);
-				const next: Execution = {
-					...settleRun(execution, classifyRun(run)),
-					resolvedInputs,
-					state: 'running',
-					runId: identity.runId,
-					runAttempt: identity.attempt,
-					workflowSha: identity.workflowSha,
-					helperShas: [
-						...new Set([...(execution.helperShas ?? []), identity.helperSha ?? identity.workflowSha]),
-					],
-				};
-				yield* putExecution(next);
-				return next;
-			}),
-			'coordinator.register',
-			{ executionId: id },
-		);
+		return this.serial(RunCallbacks.use(callbacks => callbacks.register(id, identity)), 'coordinator.register', {
+			executionId: id,
+		});
 	}
 	refs(
 		id: string,
@@ -1879,9 +1775,11 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		publications: Publication[],
 		artifacts: Artifact[],
 	): Promise<Execution> {
-		return this.serial(this.recordReport(id, identity, publications, artifacts), 'coordinator.report', {
-			executionId: id,
-		});
+		return this.serial(
+			RunCallbacks.use(callbacks => callbacks.report(id, identity, publications, artifacts)),
+			'coordinator.report',
+			{ executionId: id },
+		);
 	}
 	publishNext(id: string, identity: RunIdentity): Promise<NextStep> {
 		return this.serial(
@@ -2182,71 +2080,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			...(record.status.state === 'rate-limited' ? { until: record.status.retryAfter } : {}),
 		}));
 	}
-	private recordReport(
-		id: string,
-		identity: RunIdentity,
-		publications: Publication[],
-		artifacts: Artifact[],
-	): CoordinatorEffect<Execution, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const execution = yield* getExecution(id);
-			const workflow = execution.workflow;
-			if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
-			yield* WorkflowRunGuard.require(execution, identity, { _tag: 'SameRun', mismatch: 'Report identity mismatch' });
-			for (const artifact of artifacts) {
-				if (artifact.runId !== identity.runId) return yield* precondition('Artifact producer mismatch');
-				if (
-					!sha256DigestPattern.test(artifact.digest)
-					|| !(Date.parse(artifact.expiresAt) > clock.currentTimeMillisUnsafe())
-				) {
-					return yield* precondition('Artifact has no usable digest or has expired');
-				}
-			}
-			const accepted: Publication[] = [];
-			let release = execution.release;
-			for (const reported of publications) {
-				const identity = yield* Effect.fromResult(parseIdentity(reported, execution.repository)).pipe(
-					Effect.mapError(toDomainError),
-				);
-				const publication = { ...reported, identity };
-				if (publication.id.startsWith('refs:')) {
-					return yield* precondition('Ref results are recorded by the ref completion endpoint');
-				}
-				yield* validatePublicationIdentity(execution, publication);
-				if (publication.manager === 'github-release' && publication.name !== execution.repository) {
-					return yield* precondition('Release repository mismatch');
-				}
-				if (publication.manager === 'github-release' && publication.outcome === 'succeeded') {
-					if (release?.tag && release.tag !== publication.version) {
-						return yield* precondition('Release identity changed');
-					}
-					release = {
-						id: `github:${execution.repositoryId}:tag:${publication.version}`,
-						repository: { id: execution.repositoryId, name: execution.repository },
-						stream: execution.stream,
-						commit: execution.sourceSha,
-						version: execution.version ?? publication.version.replace(/^v/, ''),
-						artifacts: [],
-						publications: [],
-						...release,
-						tag: publication.version,
-					};
-				}
-				accepted.push(publication);
-			}
-			const merged = yield* mergeArtifacts(execution.artifacts, artifacts, workflow.outputs);
-			const next = {
-				...execution,
-				release,
-				publications: yield* mergePublications(execution.publications, accepted),
-				artifacts: merged,
-			};
-			yield* putExecution(next);
-			return next;
-		});
-	}
 	private supersedeVersion(execution: Execution): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (execution.operation !== 'promote' || !execution.version) return;
@@ -2383,7 +2216,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				const head = yield* this.refHead(execution, token);
 				if (
 					head
-					&& (head.tag ? head.sha !== execution.sourceSha : !(yield* this.contains(execution, head.sha, token)))
+					&& (head.tag
+						? head.sha !== execution.sourceSha
+						: !(yield* (yield* ReleaseCommits).contains(execution, head.sha, token)))
 				) {
 					return yield* precondition(
 						`${head.ref} is at ${head.sha.slice(0, 12)}. Publish the release for that commit.`,
@@ -3008,58 +2843,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			return { ref, sha: commit.sha, tag: false };
 		});
 	}
-	private contains(execution: Execution, sha: string, token: string): CoordinatorEffect<boolean, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			if (sha === execution.sourceSha) return true;
-			if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) {
-				const executions = yield* allExecutions;
-				let promotion = execution.operation === 'promote'
-					? execution
-					: executions.find(other => other.operation === 'promote' && other.dependencies.includes(execution.id));
-				const pending = [...execution.dependencies];
-				const visited = new Set<string>();
-				while (!promotion && pending.length) {
-					const id = pending.pop();
-					if (id === undefined || visited.has(id)) continue;
-					visited.add(id);
-					const dependency = executions.find(other => other.id === id);
-					if (
-						dependency?.state !== 'succeeded' || dependency.sourceSha !== execution.sourceSha
-						|| dependency.configurationSha !== execution.configurationSha || dependency.stream !== execution.stream
-						|| dependency.version !== execution.version
-					) continue;
-					if (dependency.operation === 'promote') promotion = dependency;
-					else pending.push(...dependency.dependencies);
-				}
-				return promotion !== undefined && (yield* this.versionKept(promotion, sha));
-			}
-			const comparison = yield* (yield* this.gateway).read(
-				comparisonSchema,
-				`/repos/${execution.repository}/compare/${execution.sourceSha}...${sha}`,
-				token,
-			);
-			return comparison.status === 'ahead';
-		});
-	}
-	private versionKept(execution: Execution, sha: string): CoordinatorEffect<boolean, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const stream = execution.configuration.streams[execution.stream];
-			const record = yield* (yield* this.store).repositories.get(execution.repositoryId);
-			if (!stream || !record) return false;
-			if (JSON.stringify(record.configuration?.streams[execution.stream]) !== JSON.stringify(stream)) return false;
-			const gateway = yield* this.gateway;
-			const paths = releasePaths(record.inventory.packages, stream);
-			const kept = (commit: string) =>
-				unchangedSince(gateway, execution.repository, execution.repositoryId, commit, sha, paths);
-			const newer = (yield* allExecutions).filter(other =>
-				other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
-				&& other.version === execution.version && other.createdAt > execution.createdAt
-				&& other.state !== 'cancelled' && other.state !== 'failed'
-			);
-			for (const other of newer) if (yield* kept(other.sourceSha)) return false;
-			return yield* kept(execution.sourceSha);
-		});
-	}
 	private headMoved(
 		execution: Execution,
 		token: string,
@@ -3074,7 +2857,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					execution.sourceSha.slice(0, 12)
 				}`;
 			}
-			if (yield* this.contains(execution, head.sha, token)) return undefined;
+			if (yield* (yield* ReleaseCommits).contains(execution, head.sha, token)) return undefined;
 			if (!execution.eventId.startsWith('observed:')) return moved(execution, head);
 			return `${head.ref} at ${head.sha.slice(0, 12)} no longer contains ${execution.sourceSha.slice(0, 12)}`;
 		});
