@@ -9,6 +9,7 @@ import { Keys } from '@/release/adapters/do/keys.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
 import type { CoordinatorServices } from '@/release/services/coordinator/layer.ts';
 import { coordinatorLayer } from '@/release/services/coordinator/layer.ts';
+import { AuditTrail } from '@/release/services/coordinator/retry-queue.ts';
 
 function run<A, E>(memory: MemoryStorage, projected: Projection[], work: Effect.Effect<A, E, CoordinatorServices>) {
 	const sink = Layer.succeed(ProjectionSink, {
@@ -17,7 +18,10 @@ function run<A, E>(memory: MemoryStorage, projected: Projection[], work: Effect.
 				projected.push(...rows);
 			}),
 	});
-	return Effect.runPromiseExit(work.pipe(Effect.provide(coordinatorLayer(memory).pipe(Layer.provide(sink)))));
+	const audit = Layer.succeed(AuditTrail, { record: () => Effect.void });
+	return Effect.runPromiseExit(
+		work.pipe(Effect.provide(coordinatorLayer(memory).pipe(Layer.provide(Layer.merge(sink, audit))))),
+	);
 }
 
 test('the coordinator lock runs one piece of work at a time', async () => {

@@ -72,9 +72,6 @@ export class AlarmPlanner extends Context.Service<AlarmPlanner, {
 		const storage = yield* DurableStorage;
 		const journal = yield* Journal;
 		yield* planner.register(queueSource(storage, Keys.releaseWake, wakeDue));
-		yield* planner.register(queueSource(storage, Keys.observe, observation => observation.due));
-		yield* planner.register(queueSource(storage, Keys.track, observation => observation.due));
-		yield* planner.register(queueSource(storage, Keys.inbox, entry => entry.due));
 		yield* planner.register({ due: now => journal.due(now).pipe(Effect.map(at => [at])) });
 		yield* planner.register({ due: () => planner.reconcileAt.pipe(Effect.map(at => [at])) });
 	}));
