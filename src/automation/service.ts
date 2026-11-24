@@ -9,6 +9,7 @@ import { CoordinatorClient } from '@/automation/coordinator-client.ts';
 import type { Credentials } from '@/automation/gateway.ts';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { preparationMerge } from '@/automation/preparation-pull-requests';
+import { deliverReleaseEvents, ReleaseEventSink } from '@/automation/release-event-outbox.ts';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { Store } from '@/automation/store';
 import { unchangedSince } from '@/automation/unchanged-paths';
@@ -1023,10 +1024,10 @@ export class AutomationService {
 				this.store.auditFailure('winget', 'winget.failed', repository.name),
 			);
 			yield* this.coordinators.wake(repository.id);
-			for (const event of yield* this.coordinators.releaseEvents(repository.id)) {
-				yield* this.event(event);
-				yield* this.coordinators.acknowledgeReleaseEvent(repository.id, event.id);
-			}
+			yield* deliverReleaseEvents(repository.id).pipe(
+				Effect.provideService(CoordinatorClient, this.coordinators),
+				Effect.provideService(ReleaseEventSink, ReleaseEventSink.of({ deliver: event => this.event(event) })),
+			);
 			const state = readiness(refreshed);
 			if (state.kind !== 'ready') return;
 			yield* this.scheduleStreams(state.repository, clock.currentTimeMillisUnsafe());
