@@ -153,6 +153,11 @@ export class AutomationService {
 	coordinator(id: number) {
 		return this.env.AUTOMATION.getByName(String(id));
 	}
+	suspended(repositoryId: number): Effect.Effect<boolean, DomainError> {
+		return this.store.repositories.enrollment(repositoryId).pipe(
+			Effect.map(enrollment => enrollment?.access.kind !== 'active'),
+		);
+	}
 	enqueue(repository: ReadyRepository, execution: Execution): Effect.Effect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (execution.repositoryId !== repository.id) {

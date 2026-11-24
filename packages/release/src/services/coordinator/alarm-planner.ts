@@ -11,6 +11,8 @@ export interface DueSource {
 	readonly due: (now: number) => Effect.Effect<readonly (number | undefined)[], DomainError>;
 }
 
+export const reconcileInterval = 60_000;
+
 export function earliest(times: readonly (number | undefined)[]): number | undefined {
 	const due = times.filter(time => time !== undefined);
 	return due.length ? Math.min(...due) : undefined;

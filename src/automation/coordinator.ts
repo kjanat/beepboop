@@ -2,12 +2,15 @@ import { DurableObject } from 'cloudflare:workers';
 import { Clock, Context, Effect, Layer, ManagedRuntime, Predicate, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { GitHubReleases } from '@/automation/github-releases.ts';
-import { preparedSnapshot, restatePreparation } from '@/automation/preparation-pull-requests';
+import { restatePreparation } from '@/automation/preparation-pull-requests';
 import { PreparationWriter } from '@/automation/preparation-writer.ts';
 import type { PublishBudget } from '@/automation/publish-budget';
 import { RefPublication } from '@/automation/ref-publication.ts';
 import { ReleaseCommits } from '@/automation/release-commits.ts';
+import type { ReleaseOperation } from '@/automation/release-sets.ts';
+import { ReleaseSets } from '@/automation/release-sets.ts';
 import type { ReleaseWorkflowParams } from '@/automation/release-workflow';
+import { ReleaseWorkflowLauncher } from '@/automation/release-workflow-launcher.ts';
 import { RunCallbacks } from '@/automation/run-callbacks.ts';
 import type { AutomationBindings } from '@/automation/service';
 import { Automation, applicationLayer, withAutomation } from '@/automation/service';
@@ -53,7 +56,7 @@ import { classifyJob, classifyRun, jobProgressState } from '@/github/run-state.t
 import { TagSigner } from '@/github/signing.ts';
 import { GitHubRejection } from '@/github/transport.ts';
 import type { InboxEvent } from '@/github/webhooks.ts';
-import { fromPromise, fromSync, recover } from '@/kernel/errors/classify.ts';
+import { fromSync, recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
@@ -72,12 +75,12 @@ import type { ClaimStep, LedgerPackage, NextStep, PublishReport, ReportStep } fr
 import { LedgerStore, PublicationLedger, RegistryVerification } from '@/publication/ledger/service.ts';
 import { released } from '@/publication/ledger.ts';
 import type { Publication } from '@/publication/publication.ts';
-import { PublishPacing, paced } from '@/publication/publish-pace.ts';
+import { PublishPacing } from '@/publication/publish-pace.ts';
 import { verifiedPublication } from '@/publication/registries/verification.ts';
 import { canVerifyPublication, verifyPublication } from '@/publication/registries/verify.ts';
 import { projectionRules } from '@/release/adapters/d1/completions.ts';
-import type { Observation, ReleaseSetRecord, ReleaseWake } from '@/release/adapters/do/keys.ts';
-import { Keys, wakeDue } from '@/release/adapters/do/keys.ts';
+import type { Observation } from '@/release/adapters/do/keys.ts';
+import { Keys } from '@/release/adapters/do/keys.ts';
 import type { DistributionArtifact } from '@/release/distribution/artifact.ts';
 import type { DistributionFile } from '@/release/distribution/validation.ts';
 import {
@@ -113,9 +116,8 @@ import { observedVersion, placeholderVersion } from '@/release/domain/planning/m
 import { landsByCommit, preparationRequest } from '@/release/domain/preparation-request.ts';
 import { referenceProbe } from '@/release/domain/reference-probe.ts';
 import { refsRequest } from '@/release/domain/refs-request.ts';
-import { compileReleaseSet } from '@/release/domain/release-set.ts';
 import { manifestProblems } from '@/release/domain/version.ts';
-import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
+import { AlarmPlanner, reconcileInterval } from '@/release/services/coordinator/alarm-planner.ts';
 import { Background } from '@/release/services/coordinator/background.ts';
 import { CoordinatorLock } from '@/release/services/coordinator/coordinator-lock.ts';
 import type { ExecutionCommitted } from '@/release/services/coordinator/executions.ts';
@@ -142,13 +144,6 @@ export interface CoordinatorBindings extends AutomationBindings {
 	PUBLISH_BUDGET: DurableObjectNamespace<PublishBudget>;
 	SIGNER?: SignerBinding;
 }
-interface ReleaseOperation {
-	id: string;
-	operation: string;
-	paced: boolean;
-	dependencies: string[];
-}
-const reconcileInterval = 60_000;
 const automaticRetries = 3;
 const metadataReason = gateReasons.metadata;
 const passingConclusions = ['success', 'neutral', 'skipped'];
@@ -194,10 +189,11 @@ type CoordinatorContext =
 	| Background
 	| PreparationWriter
 	| PublicationLedger
-	| PublishPacing
 	| ReleaseCommits
 	| GitHubReleases
 	| RefPublication
+	| ReleaseSets
+	| ReleaseWorkflowLauncher
 	| RunCallbacks
 	| TagSigner
 	| TagSigning;
@@ -339,12 +335,14 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				jsonLogging,
 				RefPublication.packageTagSchedule.pipe(Layer.provideMerge(committed.pipe(
 					Layer.provideMerge(GitHubReleases.layer),
+					Layer.provideMerge(ReleaseSets.layer),
 					Layer.provideMerge(RefPublication.layer),
 					Layer.provideMerge(Layer.merge(RunCallbacks.layer, TagSigning.layer)),
 					Layer.provideMerge(Layer.merge(PreparationWriter.layer, ReleaseCommits.layer)),
 					Layer.provideMerge(PublicationLedger.layer),
 					Layer.provideMerge(Background.layer(work => ctx.waitUntil(work))),
 					Layer.provideMerge(TagSigner.layer(() => env.SIGNER)),
+					Layer.provideMerge(ReleaseWorkflowLauncher.layer(() => env.RELEASE_WORKFLOW)),
 					Layer.provideMerge(PublishPacing.layer(name => env.PUBLISH_BUDGET.getByName(name))),
 					Layer.provideMerge(registryVerification),
 					Layer.provideMerge(setupEditSource),
@@ -377,9 +375,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private readonly store = Effect.map(Automation, service => service.store);
 	private readonly gateway = Effect.map(Automation, service => service.gateway);
-	private releaseSet(preparationId: string): CoordinatorEffect<ReleaseSetRecord | undefined, DomainError> {
-		return DurableStorage.use(storage => storage.get(Keys.releaseSet, preparationId));
-	}
 	private committed({ execution }: ExecutionCommitted): CoordinatorEffect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (execution.state === 'succeeded') yield* this.captureReleaseEvent(execution);
@@ -397,14 +392,6 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			'coordinator.packageTags',
 			{ repositoryId, stream },
 		);
-	}
-	private putReleaseSet(preparationId: string, record: ReleaseSetRecord): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const preparation = yield* getExecution(preparationId);
-			yield* commitEntries([
-				{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
-			]);
-		});
 	}
 	private releaseGroup(
 		execution: Execution,
@@ -534,10 +521,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		});
 	}
 	private suspended(repositoryId: number): CoordinatorEffect<boolean, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const enrollment = yield* (yield* this.store).repositories.enrollment(repositoryId);
-			return enrollment?.access.kind !== 'active';
-		});
+		return Effect.flatMap(Automation, automation => automation.suspended(repositoryId));
 	}
 	exportJournal(): Promise<{ key: string; value: unknown }[]> {
 		return this.run(
@@ -562,273 +546,55 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
-	/** Persist wake-ups separately so failed delivery survives Worker restarts. */
-	private wakeReleaseWorkflows(): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const storage = yield* DurableStorage;
-			const wakes: Write[] = [];
-			for (const { id, value: release } of yield* storage.list(Keys.releaseSet)) {
-				if (!release.workflowId || release.completed) continue;
-				wakes.push(Keyspace.write(Keys.releaseWake, id, { due: clock.currentTimeMillisUnsafe() }));
-			}
-			if (wakes.length) yield* storage.writeAll(wakes);
-		});
-	}
-	private deliverReleaseWake(
-		preparationId: string,
-		release: ReleaseSetRecord & { workflowId: string },
-		wake: ReleaseWake,
-	): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const binding = this.env.RELEASE_WORKFLOW;
-			const workflowId = release.workflowId;
-			if (!release.started) {
-				const preparation = yield* getExecution(preparationId);
-				yield* fromPromise(() =>
-					binding.create({
-						id: workflowId,
-						params: { repositoryId: preparation.repositoryId, preparationId },
-					})
-				).pipe(
-					// A create response can be lost after Cloudflare accepts the instance.
-					Effect.catch(error =>
-						fromPromise(() => binding.get(workflowId)).pipe(
-							Effect.flatMap(instance => fromPromise(() => instance.status())),
-							Effect.mapError(() => error),
-						)
-					),
-				);
-				release.started = true;
-				yield* this.putReleaseSet(preparationId, release);
-			}
-			const instance = yield* fromPromise(() => binding.get(workflowId));
-			const status = yield* fromPromise(() => instance.status());
-			if (['errored', 'terminated'].includes(status.status)) {
-				yield* this.recordReleaseWorkflowInterruption(preparationId, workflowId);
-			}
-			if (!['complete', 'errored', 'terminated'].includes(status.status)) {
-				const members = wake === true ? undefined : wake.members;
-				for (const id of release.ids.filter(id => !members || members.includes(id))) {
-					yield* fromPromise(() => instance.sendEvent({ type: id, payload: {} }));
-				}
-			}
-		});
-	}
-	private deliverReleaseEvents(now: number): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const storage = yield* DurableStorage;
-			for (const entry of yield* storage.entries(Keys.releaseWake)) {
-				const preparationId = entry.id;
-				if (entry.kind === 'unreadable') {
-					yield* storage.remove(Keys.releaseWake, preparationId);
-					continue;
-				}
-				const wake = entry.value;
-				if (wakeDue(wake) > now) continue;
-				const release = yield* this.releaseSet(preparationId);
-				const workflowId = release?.workflowId;
-				if (!release || !workflowId || release.completed) {
-					yield* storage.remove(Keys.releaseWake, preparationId);
-					continue;
-				}
-				yield* this.deliverReleaseWake(preparationId, { ...release, workflowId }, wake).pipe(
-					Effect.andThen(storage.remove(Keys.releaseWake, preparationId)),
-					recover(error =>
-						Effect.gen(function*() {
-							yield* storage.put(Keys.releaseWake, preparationId, {
-								...(wake === true ? {} : wake),
-								due: now + reconcileInterval,
-							});
-							yield* logFailure('release-wake.failed', error, { preparationId });
-						})
-					),
-				);
-			}
-		});
-	}
-	private operations(preparationId: string, workflowId: string): CoordinatorEffect<ReleaseOperation[], DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const release = yield* this.releaseSet(preparationId);
-			if (!release || release.workflowId !== workflowId) {
-				return yield* precondition('Release Workflow identity mismatch');
-			}
-			return yield* Effect.forEach(release.ids, id =>
-				getExecution(id).pipe(Effect.map(execution => ({
-					id,
-					operation: execution.package ? `${execution.operation} ${execution.package.id}` : execution.operation,
-					paced: paced(execution.package?.manager),
-					dependencies: execution.dependencies,
-				}))), { concurrency: 'unbounded' });
-		});
-	}
 	releaseOperations(preparationId: string, workflowId: string): Promise<ReleaseOperation[]> {
-		return this.run(this.operations(preparationId, workflowId), 'coordinator.releaseOperations', {
-			preparationId,
-			workflowId,
-		});
+		return this.run(
+			ReleaseSets.use(sets => sets.operations(preparationId, workflowId)),
+			'coordinator.releaseOperations',
+			{
+				preparationId,
+				workflowId,
+			},
+		);
 	}
 	reservePublication(preparationId: string, workflowId: string, id: string): Promise<number> {
 		return this.serial(
-			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
-				const operations = yield* this.operations(preparationId, workflowId);
-				const execution = operations.some(operation => operation.id === id) ? yield* getExecution(id) : undefined;
-				const target = execution?.package;
-				if (!execution || !target || !paced(target.manager)) {
-					return yield* precondition('Operation is not a paced publication in this release');
-				}
-				const { kind, allowedAt } = yield* (yield* PublicationLedger).reserve(
-					execution.repositoryId,
-					target.manager,
-					pkg => matchesPackage(target.id, pkg),
-					execution.id,
-					execution.reservation,
-				);
-				if (!execution.reservation || allowedAt > (execution.notBefore ?? 0)) {
-					yield* putExecution({
-						...execution,
-						reservation: kind,
-						notBefore: Math.max(execution.notBefore ?? 0, allowedAt),
-					});
-				}
-				return Math.max(0, ((yield* getExecution(id)).notBefore ?? 0) - clock.currentTimeMillisUnsafe());
-			}),
+			ReleaseSets.use(sets => sets.reserve(preparationId, workflowId, id)),
 			'coordinator.reservePublication',
 			{ preparationId, workflowId, executionId: id },
 		);
 	}
 	operationDelay(preparationId: string, workflowId: string, id: string): Promise<number> {
 		return this.run(
-			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
-				const operations = yield* this.operations(preparationId, workflowId);
-				if (!operations.some(operation => operation.id === id)) {
-					return yield* precondition('Operation is not in this release');
-				}
-				return Math.max(0, ((yield* getExecution(id)).notBefore ?? 0) - clock.currentTimeMillisUnsafe());
-			}),
+			ReleaseSets.use(sets => sets.delay(preparationId, workflowId, id)),
 			'coordinator.operationDelay',
 			{ preparationId, workflowId, executionId: id },
 		);
 	}
 	advanceReleaseOperation(preparationId: string, workflowId: string, id: string): Promise<Execution['state']> {
 		return this.serial(
-			Effect.gen({ self: this }, function*() {
-				const operations = yield* this.operations(preparationId, workflowId);
-				if (!operations.some(operation => operation.id === id)) {
-					return yield* precondition('Operation is not in this release');
-				}
-				yield* this.reconcile(id);
-				return (yield* getExecution(id)).state;
-			}),
+			ReleaseSets.use(sets => sets.advance(preparationId, workflowId, id, member => this.reconcile(member))),
 			'coordinator.advanceReleaseOperation',
 			{ preparationId, workflowId, executionId: id },
 		);
 	}
 	releaseWorkflowInterrupted(preparationId: string, workflowId: string): Promise<void> {
 		return this.serial(
-			this.recordReleaseWorkflowInterruption(preparationId, workflowId),
+			ReleaseSets.use(sets => sets.interrupted(preparationId, workflowId)),
 			'coordinator.releaseWorkflowInterrupted',
 			{ preparationId, workflowId },
 		);
 	}
-	private recordReleaseWorkflowInterruption(
-		preparationId: string,
-		workflowId: string,
-		interrupted = true,
-	): CoordinatorEffect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			for (const operation of yield* this.operations(preparationId, workflowId)) {
-				const execution = yield* getExecution(operation.id);
-				if (!execution.releaseSet) continue;
-				execution.releaseSet.workflowError = interrupted
-					? 'Release coordination interrupted. Check coordination to resume.'
-					: undefined;
-				yield* commitEntries([
-					{ entity: 'execution', id: execution.id, repositoryId: execution.repositoryId, value: execution },
-				]);
-			}
-		});
-	}
 	completeReleaseWorkflow(preparationId: string, workflowId: string): Promise<void> {
 		return this.serial(
-			Effect.gen({ self: this }, function*() {
-				const operations = yield* this.operations(preparationId, workflowId);
-				for (const operation of operations) {
-					if ((yield* getExecution(operation.id)).state !== 'succeeded') {
-						return yield* precondition('Release is incomplete');
-					}
-				}
-				const release = yield* this.releaseSet(preparationId);
-				if (!release) return yield* precondition('Release set is missing');
-				yield* this.putReleaseSet(preparationId, { ...release, completed: true });
-			}),
+			ReleaseSets.use(sets => sets.complete(preparationId, workflowId)),
 			'coordinator.completeReleaseWorkflow',
 			{ preparationId, workflowId },
 		);
 	}
 	startReleaseSet(preparationId: string, target: string): Promise<Execution[]> {
-		return this.serial(
-			Effect.gen({ self: this }, function*() {
-				const clock = yield* Clock.Clock;
-
-				const preparation = yield* getExecution(preparationId);
-				if (yield* this.suspended(preparation.repositoryId)) {
-					return yield* precondition('Repository is suspended');
-				}
-				const prior = yield* this.releaseSet(preparationId);
-				if (prior) {
-					if (prior.target !== target) return yield* precondition('Release set already targets another revision');
-					return yield* Effect.forEach(prior.ids, id => getExecution(id), { concurrency: 'unbounded' });
-				}
-				const result = preparation.managed?.result ?? preparation.prepared?.result;
-				const plan = preparation.managed?.plan ?? preparation.plan;
-				if (!result || !plan) return yield* precondition('Preparation result unavailable');
-				const revision = yield* Effect.fromResult(sha(target));
-				const snapshot = yield* preparedSnapshot(
-					yield* this.gateway,
-					preparation.repository,
-					preparation.repositoryId,
-					result,
-					revision,
-					(preparation.prepared?.edits ?? plan.edits).map(edit => edit.path),
-				);
-				for (const edit of preparation.prepared?.edits ?? []) {
-					if (snapshot.files[edit.path] !== edit.after) {
-						return yield* precondition(`Generated preparation file changed: ${edit.path}`);
-					}
-				}
-				const executions = yield* compileReleaseSet(preparation, snapshot);
-				const workflowId = `release-${preparationId}`;
-				for (const execution of executions) {
-					if (execution.releaseSet) {
-						execution.releaseSet.workflowId = workflowId;
-						execution.releaseSet.operationCount = executions.length;
-					}
-				}
-				const record: ReleaseSetRecord = { target, ids: executions.map(execution => execution.id), workflowId };
-				const members = executions.map((execution): Committed => ({
-					entity: 'execution',
-					id: execution.id,
-					repositoryId: execution.repositoryId,
-					value: execution,
-				}));
-				yield* commitEntries(
-					[
-						{ entity: 'release-set', id: preparationId, repositoryId: preparation.repositoryId, value: record },
-						...members,
-					],
-					[Keyspace.write(Keys.releaseWake, preparationId, { due: clock.currentTimeMillisUnsafe() })],
-				);
-				return executions;
-			}),
-			'coordinator.startReleaseSet',
-			{ preparationId },
-		);
+		return this.serial(ReleaseSets.use(sets => sets.start(preparationId, target)), 'coordinator.startReleaseSet', {
+			preparationId,
+		});
 	}
 	enqueue(execution: Execution): Promise<Execution> {
 		return this.serial(
@@ -1829,16 +1595,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 					if (published !== execution) yield* putExecution(published);
 					yield* this.wakeUp();
 				}
-				const releaseSet = execution.releaseSet;
-				const workflowId = releaseSet?.workflowId;
-				if (releaseSet && workflowId) {
-					const instance = yield* fromPromise(() => this.env.RELEASE_WORKFLOW.get(workflowId));
-					const status = yield* fromPromise(() => instance.status());
-					if (['errored', 'terminated'].includes(status.status)) {
-						yield* fromPromise(() => instance.restart());
-						yield* this.recordReleaseWorkflowInterruption(releaseSet.preparationId, workflowId, false);
-					}
-				}
+				yield* (yield* ReleaseSets).resume(execution);
 				yield* (yield* this.store).audit(actor, `execution.${action}`, id);
 				return yield* getExecution(id);
 			}),
@@ -1894,7 +1651,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		return Effect.gen({ self: this }, function*() {
 			const clock = yield* Clock.Clock;
 
-			yield* this.wakeReleaseWorkflows();
+			yield* (yield* ReleaseSets).wake;
 			yield* (yield* AlarmPlanner).requestReconcile(clock.currentTimeMillisUnsafe());
 			yield* (yield* AlarmPlanner).arm(clock.currentTimeMillisUnsafe());
 		});
@@ -2291,7 +2048,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				);
 				yield* Effect.all([
 					lock.serialized(Effect.gen({ self: this }, function*() {
-						yield* this.deliverReleaseEvents(now);
+						yield* (yield* ReleaseSets).deliver(now);
 						yield* (yield* ObserveQueue).drain(now, event => Effect.as(this.observe(event), undefined));
 						yield* (yield* TrackQueue).drain(
 							now,
@@ -2420,22 +2177,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 						limited.length && (result.retry || result.observation.kind === 'succeeded'
 							|| (!result.jobs.length && ['failed', 'timed-out'].includes(result.observation.kind)))
 					) {
-						const until = Math.max(clock.currentTimeMillisUnsafe(), ...limited);
-						yield* PublishPacing.use(pacing => pacing.defer(execution.package?.manager, until));
-						yield* putExecution({
-							...execution,
-							state: 'ready',
-							supersededRuns: [...(execution.supersededRuns ?? []), runId],
-							runId: undefined,
-							runAttempt: undefined,
-							github: undefined,
-							workflowSha: undefined,
-							notBefore: until,
-							reason: `Registry rate limit until ${new Date(until).toISOString()}`,
-							publications: execution.publications.map(publication =>
-								publication.outcome === 'rate-limited' ? { ...publication, outcome: 'pending' } : publication
-							),
-						});
+						yield* (yield* ReleaseSets).rateLimited(execution, runId, limited);
 						return;
 					}
 					const settled = settleRun(execution, result);
