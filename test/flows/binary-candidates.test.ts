@@ -133,7 +133,6 @@ test('a package-level main.version that -X cannot set is reported with its type,
 		['const true = "dev"\nvar version = true', undefined],
 		['var (\n\tfalse = "dev"\n)\nvar version = false', undefined],
 		['type bool = string\nvar version = true', { kind: 'var', type: 'bool' }],
-		['type int = string\nvar version int', undefined],
 	];
 	for (const [source, expected] of cases) {
 		expect([source, unsettableVersion([['main.go', `package main\n\n${source}\n`]])]).toEqual([
@@ -177,6 +176,8 @@ test('Go files outside the main package build do not decide main.version, and al
 			'package main\n\nimport (\n\t"fmt" /* x */; _ "C"\n)\n\nvar version = 1\n',
 			'package main\n\nimport "\\x43"\n\nvar version = 1\n',
 			'package main\n\nimport `C`\n\nvar version = 1\n',
+			'package main\n\nimport\n"C"\n\nvar version = 1\n',
+			'package main\n\nimport /*\n*/ "C"\n\nvar version = 1\n',
 		]
 	) {
 		expect([source, unsettableVersion([['cgo.go', source], ['main.go', 'package main\n']])]).toEqual([
@@ -196,18 +197,19 @@ test('Go files outside the main package build do not decide main.version, and al
 			file: 'main.go',
 		}]);
 	}
-	for (
-		const [version, declaration] of [
-			['var version int', 'type int = string'],
-			['var version = true', 'const true = "dev"'],
-		]
-	) {
-		expect(
-			unsettableVersion([
-				['main.go', `package main\n\n${version}\n`],
-				['types_windows.go', `package main\n\n${declaration}\n`],
-			]),
-		).toBeUndefined();
+	const shadows: [string, string, string][] = [
+		['var version int', 'types_windows.go', 'type int = string'],
+		['var version = true', 'types_windows.go', 'const true = "dev"'],
+		['var version = true', 'shadow.go', 'const\ntrue = "dev"'],
+		['var version int', 'shadow.go', 'type\nint = string'],
+		['var version = true', 'shadow.go', 'var\ntrue = "dev"'],
+		['var version = false', 'shadow.go', 'const\n(\n\tfalse = "dev"\n)'],
+	];
+	for (const [version, file, declaration] of shadows) {
+		expect([
+			declaration,
+			unsettableVersion([['main.go', `package main\n\n${version}\n`], [file, `package main\n\n${declaration}\n`]]),
+		]).toEqual([declaration, undefined]);
 	}
 	expect(
 		[

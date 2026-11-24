@@ -30,10 +30,15 @@ function split(text: string, ends: (char: string, current: string) => boolean): 
 	return [...parts, current.trim()].filter(Boolean);
 }
 
+const keywordEnd =
+	/(?<![\w.])(?:case|chan|const|default|defer|else|for|func|go|goto|if|import|interface|map|package|range|select|struct|switch|type|var)\s*$/;
+
 const statements = (text: string) =>
 	split(
 		text,
-		(char, current) => char === ';' || char === '\n' && /(?:[\w"')\]}]|(?<![\w.])\d+\.)\s*$/.test(current),
+		(char, current) =>
+			char === ';'
+			|| char === '\n' && /(?:[\w"')\]}]|(?<![\w.])\d+\.)\s*$/.test(current) && !keywordEnd.test(current),
 	);
 
 function specs(statement: string, keyword: string): string[] {
