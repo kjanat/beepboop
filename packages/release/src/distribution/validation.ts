@@ -1,11 +1,12 @@
 import { Clock, Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import type { Edit } from '@/domain/inventory.ts';
-import type { DistributionEvidence, TagSigner } from '@/domain/refs.ts';
+import type { DistributionEvidence } from '@/domain/refs.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
 import { semVer } from '@/domain/version.ts';
 import { createdSchema, gitCommitSchema, gitRefSchema, repositorySchema } from '@/github/resources.ts';
-import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import type { Signer } from '@/github/signing.ts';
+import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { shaPattern } from '@/kernel/schema/ids.ts';
@@ -24,7 +25,7 @@ interface DistributionRequest {
 	version: string;
 	paths: readonly string[];
 	files: readonly DistributionFile[];
-	signer: TagSigner;
+	signer: Signer;
 }
 
 type Gateway = Pick<RepositoryGateway, 'token' | 'read' | 'file'>;
@@ -180,7 +181,7 @@ export function createDistribution(
 				return yield* precondition(`Distribution source file changed: ${file.path}`);
 			}
 		}
-		const identity = yield* fromPromise(() => signer.identity());
+		const identity = yield* signer.identity;
 		const user = /^([^<>\r\n]+) <([^<>\s]+)>$/.exec(identity.userId);
 		const name = user?.[1], email = user?.[2];
 		if (!name || !email) return yield* precondition('The signing key needs a user ID with a name and email');
@@ -194,7 +195,7 @@ export function createDistribution(
 				const payload = `tree ${tree}\n${
 					parents.map(parent => `parent ${parent}\n`).join('')
 				}author ${tagger}\ncommitter ${tagger}\n\n${body}`;
-				const signature = yield* fromPromise(() => signer.sign(payload, `beepboop:${repository}`));
+				const signature = yield* signer.sign(payload, `beepboop:${repository}`);
 				const created = yield* gateway.read(createdSchema, `${base}/git/commits`, token, 'POST', {
 					message: body,
 					tree,
