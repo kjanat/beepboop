@@ -130,6 +130,11 @@ test('a package-level main.version that -X cannot set is reported with its type,
 		['type A = (int)\nvar version A', { kind: 'var', type: 'A' }],
 		['type A = int\ntype B = A\nvar version B', { kind: 'var', type: 'B' }],
 		['type A = B\ntype B = A\nvar version A', undefined],
+		['const true = "dev"\nvar version = true', undefined],
+		['var (\n\tfalse = "dev"\n)\nvar version = false', undefined],
+		['type bool = string\nvar version = true', { kind: 'var', type: 'bool' }],
+		['type chanñ = string\nvar version chanñ', undefined],
+		['var version = ñ{}', { kind: 'var', type: 'ñ' }],
 	];
 	for (const [source, expected] of cases) {
 		expect([source, unsettableVersion([['main.go', `package main\n\n${source}\n`]])]).toEqual([
@@ -150,6 +155,12 @@ test('Go files outside the main package build do not decide main.version, and al
 		]),
 	).toBeUndefined();
 	expect(unsettableVersion([['version.go', `// +build linux\n\n${declared}`]])).toBeUndefined();
+	expect(unsettableVersion([['gen.go', `\t//go:build ignore\n\n${declared}`]])).toBeUndefined();
+	expect(unsettableVersion([['main.go', 'package  /* p */  main\n\nvar version = 1\n']])).toEqual({
+		kind: 'var',
+		type: 'int',
+		file: 'main.go',
+	});
 	expect(
 		unsettableVersion([
 			['main.go', 'package main\n\nvar version V\n'],
@@ -163,6 +174,12 @@ test('Go files outside the main package build do not decide main.version, and al
 			'package main\n\nimport("C")\n\nvar version = 1\n',
 			'package main\n\nimport "C" // C bindings\n\nvar version = 1\n',
 			'package main\n\nimport "C"/* C */\n\nvar version = 1\n',
+			'package main\nimport /* bindings */ "C"\nvar version = 1\n',
+			'package main\n\nimport (\n\t"fmt" /* x */; _ "C"\n)\n\nvar version = 1\n',
+			'package main\n\nimport "\\x43"\n\nvar version = 1\n',
+			'package main\n\nimport `C`\n\nvar version = 1\n',
+			'package main\n\nimport\n"C"\n\nvar version = 1\n',
+			'package main\n\nimport /*\n*/ "C"\n\nvar version = 1\n',
 		]
 	) {
 		expect([source, unsettableVersion([['cgo.go', source], ['main.go', 'package main\n']])]).toEqual([
@@ -170,11 +187,43 @@ test('Go files outside the main package build do not decide main.version, and al
 			undefined,
 		]);
 	}
-	expect(unsettableVersion([['main.go', 'package main\n\nimport "Cfg"\n\nvar version = 1\n']])).toEqual({
-		kind: 'var',
-		type: 'int',
-		file: 'main.go',
-	});
+	for (
+		const source of [
+			'package main\n\nimport "Cfg"\n\nvar version = 1\n',
+			'package main\n\nvar s = `\nimport "C"\n`\n\nvar version = 1\n',
+		]
+	) {
+		expect([source, unsettableVersion([['main.go', source]])]).toEqual([source, {
+			kind: 'var',
+			type: 'int',
+			file: 'main.go',
+		}]);
+	}
+	const shadows: [string, string, string][] = [
+		['var version int', 'types_windows.go', 'type int = string'],
+		['var version = true', 'types_windows.go', 'const true = "dev"'],
+		['var version = true', 'shadow.go', 'const\ntrue = "dev"'],
+		['var version int', 'shadow.go', 'type\nint = string'],
+		['var version = true', 'shadow.go', 'var\ntrue = "dev"'],
+		['var version = false', 'shadow.go', 'const\n(\n\tfalse = "dev"\n)'],
+		['var version = true', 'shadow.go', 'var ñvar = 1\nvar x = ñvar\nconst true = "dev"'],
+		['var version = true', 'shadow.go', 'var xñ = 1\nvar y = xñ\nconst true = "dev"'],
+		['var version = true', 'shadow.go', 'var éif = 1\nvar z = éif\nconst true = "dev"'],
+		['var version = true', 'shadow.go', 'const ñ, true = "a", "dev"'],
+	];
+	for (const [version, file, declaration] of shadows) {
+		expect([
+			declaration,
+			unsettableVersion([['main.go', `package main\n\n${version}\n`], [file, `package main\n\n${declaration}\n`]]),
+		]).toEqual([declaration, undefined]);
+	}
+	expect(
+		[
+			'package main\n\nvar version int\n',
+			'package main\n\nvar version = true\n',
+			'package main\n\nvar version = 1\n',
+		].map(source => unsettableVersion([['main.go', source], ['bindata.go', undefined]])),
+	).toEqual([undefined, undefined, { kind: 'var', type: 'int', file: 'main.go' }]);
 	for (const file of ['version_windows.go', 'v_linux_arm64.go', 'cmd/x/version_amd64.go']) {
 		expect([file, unsettableVersion([[file, declared]])]).toEqual([file, undefined]);
 	}
@@ -212,6 +261,30 @@ test('a Go binary names the file that declares an unsettable main.version', () =
 		binaryCandidates(source, discover(source)).map(candidate => [candidate.build.name, candidate.unsettableVersion]),
 	)
 		.toEqual([['tool', { kind: 'const', file: 'cmd/tool/version.go' }], ['other', undefined]]);
+});
+
+test('a Go package with an unread or symlinked source leaves main.version = true unresolved', () => {
+	const source: Snapshot = {
+		...snapshot({ 'go.mod': 'module github.com/octo/example\n\ngo 1.26\n' }, [
+			'cmd/read/main.go',
+			'cmd/unread/main.go',
+			'cmd/unread/bindata.go',
+			'cmd/linked/main.go',
+		]),
+		links: ['cmd/linked/shared.go'],
+		goSources: {
+			'cmd/read/main.go': 'package main\n\nvar version = true\n',
+			'cmd/unread/main.go': 'package main\n\nvar version = true\n',
+			'cmd/linked/main.go': 'package main\n\nvar version = true\n',
+		},
+	};
+	expect(
+		binaryCandidates(source, discover(source)).map(candidate => [candidate.build.name, candidate.unsettableVersion]),
+	).toEqual([
+		['read', { kind: 'var', type: 'bool', file: 'cmd/read/main.go' }],
+		['unread', undefined],
+		['linked', undefined],
+	]);
 });
 
 test('Go packages that share a binary name stay candidates, and the proposal takes the first', () => {
