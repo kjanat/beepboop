@@ -2282,7 +2282,7 @@ test('each crate claims a crates.io slot, and a 429 defers both crates.io budget
 	const { repository, begun } = await released({ main: [core, cli] });
 	const { execution, identity } = started(begun, 'main');
 	world.advance(Date.parse('2026-11-09T09:58:00.000Z') - Date.now());
-	const claimedAt = Date.now(), until = Date.parse('2026-11-09T10:00:00.000Z');
+	const until = Date.parse('2026-11-09T10:00:00.000Z');
 	const from = world.budgets.calls.length;
 	const { result } = await publishing(identity, execution.id, {
 		commands: [],
@@ -2293,11 +2293,12 @@ test('each crate claims a crates.io slot, and a 429 defers both crates.io budget
 		['PublishBudget:crates-io', 'reserve'],
 		['PublishBudget:crates-io', 'defer'],
 		['PublishBudget:crates-io', 'reserve'],
+		['PublishBudget:crates-io', 'reserve'],
 	]);
 	expect(await arrivals()).toEqual([until + 4 * 600_000, until + 30 * 60_000]);
 	const ledger = await ledgerOf(repository, execution.id);
 	expect(ledger.records.map(record => [record.reservation, record.notBefore])).toEqual([
-		['update', claimedAt],
+		['update', until],
 		['update', until],
 	]);
 }, 60_000);
@@ -2338,11 +2339,79 @@ test('a paced crate operation in a release set reserves its crates.io slot once'
 	expect(await coordinator.reservePublication('preparation', 'workflow', execution.id)).toBe(11 * 60_000);
 	world.advance(60_000);
 	expect(await coordinator.reservePublication('preparation', 'workflow', execution.id)).toBe(10 * 60_000);
-	expect(budgetCalls(from)).toEqual([['PublishBudget:crates-io', 'reserve']]);
+	expect(budgetCalls(from)).toEqual([['PublishBudget:crates-io', 'reserve'], ['PublishBudget:crates-io', 'reserve']]);
 	expect(await arrivals()).toEqual([undefined, now + 41 * 60_000]);
 	const reserved = await executionOf(repository, execution.id);
 	expect([reserved.reservation, reserved.notBefore]).toEqual(['update', now + 11 * 60_000]);
 }, 60_000);
+
+test('a Retry-After deferral from another repository holds a crate that already reserved its slot', async () => {
+	const { begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const claim = {
+		executionId: execution.id,
+		purl: 'pkg:cargo/lint-core@1.1.0',
+		digest: checksum('lint-core', '1.1.0'),
+	};
+	const now = Date.now(), until = now + 3 * 3_600_000;
+	await world.budgets.instance('crates-io').storage.put('arrival:update', now + 40 * 60_000);
+	const [reserved, deferred] = await withIdentity(world, identity, async () => {
+		const first = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim));
+		await world.budgets.getByName('crates-io').defer(until);
+		world.advance(11 * 60_000);
+		return [first, await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim))] as const;
+	});
+	expect(reserved).toMatchObject({ kind: 'wait', until: now + 11 * 60_000 });
+	expect(deferred).toMatchObject({ kind: 'wait', until });
+}, 60_000);
+
+test('a crate whose reservation was not stored locally takes back its remote slot', async () => {
+	const { repository, begun } = await released({ main: [core] });
+	const { execution, identity } = started(begun, 'main');
+	const claim = {
+		executionId: execution.id,
+		purl: 'pkg:cargo/lint-core@1.1.0',
+		digest: checksum('lint-core', '1.1.0'),
+	};
+	const now = Date.now();
+	await world.budgets.instance('crates-io').storage.put('arrival:update', now + 40 * 60_000);
+	await withIdentity(world, identity, async () => {
+		const first = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim));
+		expect(first).toMatchObject({ kind: 'wait', until: now + 11 * 60_000 });
+		const ledger = await ledgerOf(repository, execution.id);
+		const [record, ...rest] = ledger.records;
+		if (!record) throw new Error('Missing record');
+		const { reservation: _reservation, notBefore: _notBefore, ...unreserved } = record;
+		await world.coordinators.instance(String(repository.id)).storage.put(`ledger:${execution.id}`, {
+			...ledger,
+			records: [unreserved, ...rest],
+		});
+		const again = await Effect.runPromise(workflowCall(world, '/api/workflow/publish/claim', claim));
+		expect(again).toMatchObject({ kind: 'wait', until: now + 11 * 60_000 });
+	});
+	expect(await arrivals()).toEqual([undefined, now + 41 * 60_000]);
+}, 60_000);
+
+test('a budget reservation is kept under its id for a day and then dropped', async () => {
+	const budget = world.budgets.getByName('crates-io');
+	const storage = world.budgets.instance('crates-io').storage;
+	const first = await budget.reserve('update', 'run:a');
+	expect(await budget.reserve('update', 'run:a')).toBe(first);
+	expect(await budget.reserve('new', 'run:a')).toBe(first);
+	await budget.reserve('update', 'run:b');
+	const now = Date.now();
+	expect(await arrivals()).toEqual([now + 600_000, now + 120_000]);
+	expect([...storage.snapshot().keys()].filter(key => key.startsWith('reservation:'))).toEqual([
+		'reservation:new:run:a',
+		'reservation:update:run:a',
+		'reservation:update:run:b',
+	]);
+	world.advance(25 * 3_600_000);
+	await budget.reserve('update', 'run:c');
+	expect([...storage.snapshot().keys()].filter(key => key.startsWith('reservation:'))).toEqual([
+		'reservation:update:run:c',
+	]);
+});
 
 for (const [manager, deferrals] of [['cargo', 2], ['npm', 1]] as const) {
 	test(
