@@ -17,16 +17,10 @@ import { PublishPacing, paced } from '@/publication/publish-pace.ts';
 import type { ReleaseSetRecord, ReleaseWake } from '@/release/adapters/do/keys.ts';
 import { Keys, wakeDue } from '@/release/adapters/do/keys.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
+import type { ReleaseOperation } from '@/release/domain/release-set.ts';
 import { compileReleaseSet } from '@/release/domain/release-set.ts';
 import { reconcileInterval } from '@/release/services/coordinator/alarm-planner.ts';
 import { Executions } from '@/release/services/coordinator/executions.ts';
-
-export interface ReleaseOperation {
-	id: string;
-	operation: string;
-	paced: boolean;
-	dependencies: string[];
-}
 
 const interruption = 'Release coordination interrupted. Check coordination to resume.';
 

@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { discover } from '@/discovery/discover.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { packageId, selectorKey, soleMatch } from '@/domain/package-identity.ts';
@@ -8,9 +8,24 @@ import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { invalid } from '@/kernel/schema/result.ts';
+import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import { deriveExecution } from '@/release/domain/execution/execution.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { executionId } from '@/release/domain/identity-keys.ts';
+
+export interface ReleaseOperation {
+	id: string;
+	operation: string;
+	paced: boolean;
+	dependencies: string[];
+}
+
+export const releaseOperationsSchema: Schema.Codec<ReleaseOperation[], unknown> = mutableArray(mutableStruct({
+	id: Schema.String,
+	operation: Schema.String,
+	paced: Schema.Boolean,
+	dependencies: mutableArray(Schema.String),
+}));
 
 function expandPackages(
 	member: Execution,
