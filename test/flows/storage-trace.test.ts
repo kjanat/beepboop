@@ -1,11 +1,12 @@
-import { expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemoryStorage } from '@root/test/support/do-storage.ts';
 import { withEnvironment } from '@root/test/support/process.ts';
-import { finishTrace, startTrace, testFile } from '@root/test/support/storage-trace.ts';
-import { World } from '@root/test/support/world.ts';
+import { startTrace, testFile } from '@root/test/support/storage-trace.ts';
+import { eachWorld, World } from '@root/test/support/world.ts';
+import { cliToken } from '@/kernel/schema/ids.ts';
 
 const root = new URL('../../', import.meta.url).pathname;
 const traceFile = 'test-flows-storage-trace.test.ts.trace';
@@ -13,9 +14,9 @@ type Writes = (storage: MemoryStorage) => Promise<void>;
 
 async function traced(directory: string, writes: Writes): Promise<void> {
 	await withEnvironment({ BEEPBOOP_STORAGE_TRACE: directory }, async () => {
-		startTrace(testFile());
-		await writes(new MemoryStorage('AutomationCoordinator:1'));
-		finishTrace();
+		const trace = startTrace(testFile());
+		await writes(new MemoryStorage('AutomationCoordinator:1', trace));
+		trace?.finish();
 	});
 }
 
@@ -116,7 +117,7 @@ test('storage traces match across random tokens and report changed documents and
 			await storage.put('quarantine:x', quarantine);
 		};
 		const directory = (name: string) => join(temp, name);
-		const a = 'a'.repeat(40), b = 'b'.repeat(40);
+		const a = cliToken(), b = cliToken();
 		await traced(directory('before'), run(a, 'beepboop-cli-report-Ab12Cd', { error: 'e', at: 1 }));
 		await traced(directory('same'), run(b, 'beepboop-cli-report-Zz98Yy', { error: 'e', at: 1 }));
 		await traced(directory('reordered'), run(a, 'beepboop-cli-report-Ab12Cd', { at: 1, error: 'e' }));
@@ -240,4 +241,162 @@ test('a key that differs between baseline runs fails when the new run writes nei
 				summary(0, 1, 1),
 			].join('\n'),
 		});
+	}));
+
+test('a storage trace tells apart values that structured clone keeps distinct', () =>
+	inTemp(async temp => {
+		const shared = { n: 1 };
+		await traced(temp, async storage => {
+			await storage.put('pattern', [/first/i, /second/g]);
+			await storage.put('buffers', [new SharedArrayBuffer(1), new SharedArrayBuffer(2)]);
+			await storage.put('aliased', [shared, shared]);
+			await storage.put('copied', [{ n: 1 }, { n: 1 }]);
+			await storage.put('wrapped', [Object(true), new Error('boom')]);
+		});
+
+		expect(readFileSync(join(temp, traceFile), 'utf8')).toBe([
+			'## world 1',
+			'AutomationCoordinator:1 put "pattern" [RegExp("first","i"),RegExp("second","g")]',
+			'AutomationCoordinator:1 put "buffers" [SharedArrayBuffer(0),SharedArrayBuffer(0,0)]',
+			'AutomationCoordinator:1 put "aliased" [{"n":1},<shared 2>]',
+			'AutomationCoordinator:1 put "copied" [{"n":1},{"n":1}]',
+			'AutomationCoordinator:1 put "wrapped" [Object(true),Error("boom")]',
+			'',
+		].join('\n'));
+	}));
+
+test('a storage trace refuses values it cannot encode', () =>
+	inTemp(async temp => {
+		await withEnvironment({ BEEPBOOP_STORAGE_TRACE: temp }, async () => {
+			const trace = startTrace(testFile());
+			const storage = new MemoryStorage('AutomationCoordinator:1', trace);
+			await expect(storage.put('blob', new Blob(['x']))).rejects.toThrow('storage trace cannot encode [object Blob]');
+			expect(() => trace?.write('AutomationCoordinator:1', 'put', 'fn', () => 1)).toThrow(
+				'storage trace cannot encode a function',
+			);
+		});
+	}));
+
+test('a trace handle keeps its writes when another trace starts or finishes', () =>
+	inTemp(async temp => {
+		await withEnvironment({ BEEPBOOP_STORAGE_TRACE: temp }, async () => {
+			const first = startTrace(testFile());
+			const second = startTrace(testFile());
+			const outer = new MemoryStorage('Outer:1', first);
+			const inner = new MemoryStorage('Inner:1', second);
+			await outer.put('one', 1);
+			await inner.put('two', 2);
+			second?.finish();
+			await outer.put('three', 3);
+			first?.finish();
+			await outer.put('late', 4);
+		});
+
+		expect(readFileSync(join(temp, traceFile), 'utf8')).toBe([
+			'## world 2',
+			'Inner:1 put "two" 2',
+			'## world 1',
+			'Outer:1 put "one" 1',
+			'Outer:1 put "three" 3',
+			'',
+		].join('\n'));
+	}));
+
+describe('a World started by eachWorld', () => {
+	const directory = mkdtempSync(join(tmpdir(), 'beepboop-trace-'));
+	const previous = process.env.BEEPBOOP_STORAGE_TRACE;
+	let current: World | undefined;
+	beforeAll(() => {
+		process.env.BEEPBOOP_STORAGE_TRACE = directory;
+	});
+	afterAll(() => {
+		if (previous === undefined) delete process.env.BEEPBOOP_STORAGE_TRACE;
+		else process.env.BEEPBOOP_STORAGE_TRACE = previous;
+		rmSync(directory, { recursive: true, force: true });
+	});
+	eachWorld(world => {
+		current = world;
+	});
+
+	test('writes the first world', () => current?.coordinators.instance('7').storage.put('k', 1));
+	test('writes the second world', () => current?.coordinators.instance('7').storage.put('k', 2));
+	test('leaves one trace world per test', () => {
+		expect(readFileSync(join(directory, traceFile), 'utf8')).toBe([
+			'## world 1',
+			'AutomationCoordinator:7 put "k" 1',
+			'## world 2',
+			'AutomationCoordinator:7 put "k" 2',
+			'',
+		].join('\n'));
+	});
+});
+
+test('a fixed commit SHA that changes between runs is a difference', () =>
+	inTemp(async temp => {
+		const directory = (name: string) => join(temp, name);
+		const digest = 'c'.repeat(64);
+		const run = (sha: string, content: string): Writes => async storage => {
+			await storage.put('release:x', { sha, digest: content });
+		};
+		await traced(directory('before'), run('a'.repeat(40), digest));
+		await traced(directory('sha'), run('b'.repeat(40), digest));
+		await traced(directory('digest'), run('a'.repeat(40), 'd'.repeat(64)));
+
+		expect(await compared(directory('before'), directory('sha'))).toEqual({
+			code: 1,
+			output: [
+				`${traceFile} world 1:`,
+				`- AutomationCoordinator:1 put "release:x" {"sha":"${'a'.repeat(40)}","digest":"${digest}"}`,
+				`+ AutomationCoordinator:1 put "release:x" {"sha":"${'b'.repeat(40)}","digest":"${digest}"}`,
+				summary(0, 1, 1),
+			].join('\n'),
+		});
+		expect((await compared(directory('before'), directory('digest'))).code).toBe(1);
+	}));
+
+test('a trace directory that is not a complete trace is refused', () =>
+	inTemp(async temp => {
+		const directory = (name: string, text: string) => {
+			mkdirSync(join(temp, name));
+			writeFileSync(join(temp, name, 'x.trace'), text);
+			return join(temp, name);
+		};
+		const valid = directory('valid', '## world 1\nAutomationCoordinator:1 put "k" 1\n');
+		const empty = directory('empty', '## world 1\n');
+		const incomplete = 'x.trace is not a complete storage trace';
+		const invalid = (line: number, text: string) => `x.trace:${line} is not a storage trace line: ${text}`;
+		const cases: [string, string][] = [
+			['garbage\n', incomplete],
+			['', incomplete],
+			['## world 1\nAutomationCoordinator:1 put "k" 1', incomplete],
+			['## world 1\nAutomationCoordinator:1 put "k"\n', invalid(2, 'AutomationCoordinator:1 put "k"')],
+			['## world 1\nAutomationCoordinator:1 jump "k"\n', invalid(2, 'AutomationCoordinator:1 jump "k"')],
+			['## world one\n', invalid(1, '## world one')],
+		];
+
+		for (const [index, [text, message]] of cases.entries()) {
+			const broken = directory(`broken-${index}`, text);
+			expect(await compared(valid, broken)).toEqual({ code: 1, output: `${message}\n` });
+			expect(await compared(broken, valid)).toEqual({ code: 1, output: `${message}\n` });
+		}
+		expect(await compared(empty, empty)).toEqual({ code: 0, output: summary(0, 0, 0) });
+	}));
+
+test('traces too long to align are listed in full', () =>
+	inTemp(async temp => {
+		const directory = (name: string) => join(temp, name);
+		const run = (tag: string): Writes => async storage => {
+			for (let index = 0; index < 2100; index++) await storage.put(`k${index}`, `${tag}${index}`);
+		};
+		await traced(directory('before'), run('a'));
+		await traced(directory('after'), run('b'));
+
+		const { code, output } = await compared(directory('before'), directory('after'));
+		expect(code).toBe(1);
+		expect(output.split('\n').slice(0, 3)).toEqual([
+			`${traceFile} world 1:`,
+			'~ 2100 before lines and 2100 after lines are too many to align',
+			'- AutomationCoordinator:1 put "k0" "a0"',
+		]);
+		expect(output).toContain('+ AutomationCoordinator:1 put "k2099" "b2099"');
 	}));

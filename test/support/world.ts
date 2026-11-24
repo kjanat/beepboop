@@ -7,7 +7,8 @@ import { appId, FakeGitHub, ownerId } from '@root/test/support/github.ts';
 import { Network } from '@root/test/support/network.ts';
 import { FakeNpm } from '@root/test/support/registries.ts';
 import { FakeNamespace } from '@root/test/support/rpc.ts';
-import { finishTrace, startTrace, testFile } from '@root/test/support/storage-trace.ts';
+import type { StorageTrace } from '@root/test/support/storage-trace.ts';
+import { startTrace, testFile } from '@root/test/support/storage-trace.ts';
 import { FakeWorkflow } from '@root/test/support/workflows.ts';
 import { Effect, Layer, Schedule } from 'effect';
 import type { JWK } from 'jose';
@@ -71,11 +72,13 @@ export class World {
 		private readonly actions: SigningKey,
 		private readonly openauth: SigningKey,
 		appKey: string,
+		private readonly trace: StorageTrace | undefined,
 	) {
-		this.budgets = new FakeNamespace('PublishBudget', state => new PublishBudget(state, this.env));
+		this.budgets = new FakeNamespace('PublishBudget', state => new PublishBudget(state, this.env), trace);
 		this.coordinators = new FakeNamespace(
 			'AutomationCoordinator',
 			state => new AutomationCoordinator(state, this.env, this.application),
+			trace,
 		);
 		this.env = {
 			DB: this.db,
@@ -115,18 +118,17 @@ export class World {
 		this.network.serve(new URL(origin).host, request => this.handle(request));
 	}
 
-	static async create(): Promise<World> {
+	static async create(file = testFile()): Promise<World> {
 		setSystemTime(new Date(epoch));
 		const [actions, openauth, appKey] = await keys;
-		const world = new World(actions, openauth, appKey);
-		startTrace(testFile());
+		const world = new World(actions, openauth, appKey, startTrace(file));
 		for (const key of Object.keys(runtimeEnv)) delete runtimeEnv[key];
 		Object.assign(runtimeEnv, world.env);
 		spyOn(globalThis, 'fetch').mockImplementation(Object.assign(world.network.fetch, { preconnect: fetch.preconnect }));
 		return world;
 	}
 	async dispose(): Promise<void> {
-		finishTrace();
+		this.trace?.finish();
 		mock.restore();
 		setSystemTime();
 		await Promise.all(
@@ -282,8 +284,7 @@ export function eachWorld(bind: (world: World) => void): void {
 	let current: World | undefined;
 	const file = testFile();
 	beforeEach(async () => {
-		current = await World.create();
-		startTrace(file);
+		current = await World.create(file);
 		bind(current);
 	});
 	afterEach(async () => {
