@@ -14,6 +14,7 @@ import { eachWorld } from '@root/test/support/world.ts';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { parse, parseDocument } from 'yaml';
 import { discover } from '@/discovery/discover.ts';
+import { failsOn } from '@/domain/binary-platforms.ts';
 import { mergeConfiguration } from '@/domain/configuration/presets.ts';
 import { onboardingBranch, updateBranch } from '@/domain/setup-branches.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';
@@ -35,6 +36,7 @@ import { releaseAfterMerge, setupBody } from '@/setup/body.ts';
 import { behaviourChanges, changeDetails, describeEdits, setupTitle } from '@/setup/changes.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
 import { ledgerCommand, suggestedCommands } from '@/setup/editing/commands.ts';
+import { offeredBinaries } from '@/setup/editing/rules.ts';
 import { bodyChoices, setupOptions } from '@/setup/options.ts';
 import { parseSetupPlan } from '@/setup/plan.ts';
 import { rebuildingStatus } from '@/setup/server/maintenance.ts';
@@ -650,6 +652,59 @@ test('a Go binary whose main.version is a non-string variable blocks setup, and 
 	expect(constant.notes).toContain(
 		'main: `client/cmd/signer/version.go` declares `main.version` as a constant. `-X main.version` leaves the version of signer unstamped. Declare it as a `string` variable to stamp it.',
 	);
+});
+
+test('a configured binary takes its problems only from the candidate that builds the same package', async () => {
+	const repository = binaryRepository();
+	world.github.push(repository, {
+		'client/cmd/signer/main.go': 'package main\n\nvar version = 1\n\nfunc main() {}\n',
+		'client/cmd/good/main.go': 'package main\n\nvar version string\n\nfunc main() {}\n',
+		'a/Cargo.toml':
+			'[package]\nname = "a"\nversion = "1.0.0"\nedition = "2024"\n\n[[bin]]\nname = "tool"\npath = "src/main.rs"\n\n[dependencies]\nnix = "0.30"\n',
+		'a/src/main.rs': 'fn main() {}\n',
+		'Cargo.toml': '[workspace]\nmembers = ["a"]\n',
+	}, 'Add binaries that share names');
+	const api = bearer(world, await world.cliSession());
+	const choices = binaryChoices({
+		binaries: {
+			builds: [
+				{
+					toolchain: 'go',
+					name: 'signer',
+					module: 'client',
+					package: './cmd/good',
+					asset: '{name}-{go.os}-{go.arch}{ext}',
+				},
+				{ toolchain: 'cargo', name: 'tool', manifest: 'tool/Cargo.toml', asset: '{name}-{rust.target}{ext}' },
+			],
+			targets: ['linux-amd64', 'windows-amd64'],
+		},
+	});
+	const plan = await Effect.runPromise(
+		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
+	);
+	expect(
+		plan.binaryCandidates?.map(candidate => [candidate.build, candidate.unsettableVersion?.kind, candidate.reason]),
+	)
+		.toEqual(expect.arrayContaining([
+			[expect.objectContaining({ name: 'signer', package: './cmd/signer' }), 'var', undefined],
+			[expect.objectContaining({ name: 'tool', manifest: 'a/Cargo.toml' }), undefined, expect.any(String)],
+		]));
+	expect([plan.blockers, plan.notes.filter(note => /signer|tool/.test(note))]).toEqual([[], []]);
+	const [stream] = plan.choices.streams;
+	if (!stream) throw new Error('Missing stream');
+	const tool = stream.promote?.binaries?.builds.find(build => build.name === 'tool');
+	if (!tool) throw new Error('Missing tool build');
+	const withCrate = { ...plan, choices: { streams: [{ ...stream, packages: ['pkg:cargo/a'] }] } };
+	expect([
+		failsOn(plan.binaryCandidates, tool, 'windows-amd64'),
+		setupBody(plan, { branch: 'automation/onboarding', defaultBranch: 'main' }).includes('tool expected to fail'),
+		setupOptions(withCrate).flatMap(option =>
+			option.kind === 'binary' && option.build.name === 'tool' ? option.targets : []
+		)
+			.includes('windows-amd64'),
+		offeredBinaries(withCrate, ['pkg:cargo/a'], stream.promote).find(entry => entry.build.name === 'tool')?.candidate,
+	]).toEqual([false, false, true, undefined]);
 });
 
 test('binary builds join an existing publication workflow and stay stable on a rerun', async () => {

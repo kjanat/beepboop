@@ -7,7 +7,7 @@ import type { ReleaseGraph } from '@/discovery/release-graph/graph.ts';
 import { inferReleaseGraph } from '@/discovery/release-graph/graph.ts';
 import { validateAgainst } from '@/discovery/validation/validate.ts';
 import type { WorkflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
-import { leftOut, unbuildable } from '@/domain/binary-platforms.ts';
+import { candidateOf, leftOut, unbuildable } from '@/domain/binary-platforms.ts';
 import { isLockfile } from '@/domain/catalog.ts';
 import { canonicalConfiguration } from '@/domain/configuration/canonical.ts';
 import { withoutDefaults } from '@/domain/configuration/minimal.ts';
@@ -186,7 +186,7 @@ function draftSetup(
 		for (const stream of choices.streams) {
 			const release = stream.promote?.binaries;
 			for (const build of release?.builds ?? []) {
-				const candidate = candidates.find(entry => entry.build.name === build.name);
+				const candidate = candidateOf(candidates, build);
 				if (!candidate || !release) continue;
 				const version = candidate.unsettableVersion;
 				if (version?.kind === 'const') {

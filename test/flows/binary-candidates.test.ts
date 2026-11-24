@@ -93,7 +93,11 @@ test('a package-level main.version that -X cannot set is reported with its type,
 		['var version = string(build)', undefined],
 		['var version = commit()', undefined],
 		['var version = &cli.Command{\n\tName: "version",\n}', { kind: 'var', type: '*cli.Command' }],
-		['var version cli.Command', { kind: 'var', type: 'cli.Command' }],
+		['var version cli.Command', undefined],
+		['var version Unknown', undefined],
+		['var version int', { kind: 'var', type: 'int' }],
+		['var version *string', { kind: 'var', type: '*string' }],
+		['var version any', { kind: 'var', type: 'any' }],
 		['var version = []string{"a"}', { kind: 'var', type: '[]string' }],
 		['var version = 3', { kind: 'var', type: 'int' }],
 		['var version = 1.5', { kind: 'var', type: 'float64' }],
@@ -120,6 +124,11 @@ test('a package-level main.version that -X cannot set is reported with its type,
 		['type V = string\nvar version V', undefined],
 		['type (\n\tV = string\n)\nvar version V', undefined],
 		['type V string\nvar version V', { kind: 'var', type: 'V' }],
+		['type A = string\ntype B = A\nvar version B', undefined],
+		['type A = (string)\nvar version A', undefined],
+		['type A = (int)\nvar version A', { kind: 'var', type: 'A' }],
+		['type A = int\ntype B = A\nvar version B', { kind: 'var', type: 'B' }],
+		['type A = B\ntype B = A\nvar version A', undefined],
 	];
 	for (const [source, expected] of cases) {
 		expect([source, unsettableVersion([['main.go', `package main\n\n${source}\n`]])]).toEqual([
@@ -133,6 +142,19 @@ test('Go files outside the main package build do not decide main.version, and al
 	const declared = 'package main\n\nvar version = 1\n';
 	expect(unsettableVersion([['gen.go', `//go:build ignore\n\n${declared}`]])).toBeUndefined();
 	expect(unsettableVersion([['gen.go', `// +build ignore\n\n${declared}`]])).toBeUndefined();
+	expect(
+		unsettableVersion([
+			['a_tools.go', `//go:build tools\n\n${declared}`],
+			['main.go', 'package main\n\nvar version string\n'],
+		]),
+	).toBeUndefined();
+	expect(unsettableVersion([['version_linux.go', `// +build linux\n\n${declared}`]])).toBeUndefined();
+	expect(
+		unsettableVersion([
+			['main.go', 'package main\n\nvar version V\n'],
+			['types_windows.go', '//go:build windows\n\npackage main\n\ntype V struct{}\n'],
+		]),
+	).toBeUndefined();
 	expect(unsettableVersion([['doc.go', 'package other\n\nvar version = 1\n']])).toBeUndefined();
 	expect(unsettableVersion([['main.go', declared]])).toEqual({ kind: 'var', type: 'int', file: 'main.go' });
 	expect(

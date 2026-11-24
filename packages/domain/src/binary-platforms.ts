@@ -129,6 +129,24 @@ export interface BinaryCandidate {
 	reason?: string;
 	unsettableVersion?: UnsettableVersion;
 }
+export function candidateOf(
+	candidates: readonly BinaryCandidate[] | undefined,
+	build: BinaryBuild,
+): BinaryCandidate | undefined {
+	return candidates?.find(({ build: found }) =>
+		found.toolchain === 'go'
+			? build.toolchain === 'go' && found.module === build.module && found.package === build.package
+			: build.toolchain === 'cargo' && found.manifest === build.manifest && found.name === build.name
+	);
+}
+export function failsOn(
+	candidates: readonly BinaryCandidate[] | undefined,
+	build: BinaryBuild,
+	target: BinaryTarget,
+): boolean {
+	const candidate = candidateOf(candidates, build);
+	return candidate !== undefined && !candidate.targets.includes(target);
+}
 export function leftOut(candidate: BinaryCandidate): string | undefined {
 	return candidate.reason && `${candidate.build.name} leaves out Windows: ${candidate.reason}.`;
 }

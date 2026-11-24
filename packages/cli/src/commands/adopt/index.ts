@@ -14,6 +14,7 @@ import type { Look } from '@/cli/render/look';
 import { lookOf, registryOf, step, table } from '@/cli/render/look';
 import { emit, failure, prompted, unprompted } from '@/cli/render/output';
 import { routes } from '@/contract/routes';
+import { failsOn } from '@/domain/binary-platforms.ts';
 import { repositoryReference } from '@/domain/repository-name.ts';
 import { safeDecode, schemaIssues } from '@/kernel/schema/structs.ts';
 import { listed } from '@/kernel/text/listing.ts';
@@ -272,15 +273,13 @@ function packageRows(plan: SetupPlan, ids: readonly string[], required: readonly
 }
 function targetRows(plan: SetupPlan, stream: SetupPlan['choices']['streams'][number], look: Look) {
 	const release = stream.promote?.binaries;
-	return (release?.builds ?? []).flatMap(build => {
-		const candidate = plan.binaryCandidates?.find(entry => entry.build.name === build.name);
-		return release?.targets.map(target => {
-			const failing = candidate !== undefined && !candidate.targets.includes(target);
-			return {
-				binary: look.pkg(build.name),
-				target,
-				build: failing ? look.state('failed', 'expected to fail') : look.state('published', 'builds'),
-			};
-		}) ?? [];
-	});
+	return (release?.builds ?? []).flatMap(build =>
+		release?.targets.map(target => ({
+			binary: look.pkg(build.name),
+			target,
+			build: failsOn(plan.binaryCandidates, build, target)
+				? look.state('failed', 'expected to fail')
+				: look.state('published', 'builds'),
+		})) ?? []
+	);
 }
