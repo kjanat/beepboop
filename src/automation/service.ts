@@ -1,4 +1,3 @@
-import { CronExpressionParser } from 'cron-parser';
 import { Clock, Context, Effect, Layer, Result, Schema } from 'effect';
 import type { CLISessionStore } from '@/auth/adapters/d1/cli-sessions.ts';
 import type { SessionStore } from '@/auth/adapters/d1/sessions.ts';
@@ -8,7 +7,6 @@ import { CoordinatorClient } from '@/automation/coordinator-client.ts';
 import type { Credentials } from '@/automation/gateway.ts';
 import { RepositoryGateway } from '@/automation/gateway.ts';
 import { preparationMerge } from '@/automation/preparation-pull-requests';
-import { deliverReleaseEvents, ReleaseEventSink } from '@/automation/release-event-outbox.ts';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { Store } from '@/automation/store';
 import { unchangedSince } from '@/automation/unchanged-paths';
@@ -45,7 +43,7 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
-import { logFailure, logRecovered } from '@/kernel/logging/failure-log.ts';
+import { logFailure } from '@/kernel/logging/failure-log.ts';
 import type { Parsed } from '@/kernel/schema/result.ts';
 import { countSchema, decode, integer, looseSchema, record } from '@/kernel/schema/result.ts';
 import {
@@ -59,8 +57,7 @@ import {
 import { ReleaseEvents } from '@/notifications/adapters/d1/events.ts';
 import { Notifications } from '@/notifications/delivery.ts';
 import type { EventDelivery } from '@/notifications/event-delivery.ts';
-import { deliverEvent, deliverPending } from '@/notifications/event-delivery.ts';
-import { pollPackages } from '@/notifications/package-watch.ts';
+import { deliverEvent } from '@/notifications/event-delivery.ts';
 import { AuditStore } from '@/persistence/d1/audit';
 import { ChangeLog } from '@/persistence/d1/changes';
 import { Database, databaseLayer, sql } from '@/persistence/d1/database';
@@ -84,6 +81,7 @@ import {
 	unreleasedManifestVersion,
 } from '@/release/domain/version.ts';
 import type { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
+import { sweep } from '@/server/scheduled/sweep.ts';
 import { releaseAfterMerge } from '@/setup/body.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
 import { inferredConfiguration } from '@/setup/draft.ts';
@@ -102,7 +100,6 @@ const webhookRepository = mutableStruct({
 	owner: mutableStruct({ id: looseSchema }),
 });
 
-const changeRetention = 7 * 24 * 60 * 60 * 1000;
 export interface AutomationBindings extends AuthBindings, Credentials, WinGetBindings {
 	AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
 	OWNER_ID: string;
@@ -963,7 +960,7 @@ export class AutomationService {
 	releaseEvents() {
 		return new ReleaseEvents(sql(this.store.db));
 	}
-	private eventDelivery(): EventDelivery {
+	eventDelivery(): EventDelivery {
 		return {
 			events: this.releaseEvents(),
 			repositories: this.store.repositories.readable(),
@@ -981,82 +978,9 @@ export class AutomationService {
 			Effect.annotateLogs({ eventId: event.id }),
 		);
 	}
-	private deliverEvents: Effect.Effect<void, DomainError> = Effect.suspend(() => deliverPending(this.eventDelivery()));
-	private scheduleStreams(ready: ReadyRepository, now: number): Effect.Effect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			for (const [streamName, stream] of Object.entries(ready.configuration.streams)) {
-				for (const [operation, binding] of Object.entries(stream.workflows)) {
-					if (!binding.schedule) continue;
-					const expression = binding.schedule;
-					const key = `${ready.id}:${streamName}:${operation}:${expression}`;
-					const cursor = yield* this.schedules.cursor(key);
-					if (cursor === undefined) {
-						yield* this.schedules.start(key, now);
-						continue;
-					}
-					const schedule = yield* fromSync(() =>
-						CronExpressionParser.parse(expression, { currentDate: cursor, tz: 'UTC' })
-					);
-					for (let n = 0; n < 100; n++) {
-						const tick = schedule.next().getTime();
-						if (tick > now) break;
-						const execution = yield* (
-							createExecution(ready, {
-								stream: streamName,
-								operation,
-								eventId: `schedule:${tick}`,
-								sourceSha: ready.sha,
-							})
-						);
-						yield* this.enqueue(ready, execution);
-						yield* this.schedules.advance(key, tick);
-					}
-				}
-			}
-		});
+	get scheduled(): Effect.Effect<void, DomainError> {
+		return sweep(this);
 	}
-	private scheduledRepository(repository: { name: string; id: number }): Effect.Effect<void, DomainError> {
-		return Effect.gen({ self: this }, function*() {
-			const clock = yield* Clock.Clock;
-
-			const refreshed = yield* this.catalog.refresh(repository.name, repository.id);
-			yield* this.winget().automatic(refreshed).pipe(
-				this.store.auditFailure('winget', 'winget.failed', repository.name),
-			);
-			yield* this.coordinators.wake(repository.id);
-			yield* deliverReleaseEvents(repository.id).pipe(
-				Effect.provideService(CoordinatorClient, this.coordinators),
-				Effect.provideService(ReleaseEventSink, ReleaseEventSink.of({ deliver: event => this.event(event) })),
-			);
-			const state = readiness(refreshed);
-			if (state.kind !== 'ready') return;
-			yield* this.scheduleStreams(state.repository, clock.currentTimeMillisUnsafe());
-		});
-	}
-	scheduled: Effect.Effect<void, DomainError> = Effect.gen({ self: this }, function*() {
-		const clock = yield* Clock.Clock;
-
-		yield* this.sessions.sweep();
-		yield* this.changes.prune(clock.currentTimeMillisUnsafe() - changeRetention);
-		yield* this.deliverEvents;
-		yield* this.winget().reconcile();
-		for (const repository of yield* this.store.repositories.enrollments()) {
-			// Next scheduled pass retries; preserve the last known configuration.
-			yield* this.scheduledRepository(repository).pipe(
-				logRecovered('repository.scheduled.failed', { repositoryId: repository.id, repository: repository.name }),
-			);
-		}
-		const notifications = this.notifications();
-		const readable = yield* this.store.repositories.readable();
-		yield* pollPackages(
-			this.store.db,
-			readable,
-			this.dependencies.transport,
-			event => this.event(event),
-			notifications,
-		);
-		yield* notifications.deliver();
-	});
 }
 
 export interface AutomationDependencies {
