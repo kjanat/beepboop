@@ -1,7 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Clock, Context, Effect, Layer, ManagedRuntime, Option, Predicate, Result, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
-import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
 import { requireImmutableReleases, verifyImmutableRelease } from '@/automation/immutable-release';
 import { preparedSnapshot, restatePreparation } from '@/automation/preparation-pull-requests';
 import { PreparationWriter } from '@/automation/preparation-writer.ts';
@@ -163,6 +162,7 @@ import {
 	TrackQueue,
 	trackLater,
 } from '@/release/services/coordinator/retry-queue.ts';
+import { RunBinder } from '@/release/services/coordinator/run-binder.ts';
 import { decodeSetupEditV1 } from '@/setup/edit.ts';
 import { maintainSetup } from '@/setup/server/maintenance.ts';
 import type { SetupEdit } from '@/setup/types.ts';
@@ -1129,10 +1129,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	): Promise<RefPlan> {
 		return this.serial(
 			Effect.gen({ self: this }, function*() {
-				const execution = yield* getExecution(id);
-				const workflow = execution.workflow;
-				if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
-				yield* WorkflowRunGuard.require(execution, identity, {
+				const { execution, workflow } = yield* (yield* RunBinder).bind(id, identity, {
 					_tag: 'SameRunAndName',
 					mismatch: 'Ref operation identity mismatch',
 				});
@@ -1371,9 +1368,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 	}
 	private releasePublication(id: string, identity: RunIdentity): CoordinatorEffect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const execution = yield* getExecution(id);
-			if (!execution.workflow || execution.managed) return yield* precondition('Operation is not a workflow');
-			yield* WorkflowRunGuard.require(execution, identity, {
+			const { execution, workflow } = yield* (yield* RunBinder).bind(id, identity, {
 				_tag: 'SameRunAndName',
 				mismatch: 'Release operation identity mismatch',
 			});
@@ -1384,7 +1379,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				return yield* precondition('Release operation requires completed promotion');
 			}
 			if (
-				execution.workflow.refs?.distribution
+				workflow.refs?.distribution
 				&& (!execution.refPlan?.distribution
 					|| !execution.publications.some(publication =>
 						publication.id === `refs:${execution.operation}` && publication.outcome === 'succeeded'
@@ -1407,7 +1402,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 				gateway,
 				repository: execution.repository,
 				token: read,
-				required: execution.workflow?.refs?.immutable,
+				required: workflow.refs?.immutable,
 			});
 			const ref = yield* gateway.read(
 				Schema.NullOr(gitRefSchema),
@@ -1442,7 +1437,7 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			if (release.tag_name !== tag || release.draft !== false || release.prerelease !== prerelease) {
 				return yield* precondition('Existing GitHub release does not match the release operation');
 			}
-			yield* verifyImmutableRelease(release, execution.workflow?.refs?.immutable);
+			yield* verifyImmutableRelease(release, workflow.refs?.immutable);
 			const released = yield* this.released(execution, release, tag);
 			yield* putExecution(released);
 			return released;

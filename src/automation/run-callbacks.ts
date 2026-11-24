@@ -1,6 +1,5 @@
 import { Clock, Context, Effect, Layer } from 'effect';
-import type { RunExpectation, RunIdentity } from '@/auth/actions-oidc.ts';
-import { WorkflowRunGuard } from '@/auth/actions-oidc.ts';
+import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import { PreparationWriter } from '@/automation/preparation-writer.ts';
 import { ReleaseCommits } from '@/automation/release-commits.ts';
 import { Automation } from '@/automation/service.ts';
@@ -27,8 +26,7 @@ import type { Artifact, Execution, PreparationResult } from '@/release/domain/ex
 import { preparationBody } from '@/release/domain/managed.ts';
 import { preparationRequest } from '@/release/domain/preparation-request.ts';
 import { Executions } from '@/release/services/coordinator/executions.ts';
-
-type CallbackExpectation = RunExpectation | { readonly _tag: 'NewRun' };
+import { RunBinder } from '@/release/services/coordinator/run-binder.ts';
 
 export class RunCallbacks extends Context.Service<RunCallbacks, {
 	readonly register: (id: string, identity: RunIdentity) => Effect.Effect<Execution, DomainError>;
@@ -51,13 +49,7 @@ export class RunCallbacks extends Context.Service<RunCallbacks, {
 			const executions = yield* Executions;
 			const writer = yield* PreparationWriter;
 			const commits = yield* ReleaseCommits;
-			const bindRun = Effect.fnUntraced(function*(id: string, identity: RunIdentity, binding: CallbackExpectation) {
-				const execution = yield* executions.get(id);
-				const workflow = execution.workflow;
-				if (!workflow || execution.managed) return yield* precondition('Operation is not a workflow');
-				if (binding._tag !== 'NewRun') yield* WorkflowRunGuard.require(execution, identity, binding);
-				return { execution, workflow };
-			});
+			const { bind: bindRun } = yield* RunBinder;
 			return RunCallbacks.of({
 				register: Effect.fnUntraced(function*(id: string, identity: RunIdentity) {
 					const { execution, workflow } = yield* bindRun(id, identity, { _tag: 'NewRun' });
