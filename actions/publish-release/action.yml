@@ -1,0 +1,24 @@
+name: Publish GitHub release
+description: Publish the execution's GitHub release for its annotated version tag and report it
+inputs:
+  service:
+    description: Beepboop service origin
+    default: https://beepboop.kjanat.dev
+  execution-id:
+    description: Execution ID from dispatch or the begin action
+    required: false
+outputs:
+  result:
+    description: Recorded execution
+    value: ${{ steps.client.outputs.result }}
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      id: bun
+      uses: $/actions/deps/bun
+    - name: Publish release
+      id: client
+      shell: bash
+      env: { SERVICE_ORIGIN: "${{ inputs.service }}", EXECUTION_ID: "${{ inputs.execution-id }}" }
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" release
