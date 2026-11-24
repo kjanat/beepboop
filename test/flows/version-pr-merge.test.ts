@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { begin, runAction, runIdentity } from '@root/test/support/actions.ts';
 import type { Repository } from '@root/test/support/github.ts';
+import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
 import { prepareWorkflow } from '@root/test/support/packed-release.ts';
@@ -11,8 +12,10 @@ import { executions, only, prepareRelease } from '@root/test/support/releases.ts
 import { editableConfiguration, passChecks, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
+import { AutomationCoordinator } from '@/automation/coordinator';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
 import { versionPrMergeSentences, versionScopeNames } from '@/domain/setup-terms.ts';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 import { runCard } from '@/server/views/runs';
 import { behaviourChanges } from '@/setup/changes.ts';
 
@@ -339,3 +342,52 @@ for (const start of [false, true]) {
 		});
 	}
 }
+
+test('the prepared call answers before GitHub turns on auto-merge, and disposing the coordinator waits for auto-merge', async () => {
+	const { repository, api, executionId } = await versionPr('squash', true, { workflow: { file: 'prepare.yml' } });
+	await world.wait(20_000);
+	const run = one(repository.runs.filter(entry => entry.path === '.github/workflows/prepare.yml'), 'prepare run');
+	run.status = 'in_progress';
+	await begin(world, runIdentity(repository, run, 'prepare.yml'), executionId, 'main', 'prepare');
+	const edits = (await only(api, 'prepare')).plan?.edits ?? [];
+	const reached = Promise.withResolvers<void>();
+	const held = Promise.withResolvers<void>();
+	world.network.serve('api.github.com', async request => {
+		if (autoMergeCall(new URL(request.url).pathname, request.method === 'POST' ? await request.clone().text() : '')) {
+			reached.resolve();
+			await held.promise;
+		}
+		return world.github.handle(request);
+	});
+	const coordinator = world.coordinator(repository);
+	const ref = `refs/heads/${repository.defaultBranch}`;
+	const pending = (outcome: Promise<unknown>, settled: string, milliseconds: number) =>
+		Promise.race([outcome.then(() => settled), Bun.sleep(milliseconds).then(() => 'pending')]);
+	try {
+		const answered = coordinator.prepared(executionId, {
+			repositoryId: repository.id,
+			repository: repository.name,
+			ownerId,
+			actorId: botId,
+			runId: run.id,
+			attempt: 1,
+			sha: run.headSha,
+			workflowSha: run.headSha,
+			workflowRef: `${repository.name}/.github/workflows/prepare.yml@${ref}`,
+			ref,
+			event: 'workflow_dispatch',
+		}, edits);
+		await reached.promise;
+		expect(await pending(answered, 'answered', 2_000)).toBe('answered');
+		expect((await coordinator.execution(executionId))?.prepared?.result).toEqual(await answered);
+		const disposed = AutomationCoordinator.dispose(coordinator);
+		expect(await pending(disposed, 'disposed', 20)).toBe('pending');
+		held.resolve();
+		await disposed;
+	} finally {
+		held.resolve();
+	}
+	expect(one(repository.pulls, 'version PR').autoMerge).toBe('SQUASH');
+	const stored = await world.coordinators.instance(String(repository.id)).storage.get(`execution:${executionId}`);
+	expect(decodeExecutionV1(stored).prepared?.result?.autoMerge).toEqual({ method: 'squash', state: 'enabled' });
+});
