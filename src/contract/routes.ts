@@ -266,6 +266,7 @@ export const routes = {
 			stream: text,
 			version: Schema.Unknown,
 			packages: Schema.optional(mutableArray(text)),
+			force: Schema.optional(Schema.Boolean),
 		}),
 		response: planReview,
 	}),

@@ -92,8 +92,9 @@ For a managed stream that stores its version only in `versionFiles`, the CLI
 can start publication when the promotion workflow publishes a matching version
 tag. Independent versions and tag-based streams without a matching tag
 publisher support preparation only. A new version also stops after preparation
-if its version files have no tag publisher or its preparation is delegated
-with `prepare.strategy: "workflow"`. In those cases, `promote.publishWhen`
+when `prepare.strategy: "workflow"` delegates the bump. If no publishable
+package manifest carries the version, starting publication requires a workflow
+that publishes the version tag. In those cases, `promote.publishWhen`
 determines when publication starts.
 
 The confirmation defaults to no. `--yes` skips only the confirmation; the

@@ -1216,6 +1216,7 @@ test('release --force --json starts the release without asking', async () => {
 	const forced = await run(['release', '1.0.1', '--repository', repository.name, '--force', '--json']);
 	expect(forced.exitCode).toBe(0);
 	expect(JSON.parse(forced.stdout.join(''))).toHaveProperty('preparation.operation', 'promote');
+	expect(requests.find(call => call.path === '/api/releases/plan')?.body).toMatchObject({ force: true });
 	expect(prepareCalls().map(call => call.body)).toEqual([expect.objectContaining({ force: true })]);
 });
 

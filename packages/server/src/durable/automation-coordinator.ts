@@ -446,9 +446,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		version: string,
 		primary: string,
 		conflicts: RefState[],
+		restartId?: string,
 	): Promise<RefState[]> {
 		return this.run(
-			RefPublication.use(publication => publication.reclaimable(repositoryId, stream, version, primary, conflicts)),
+			RefPublication.use(publication =>
+				publication.reclaimable(repositoryId, stream, version, primary, conflicts, restartId)
+			),
 			'coordinator.reclaimable',
 			{ repositoryId, stream, version },
 		);

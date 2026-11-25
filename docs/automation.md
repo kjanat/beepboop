@@ -625,7 +625,13 @@ choice from a script.
 `beepboop release <version> --force` publishes without waiting on commit
 checks, the commit signature or package metadata, and asks nothing. It also
 restarts a release of that version that stopped, and runs its workflow again
-when the workflow already failed. The `context` output of `actions/begin`
+when the workflow already failed. If that promotion already created the
+latest version tag, Beepboop can retry the same commit after verifying that
+the promotion stopped before publication. For tags created by the runner, this
+requires the tag object ID recorded at confirmation. Older runs can supply the
+same proof from a signing-service tag object in their stored plan.
+
+The `context` output of `actions/begin`
 carries `"force": true` for a forced release, so a publication workflow can
 skip its own tests, and `actions/publish` publishes a package that lacks
 metadata.

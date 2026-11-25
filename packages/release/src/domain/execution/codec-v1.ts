@@ -180,6 +180,7 @@ export const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	})),
 	resolvedInputs: Schema.optional(mutableArray(resolvedInput)),
 	refPlan: Schema.optional(refPlanSchema),
+	confirmedTagOid: Schema.optional(Schema.String),
 	reclaims: Schema.optional(refStatesSchema),
 	moduleTags: Schema.optional(mutableArray(mutableStruct({ id: Schema.String, prefix: Schema.String }))),
 	packageTags: Schema.optional(

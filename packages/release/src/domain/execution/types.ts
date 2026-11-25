@@ -99,6 +99,7 @@ export interface Execution {
 	};
 	resolvedInputs?: ResolvedInput[];
 	refPlan?: RefPlan;
+	confirmedTagOid?: string;
 	reclaims?: RefState[];
 	moduleTags?: ModuleTag[];
 	packageTags?: FrozenPackageTag[];
