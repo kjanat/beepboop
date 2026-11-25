@@ -1,0 +1,30 @@
+name: Release automation publish
+description: Publish this execution's packages in the order Beepboop hands out, recording each outcome in its publication ledger
+inputs:
+  service:
+    description: Release automation service origin
+    default: https://beepboop.kjanat.dev
+  execution-id:
+    description: Execution ID from dispatch or the begin action
+    required: false
+  credentials:
+    description: JSON object mapping environment variable names to granted credential aliases
+    default: "{}"
+  npm-tarballs:
+    description: Directory of prebuilt npm tarballs. A generated npm package publishes only from here
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      id: bun
+      uses: $/actions/deps/bun
+    - name: Publish packages
+      shell: bash
+      env:
+        REPOSITORY_PRIVATE: ${{ toJSON(github.event.repository.private) }}
+        CREDENTIALS: ${{ inputs.credentials }}
+        NPM_TARBALLS: ${{ inputs.npm-tarballs }}
+        EXECUTION_ID: ${{ inputs.execution-id }}
+        SERVICE_ORIGIN: ${{ inputs.service }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/publish.ts"
