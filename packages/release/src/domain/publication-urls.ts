@@ -1,4 +1,4 @@
-import { selectorKey } from '@/domain/package-identity.ts';
+import { matchesPublication, selectorKey } from '@/domain/package-identity.ts';
 import { githubHref } from '@/publication/links.ts';
 import { publicationTargetHref } from '@/publication/target-href.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
@@ -18,6 +18,7 @@ type TargetExecution = Pick<
 	| 'release'
 	| 'draftRelease'
 	| 'moduleTags'
+	| 'discoveredPublicationIds'
 >;
 
 function selectedPublicationIds(run: TargetExecution, refId: string): Set<string> {
@@ -25,8 +26,17 @@ function selectedPublicationIds(run: TargetExecution, refId: string): Set<string
 	const binding = run.package;
 	if (binding) return new Set([declared?.find(id => selectorKey(id) === binding.id) ?? binding.id]);
 	if (declared) return new Set(declared);
-	if (run.operation === 'publish') return new Set(run.configuration.streams[run.stream]?.packages);
-	return new Set(run.publications.map(publication => publication.id).filter(id => id !== refId));
+	const reported = run.publications.filter(publication => publication.id !== refId);
+	if (run.operation === 'publish') {
+		const configured = run.configuration.streams[run.stream]?.packages;
+		if (configured !== undefined) return new Set(configured);
+		const ids = new Set(run.discoveredPublicationIds);
+		for (const publication of reported) {
+			if (!run.discoveredPublicationIds?.some(id => matchesPublication(id, publication))) ids.add(publication.id);
+		}
+		return ids;
+	}
+	return new Set(reported.map(publication => publication.id));
 }
 
 /** Link the execution’s selected publications, using recorded publication versions when available. */

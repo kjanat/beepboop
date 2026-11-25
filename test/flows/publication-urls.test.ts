@@ -2,8 +2,12 @@ import { expect, test } from 'bun:test';
 import { widgetConfiguration } from '@root/test/support/repositories.ts';
 import { Effect } from 'effect';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
+import type { Package } from '@/domain/inventory.ts';
+import { requireReady } from '@/domain/repository';
 import { decodeSync } from '@/kernel/schema/structs.ts';
 import { verifyPublication, verifySecondaryPublications } from '@/publication/registries/verify.ts';
+import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { createExecution } from '@/release/domain/execution/execution.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { plannedPublicationUrls } from '@/release/domain/publication-urls.ts';
 import { referenceProbe } from '@/release/domain/reference-probe.ts';
@@ -209,4 +213,77 @@ test('publish selects all stream packages even when only one is required', () =>
 	});
 	expect(plannedPublicationUrls({ ...publish, workflow: { ...workflow, publications: [crate] } }))
 		.toEqual({ publicationUrls: { [crate]: crateUrl }, publicationUrl: crateUrl });
+});
+
+test('implicit publish selection survives storage and uses reported versions without duplicating packages', async () => {
+	const configuration = structuredClone(run.configuration);
+	const stream = configuration.streams.main;
+	if (!stream) throw new Error('Expected main stream');
+	delete stream.packages;
+	stream.workflows.publish = { ...workflow };
+	const widget: Package = {
+		manager: 'npm',
+		name: 'widget',
+		manifest: 'package.json',
+		versionSource: 'package.json',
+		dependencies: [],
+		publication: { kind: 'registry' },
+	};
+	const sha = 'a'.repeat(40);
+	const repository = await Effect.runPromise(requireReady({
+		access: { kind: 'active' },
+		id: 1,
+		name: run.repository,
+		defaultBranch: 'master',
+		sha,
+		configuration,
+		presetShas: {},
+		inventory: {
+			packages: [widget, { ...widget, name: 'private', publication: { kind: 'excluded', reason: 'private' } }],
+			workflows: [],
+			managers: ['npm'],
+			diagnostics: [],
+			publicationOrder: [],
+		},
+		diagnostics: [],
+		updatedAt: 0,
+	}));
+	const created = await Effect.runPromise(createExecution(repository, {
+		stream: 'main',
+		operation: 'publish',
+		observed: true,
+		eventId: 'test',
+		sourceSha: sha,
+		version: '1.2.3',
+	}));
+	const execution = decodeExecutionV1(created);
+	const page = 'https://npm.im/package/widget/v/';
+	expect(plannedPublicationUrls(execution)).toEqual({
+		publicationUrls: { 'pkg:npm/widget': page + '1.2.3' },
+		publicationUrl: page + '1.2.3',
+	});
+	execution.publications.push({
+		id: 'npm:widget',
+		manager: 'npm',
+		name: 'widget',
+		version: '1.2.2',
+		required: true,
+		outcome: 'succeeded',
+	});
+	expect(plannedPublicationUrls(execution)).toEqual({
+		publicationUrls: { 'pkg:npm/widget': page + '1.2.2' },
+		publicationUrl: page + '1.2.2',
+	});
+	delete execution.discoveredPublicationIds;
+	expect(plannedPublicationUrls(execution)).toEqual({
+		publicationUrls: { 'npm:widget': page + '1.2.2' },
+		publicationUrl: page + '1.2.2',
+	});
+	expect(
+		plannedPublicationUrls({
+			...execution,
+			configuration: { ...configuration, streams: { main: { ...stream, packages: [] } } },
+		}),
+	)
+		.toEqual({ publicationUrls: {} });
 });

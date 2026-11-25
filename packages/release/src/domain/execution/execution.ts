@@ -2,7 +2,13 @@ import { Clock, Effect } from 'effect';
 import type { DispatchedExecution } from '@/auth/workflow-token.ts';
 import { managerSpec } from '@/domain/catalog.ts';
 import type { DiscoveredWorkflow, Package, RepositoryRecord } from '@/domain/inventory.ts';
-import { matchesPackage, matchesPublication, packageId, parseIdentity } from '@/domain/package-identity.ts';
+import {
+	matchesPackage,
+	matchesPublication,
+	packageId,
+	parseIdentity,
+	publishablePackages,
+} from '@/domain/package-identity.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import type { GitHubRunResult } from '@/github/run-state.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
@@ -133,6 +139,9 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 			state: observed ? 'pending' : operation === 'promote' ? 'awaiting-approval' : 'ready',
 			dependencies,
 			workflow: { ...binding, ref: binding.ref ?? source.defaultBranch },
+			...(operation === 'publish' && binding.publications === undefined && stream.packages === undefined
+				? { discoveredPublicationIds: publishablePackages(source.packages).map(packageId) }
+				: {}),
 			...(tagsModules ? { moduleTags: streamModuleTags(source.packages, stream) } : {}),
 			...(tagsModules && version && stream.packageTags?.length
 				? {
