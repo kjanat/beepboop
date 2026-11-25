@@ -18,17 +18,19 @@ function identityPublicationName(identity: PackageIdentity): PublicationName | u
 	if (manager) return { manager, name: identityPackageName(identity) };
 }
 
-export function referenceProbe(reference: string, version: string): Publication | undefined {
-	const pending = { id: reference, version, outcome: 'pending', required: true } as const;
-	if (!reference.startsWith('pkg:')) {
-		const target = legacyPublicationName(reference);
-		return target && { ...pending, ...target };
-	}
-	const parsed = parseReleaseIdentity(reference);
-	if (Result.isFailure(parsed)) return undefined;
-	const identity = parsed.success;
-	const target = identityPublicationName(identity);
-	return target && { ...pending, ...target, identity: { ...identity, version } };
+export function referenceProbe(reference: string, version?: string): Publication | undefined {
+	const target = resolvePublicationTarget(reference, [], version);
+	if (!target) return undefined;
+	const { manager, name, identity } = target;
+	return {
+		id: reference,
+		manager,
+		name,
+		version: target.version,
+		outcome: 'pending',
+		required: true,
+		...(identity && { identity: { ...identity, version: target.version } }),
+	};
 }
 
 function publicationName(id: string, identity?: PackageIdentity) {

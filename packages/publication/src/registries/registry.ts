@@ -14,6 +14,7 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { ioConcurrency } from '@/kernel/http/retry.ts';
 import type { Publication } from '@/publication/publication.ts';
+import { publicationDestination } from '@/publication/publication-destination.ts';
 import { checkChannel } from '@/publication/registries/channels.ts';
 import type { VerificationContext } from '@/publication/registries/context.ts';
 import type { CheckOutcome } from '@/publication/registries/outcome.ts';
@@ -49,11 +50,21 @@ export class ManagerRegistry extends DiscoveryRegistry {
 		context?: VerificationContext,
 	): Effect.Effect<CheckOutcome> {
 		const manager = this.managers.get(publication.manager);
+		if (publication.identity?.qualifiers?.repository_url) {
+			const destination = publicationDestination(publication.manager, publication.identity);
+			if (!destination) return Effect.succeed(VerificationOutcome.Unverifiable());
+			const secondary = manager?.secondaryPublication?.[destination];
+			if (secondary) return secondary(publication, request);
+			if (destination !== managerSpec(publication.manager).destinations?.primary) {
+				return Effect.succeed(VerificationOutcome.Unverifiable());
+			}
+		}
 		return manager?.verifyPublication
 			? manager.verifyPublication(publication, request, context)
 			: Effect.succeed(VerificationOutcome.Unverifiable());
 	}
 	verifySecondaryPublications(publication: Publication, request: Fetcher): Effect.Effect<CheckOutcome[]> {
+		if (publication.identity?.qualifiers?.repository_url) return Effect.succeed([]);
 		const checks = Object.values(this.managers.get(publication.manager)?.secondaryPublication ?? {})
 			.filter(check => check !== undefined);
 		return Effect.forEach(checks, check => check(publication, request), { concurrency: ioConcurrency });

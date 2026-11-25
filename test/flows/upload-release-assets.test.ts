@@ -208,3 +208,17 @@ test('a starter completed between listing and cleanup survives recovery after a 
 	});
 	expect({ lists, posts, rechecks }).toEqual({ lists: 3, posts: 1, rechecks: 1 });
 });
+
+test('a successful relabel response must confirm the requested label on the same asset', async () => {
+	for (
+		const [receipt, reason] of [
+			[remote, 'did not apply the label'],
+			[{ ...remote, id: 18, label: 'Wasm' }, 'different asset ID'],
+		] as const
+	) {
+		await expect(run(async (input, init) => {
+			if (String(input).endsWith(releasePath)) return Response.json(draft);
+			return Response.json(init?.method === 'PATCH' ? receipt : [remote]);
+		}, { ASSETS: JSON.stringify([{ asset: file, displayname: 'Wasm' }]) })).rejects.toThrow(reason);
+	}
+});

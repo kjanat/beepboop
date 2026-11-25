@@ -1,4 +1,5 @@
 import { Result } from 'effect';
+import { backfillRefusal } from '@/domain/configuration/backfill.ts';
 import type { Configuration, Stream } from '@/domain/configuration/schema.ts';
 import { operations as operationsOf } from '@/domain/configuration/schema.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
@@ -155,20 +156,8 @@ export function validateAgainst(
 				);
 				continue;
 			}
-			if (
-				binding.backfill && (operation === 'prepare' || operation === 'promote'
-					|| (binding.ref && snapshot.repository
-						&& ![snapshot.repository.defaultBranch, `refs/heads/${snapshot.repository.defaultBranch}`].includes(
-							binding.ref,
-						)))
-			) {
-				report(
-					'blocking',
-					'binding-not-dispatchable',
-					at,
-					`Stream ${name} ${operation}: backfill must be a named operation on the default branch`,
-				);
-			}
+			const refusal = binding.backfill && backfillRefusal(operation, binding, snapshot.repository?.defaultBranch);
+			if (refusal) report('blocking', 'binding-not-dispatchable', at, `Stream ${name} ${operation}: ${refusal}`);
 			if (binding.mode === 'observe') continue;
 			const workflow = inventory.workflows.find(candidate => candidate.file === binding.file);
 			if (

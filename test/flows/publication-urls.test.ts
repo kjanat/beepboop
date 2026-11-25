@@ -1,9 +1,12 @@
 import { expect, test } from 'bun:test';
 import { widgetConfiguration } from '@root/test/support/repositories.ts';
+import { Effect } from 'effect';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
 import { decodeSync } from '@/kernel/schema/structs.ts';
+import { verifyPublication, verifySecondaryPublications } from '@/publication/registries/verify.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { plannedPublicationUrls } from '@/release/domain/publication-urls.ts';
+import { referenceProbe } from '@/release/domain/reference-probe.ts';
 
 type Target = Parameters<typeof plannedPublicationUrls>[0];
 const run: Target = {
@@ -150,5 +153,39 @@ test('registry matching normalizes the origin and preserves the registry path', 
 		expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, publications: [id] } })).toEqual(
 			known ? { publicationUrls: { [id]: url }, publicationUrl: url } : { publicationUrls: {} },
 		);
+	}
+});
+
+test('planning and recovery agree on the selected version and registry', async () => {
+	for (
+		const [id, page, endpoint] of [
+			[
+				'pkg:generic/pypi/widget@1.2.3',
+				'https://pypi.org/project/widget/1.2.3/',
+				'https://pypi.org/pypi/widget/1.2.3/json',
+			],
+			[
+				'pkg:vscode-extension/octo/widget@1.2.3?repository_url=https%3A%2F%2Fopen-vsx.org',
+				'https://open-vsx.org/extension/octo/widget/1.2.3',
+				'https://open-vsx.org/api/octo/widget/1.2.3',
+			],
+			['pkg:npm/widget@1.2.3?repository_url=https%3A%2F%2Fexample.org', undefined, undefined],
+		] as const
+	) {
+		const planned = plannedPublicationUrls({ ...run, workflow: { ...workflow, publications: [id] } });
+		expect(planned.publicationUrl).toBe(page);
+		const probe = referenceProbe(id, '2.0.0');
+		if (!probe) throw new Error('Expected a recovery probe for ' + id);
+		expect(probe.version).toBe('1.2.3');
+		expect(probe.identity?.version).toBe('1.2.3');
+		const requests: string[] = [];
+		const fetcher = async (input: RequestInfo | URL) => {
+			requests.push(String(input));
+			return new Response(null, { status: 404 });
+		};
+		const outcome = await Effect.runPromise(verifyPublication(probe, fetcher));
+		expect(outcome._tag).toBe(endpoint ? 'Pending' : 'Unverifiable');
+		expect(await Effect.runPromise(verifySecondaryPublications(probe, fetcher))).toEqual([]);
+		expect(requests).toEqual(endpoint ? [endpoint] : []);
 	}
 });

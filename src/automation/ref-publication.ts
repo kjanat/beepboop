@@ -269,8 +269,12 @@ export class RefPublication extends Context.Service<RefPublication, {
 				const transport = automation.dependencies.transport;
 				const context = gateway.verification(release.repository, release.repositoryId);
 				const probes = new Map<string, Publication>();
+				const addProbe = (probe: Publication) => {
+					const registry = probe.identity?.qualifiers?.repository_url;
+					probes.set(JSON.stringify([probe.manager, probe.name, probe.version, registry]), probe);
+				};
 				for (const pkg of publishablePackages(record.inventory.packages, stream.packages)) {
-					probes.set(`${pkg.manager}:${pkg.name}`, {
+					addProbe({
 						id: packageId(pkg),
 						identity: publicationIdentity(pkg, version),
 						manager: pkg.manager,
@@ -289,11 +293,11 @@ export class RefPublication extends Context.Service<RefPublication, {
 					];
 					for (const reference of references) {
 						const probe = referenceProbe(reference, version);
-						if (probe) probes.set(`${probe.manager}:${probe.name}`, probe);
+						if (probe) addProbe(probe);
 					}
 					for (const publication of execution.publications) {
 						if (publication.manager === 'workflow' || publication.id.startsWith('refs:')) continue;
-						probes.set(`${publication.manager}:${publication.name}`, {
+						addProbe({
 							id: publication.id,
 							...(publication.identity ? { identity: publication.identity } : {}),
 							manager: publication.manager,

@@ -29,8 +29,9 @@ export function executionTags(
 	const tag = tagFor(policy ?? defaultTagPolicy, parsed.data);
 	const releaseTag = recordedTag ?? tag;
 	if (policy?.phase === 'version') return { releaseTag, refTag: tag };
-	if (policy?.aliases.length === 1 && !isPrerelease(parsed.data)) {
-		return { releaseTag, refTag: policy.prefix + aliasSeries(parsed.data, policy.aliases[0]!) };
+	const alias = policy?.aliases[0];
+	if (alias && policy?.aliases.length === 1 && !isPrerelease(parsed.data)) {
+		return { releaseTag, refTag: policy.prefix + aliasSeries(parsed.data, alias) };
 	}
 	return { releaseTag };
 }

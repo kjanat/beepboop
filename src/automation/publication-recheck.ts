@@ -80,7 +80,7 @@ export class PublicationRecheck extends Context.Service<PublicationRecheck, {
 						}
 					}
 					for (const reference of unreported(execution)) {
-						const probe = execution.version ? referenceProbe(reference, execution.version) : undefined;
+						const probe = referenceProbe(reference, execution.version);
 						if (!probe || !canVerifyPublication(probe.manager)) continue;
 						const checked = yield* verify(probe, execution.repository, execution.repositoryId);
 						if (checked._tag === 'Published') execution.publications.push(verifiedPublication(probe, checked));

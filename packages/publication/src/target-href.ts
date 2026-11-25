@@ -1,7 +1,9 @@
-import { managerSpec, type ManagerName } from '@/domain/catalog.ts';
-import { type PackageIdentity, purlDefinitions } from '@/domain/purl/index.ts';
+import type { ManagerName } from '@/domain/catalog.ts';
+import type { PackageIdentity } from '@/domain/purl/index.ts';
 import { validRepository } from '@/domain/repository-name.ts';
 import { githubHref, publicationRegistryHref } from '@/publication/links.ts';
+
+import { publicationDestination } from '@/publication/publication-destination.ts';
 
 interface PublicationTarget {
 	manager: ManagerName;
@@ -19,32 +21,15 @@ function manifestHref(name: string): string | undefined {
 	return githubHref(repository, 'blob', 'HEAD', ...path);
 }
 
-function registryAddress(raw: string): string | undefined {
-	return URL.parse(raw)?.href.replace(/\/$/, '');
-}
-
-/** Only known registries have a public package-page URL template. */
-function destinationFor({ manager, identity }: PublicationTarget) {
-	const primary = manager === 'manifest' ? 'manifest' : managerSpec(manager).destinations?.primary;
-	const qualifier = identity?.qualifiers?.repository_url;
-	if (!identity || !qualifier) return primary;
-	const registry = registryAddress(qualifier);
-	if (!registry) return undefined;
-	if (manager === 'vscode' && registry === 'https://open-vsx.org') return 'open-vsx';
-	const registered = purlDefinitions.get(identity.type)?.repository.default_repository_url;
-	if (registered && registry === registryAddress(registered)) return primary;
-	return undefined;
-}
-
 export function publicationTargetHref(
 	target: PublicationTarget,
 	repository: string,
 	releaseTag?: string,
 ): string | undefined {
 	const { manager, name, version, pinnedVersion } = target;
-	const destination = destinationFor(target);
+	if (manager === 'manifest' && !target.identity?.qualifiers?.repository_url) return manifestHref(name);
+	const destination = publicationDestination(manager, target.identity);
 	if (!destination) return undefined;
-	if (destination === 'manifest') return manifestHref(name);
 	if (manager === 'github-release') {
 		if (!validRepository(name)) return undefined;
 		const local = name.toLowerCase() === repository.toLowerCase();

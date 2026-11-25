@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import { routes } from '@/contract/routes';
+import { backfillRefusal } from '@/domain/configuration/backfill.ts';
 import { requireReady } from '@/domain/repository';
 import { gitRefSchema, releaseSchema } from '@/github/resources.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -85,12 +86,8 @@ export const executionEndpoints = {
 			}
 			const repository = yield* requireReady(yield* service.catalog.refresh(parent.repository, parent.repositoryId));
 			const binding = repository.configuration.streams[parent.stream]?.workflows[input.operation];
-			if (input.operation === 'prepare' || input.operation === 'promote' || !binding?.backfill) {
-				return yield* precondition('Select an operation enabled for backfills in repository configuration');
-			}
-			if (binding.ref && ![repository.defaultBranch, `refs/heads/${repository.defaultBranch}`].includes(binding.ref)) {
-				return yield* precondition('Backfill workflow must run on the repository default branch');
-			}
+			const refusal = backfillRefusal(input.operation, binding, repository.defaultBranch);
+			if (refusal) return yield* precondition(refusal);
 			const gateway = service.gateway;
 			const token = yield* gateway.token(parent.repository, parent.repositoryId, { contents: 'read' });
 			const base = `/repos/${parent.repository}`;
