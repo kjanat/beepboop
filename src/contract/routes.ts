@@ -582,7 +582,10 @@ export const routes = {
 		path: '/api/workflow/refs-complete',
 		auth: 'workflow',
 		idempotent: true,
-		request: mutableStruct({ executionId: text }),
+		request: mutableStruct({
+			executionId: text,
+			versionTag: Schema.optional(mutableStruct({ name: text, oid: sha, commit: sha })),
+		}),
 		response: Schema.Unknown,
 	}),
 	workflowRelease: route({

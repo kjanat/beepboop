@@ -209,7 +209,15 @@ export const workflowEndpoints = {
 	workflowRefsComplete: workflow(
 		routes.workflowRefsComplete,
 		(input, { identity, service }) =>
-			service.coordinators.refs(identity.repositoryId, input.executionId, identity, true),
+			service.coordinators.refs(
+				identity.repositoryId,
+				input.executionId,
+				identity,
+				true,
+				[],
+				undefined,
+				input.versionTag,
+			),
 	),
 	workflowRelease: workflow(
 		routes.workflowRelease,

@@ -31,6 +31,7 @@ runs:
         SCRIPT: "${{ github.action_path }}/../runtime/client.ts"
       run: bun "${SCRIPT}" refs-plan
     - name: Push refs
+      id: push
       shell: bash
       env:
         REF_PLAN: "${{ steps.plan.outputs.result }}"
@@ -40,6 +41,7 @@ runs:
     - name: Confirm refs
       shell: bash
       env:
+        VERSION_TAG: "${{ steps.push.outputs.version-tag }}"
         SERVICE_ORIGIN: "${{ inputs.service }}"
         SCRIPT: "${{ github.action_path }}/../runtime/client.ts"
       run: bun "${SCRIPT}" refs-complete

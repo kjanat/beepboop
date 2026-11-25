@@ -337,9 +337,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		complete = false,
 		suppliedFiles: DistributionFile[] = [],
 		artifact?: DistributionArtifact,
+		versionTag?: RefState,
 	): Promise<RefPlan> {
 		return this.serial(
-			refsRequest(complete, suppliedFiles, artifact).pipe(
+			refsRequest(complete, suppliedFiles, artifact, versionTag).pipe(
 				Effect.flatMap(request => RefPublication.use(publication => publication.refs(id, identity, request))),
 			),
 			'coordinator.refs',

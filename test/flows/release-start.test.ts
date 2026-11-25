@@ -1211,15 +1211,14 @@ test('force restarts the stopped promotion that created the latest plugin tag at
 	await begin(world, identity, id, 'main', 'promote');
 	await runAction(world, 'refs-plan', identity, { EXECUTION_ID: id });
 	const oid = 'a'.repeat(40);
-	world.github.recordTag(repository, request.version, 'd'.repeat(40), 'e'.repeat(40), true);
-	await expect(runAction(world, 'refs-complete', identity, { EXECUTION_ID: id })).rejects.toThrow('authorized target');
+	const versionTag = { name: request.version, commit: head.sha, oid };
+	const confirm = (tag: typeof versionTag) =>
+		runAction(world, 'refs-complete', identity, { EXECUTION_ID: id, VERSION_TAG: JSON.stringify(tag) });
+	await expect(confirm({ ...versionTag, commit: 'e'.repeat(40) })).rejects.toThrow('authorized ref plan');
+	await expect(confirm({ ...versionTag, oid: head.sha })).rejects.toThrow('authorized ref plan');
 	world.github.recordTag(repository, request.version, oid, head.sha, true);
-	await runAction(world, 'refs-complete', identity, { EXECUTION_ID: id });
-	world.github.recordTag(repository, request.version, 'd'.repeat(40), head.sha, true);
-	await expect(runAction(world, 'refs-complete', identity, { EXECUTION_ID: id })).rejects.toThrow(
-		'Confirmed version tag changed',
-	);
-	world.github.recordTag(repository, request.version, oid, head.sha, true);
+	await confirm(versionTag);
+	await expect(confirm({ ...versionTag, oid: 'd'.repeat(40) })).rejects.toThrow('Confirmed version tag changed');
 	expect((await preview()).status).toBe(422);
 	run.status = 'completed';
 	run.conclusion = 'failure';
@@ -1257,7 +1256,7 @@ test('force restarts the stopped promotion that created the latest plugin tag at
 	const retried = runIdentity(repository, retry, 'publish.yml');
 	await begin(world, retried, id, 'main', 'promote');
 	await runAction(world, 'refs-plan', retried, { EXECUTION_ID: id });
-	await runAction(world, 'refs-complete', retried, { EXECUTION_ID: id });
+	await runAction(world, 'refs-complete', retried, { EXECUTION_ID: id, VERSION_TAG: JSON.stringify(versionTag) });
 	await runAction(world, 'release', retried, { EXECUTION_ID: id });
 	retry.status = 'completed';
 	retry.conclusion = 'success';

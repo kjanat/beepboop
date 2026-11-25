@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+	actionOutputs,
 	begin,
 	commitAll,
 	gitOutput,
@@ -217,7 +218,10 @@ export async function packedRelease(
 		gitOutput(scratch, ['init', '--bare', origin]);
 		const refsTemp = join(scratch, 'refs-temp');
 		mkdirSync(refsTemp);
+		const output = join(scratch, 'refs-output');
+		writeFileSync(output, '');
 		await runRuntime('refs', {
+			GITHUB_OUTPUT: output,
 			REF_PLAN: planned.outputs.result ?? '',
 			REF_TOKEN: 'destination-token',
 			GITHUB_WORKSPACE: checkout.dir,
@@ -237,7 +241,10 @@ export async function packedRelease(
 		}
 		if (readdirSync(refsTemp).length) throw new Error('The refs runtime left files in RUNNER_TEMP');
 		const refsCompletionStart = world.network.mark();
-		await runAction(world, 'refs-complete', promoteIdentity, { EXECUTION_ID: promotionId });
+		await runAction(world, 'refs-complete', promoteIdentity, {
+			EXECUTION_ID: promotionId,
+			VERSION_TAG: actionOutputs(output)['version-tag'] ?? '',
+		});
 		const refsCompletion = world.network.since(refsCompletionStart);
 		if (githubRelease) await runAction(world, 'release', promoteIdentity, { EXECUTION_ID: promotionId });
 		world.npm.publish('widget', '1.1.0');

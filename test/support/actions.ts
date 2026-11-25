@@ -30,7 +30,7 @@ function sharedRuntime(): Promise<string> {
 	})();
 }
 
-function outputs(file: string): Record<string, string> {
+export function actionOutputs(file: string): Record<string, string> {
 	const entries: Record<string, string> = {};
 	const pattern = /^([A-Za-z_][\w-]*)<<(value_[0-9a-f-]+)\n([\s\S]*?)\n\2$/gm;
 	for (const match of readFileSync(file, 'utf8').matchAll(pattern)) {
@@ -85,7 +85,7 @@ export function runAction(
 		return withConsoleLog((...values: unknown[]) => logs.push(values.map(String).join(' ')), async () => {
 			const action: typeof import('@/actions/client.ts') = await import(client);
 			await action.run(mode, variablesForRun);
-			const result = outputs(output);
+			const result = actionOutputs(output);
 			const contextFile = result.context ? JSON.parse(result.context).contextFile : undefined;
 			return {
 				outputs: result,

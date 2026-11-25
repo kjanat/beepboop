@@ -520,25 +520,21 @@ export class RefPublication extends Context.Service<RefPublication, {
 				if (complete) {
 					const problem = yield* distributionProblem(execution, plan, refs);
 					if (problem) return yield* precondition(problem);
-					const primary = plan.changes.find(change => change.annotated && change.name === `${policy.prefix}${version}`);
-					if (primary && primary.object === undefined && (primary.expected === null || primary.replaces)) {
-						const token = yield* gateway.token(execution.repository, execution.repositoryId, { contents: 'read' });
-						const ref = yield* gateway.read(
-							Schema.NullOr(gitRefSchema),
-							`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(primary.name)}`,
-							token,
-						);
-						if (execution.confirmedTagOid && execution.confirmedTagOid !== ref?.object.sha) {
+					if (request.versionTag) {
+						const tag = request.versionTag;
+						const primary = plan.changes[0];
+						if (
+							policy.phase !== 'version' || tag.name !== `${policy.prefix}${version}`
+							|| primary?.name !== tag.name || !primary.annotated || primary.object !== undefined
+							|| (primary.expected !== null && !primary.replaces) || tag.commit !== primary.commit
+							|| tag.oid === tag.commit
+						) {
+							return yield* precondition('Version tag receipt differs from the authorized ref plan');
+						}
+						if (execution.confirmedTagOid && execution.confirmedTagOid !== tag.oid) {
 							return yield* precondition('Confirmed version tag changed');
 						}
-						if (ref && !execution.confirmedTagOid) {
-							if (ref.object.type !== 'tag') return yield* precondition('Version tag must be annotated');
-							const target = yield* gateway.peelTag(execution.repository, ref.object, token);
-							if (target.type !== 'commit' || target.sha !== primary.commit) {
-								return yield* precondition('Version tag differs from the authorized target');
-							}
-							execution.confirmedTagOid = ref.object.sha;
-						}
+						execution.confirmedTagOid = tag.oid;
 					}
 					execution.publications = yield* mergePublications(execution.publications, [{
 						id: `refs:${execution.operation}`,
