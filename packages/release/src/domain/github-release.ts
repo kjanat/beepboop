@@ -8,7 +8,7 @@ export interface ReleaseTarget {
 	readonly prerelease: boolean;
 }
 
-export function githubRelease(execution: Execution): ReleaseTarget | undefined {
+export function githubRelease(execution: Pick<Execution, 'workflow' | 'version'>): ReleaseTarget | undefined {
 	if (!execution.version) return undefined;
 	const version = decodeSync(semVer, execution.version);
 	return { tag: tagFor(execution.workflow?.refs ?? defaultTagPolicy, version), prerelease: isPrerelease(version) };

@@ -408,7 +408,12 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		);
 		expect(crateExecution.version).toBe('1.1.0');
 		expect(crateExecution.sourceSha).toBe(released);
-		await begin(world, crates.identity, crateExecution.id, stream.name, 'crates');
+		const crateRun = await begin(world, crates.identity, crateExecution.id, stream.name, 'crates');
+		expect(crateRun.outputs['publication-url']).toBe('');
+		expect(JSON.parse(crateRun.outputs['publication-urls'] ?? '')).toEqual({
+			'pkg:cargo/lint-core': 'https://crates.io/crates/lint-core/1.1.0',
+			'pkg:cargo/lint': 'https://crates.io/crates/lint/1.1.0',
+		});
 		const crateNames: Record<string, string> = {
 			'crates/core/Cargo.toml': 'lint-core',
 			'crates/cli/Cargo.toml': 'lint',

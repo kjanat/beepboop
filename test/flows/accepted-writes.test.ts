@@ -73,6 +73,26 @@ test('PR creation succeeds with a stale response head while all later GitHub rea
 	expect(after).toEqual([`GET /repos/${repository.name}/labels`]);
 });
 
+test('the packed begin action exposes publication URLs by ID and the optional single destination', async () => {
+	const repository = widget(world.github);
+	const npm = 'https://www.npmjs.com/package/widget/v/1.1.0';
+	const release = 'https://github.com/octo/widget/releases/tag/v1.1.0';
+	for (const publications of [
+		{ publicationUrl: npm, publicationUrls: { 'pkg:npm/widget': npm } },
+		{ publicationUrls: { 'pkg:npm/widget': npm, 'github-release:octo/widget': release } },
+	]) {
+		world.network.serve(new URL(origin).host, () => Response.json({ id: 'publish', ...publications }));
+		const begun = await runAction(
+			world,
+			'begin',
+			{ repository, runId: 1, sha: world.github.head(repository), file: 'publish.yml' },
+			{ EXECUTION_ID: 'publish' },
+		);
+		expect(begun.outputs['publication-url']).toBe(publications.publicationUrl ?? '');
+		expect(JSON.parse(begun.outputs['publication-urls'] ?? 'null')).toEqual(publications.publicationUrls);
+	}
+});
+
 test('large begin contexts travel through a file and the packed prepare process can start', async () => {
 	const before = `${JSON.stringify({ name: 'widget', version: '1.0.0', description: 'x'.repeat(300_000) })}\n`;
 	const after = before.replace('1.0.0', '1.1.0');
@@ -98,6 +118,8 @@ test('large begin contexts travel through a file and the packed prepare process 
 			{ repository, runId: 1, sha: checkout.sha, file: 'prepare.yml' },
 			{ EXECUTION_ID: 'large' },
 		);
+		expect(begun.outputs['publication-url']).toBe('');
+		expect(begun.outputs['publication-urls']).toBe('{}');
 		const context = JSON.parse(begun.outputs.context ?? '{}');
 		expect(begun.outputs.context?.length).toBeLessThan(2_000);
 		expect(context.plan).toBeUndefined();

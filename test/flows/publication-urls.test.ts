@@ -1,0 +1,130 @@
+import { expect, test } from 'bun:test';
+import { widgetConfiguration } from '@root/test/support/repositories.ts';
+import { configurationSchema } from '@/domain/configuration/schema.ts';
+import { decodeSync } from '@/kernel/schema/structs.ts';
+import type { Execution } from '@/release/domain/execution/types.ts';
+import { plannedPublicationUrls } from '@/release/domain/publication-urls.ts';
+
+type Target = Parameters<typeof plannedPublicationUrls>[0];
+const run: Target = {
+	repository: 'kjanat/git-remote-refs',
+	version: '0.1.1',
+	configuration: decodeSync(configurationSchema, JSON.parse(widgetConfiguration())),
+	operation: 'promote',
+	stream: 'main',
+	publications: [],
+};
+const workflow: NonNullable<Execution['workflow']> = { ref: 'master', file: 'release.yml', inputs: {}, required: true };
+const crate = 'pkg:cargo/git-remote-refs';
+const crateUrl = 'https://crates.io/crates/git-remote-refs/0.1.1';
+const release = 'github-release:kjanat/git-remote-refs';
+const go = 'pkg:golang/github.com/kjanat/git-remote-refs/go';
+const goUrl = 'https://pkg.go.dev/github.com/kjanat/git-remote-refs/go@v0.1.1';
+const policy = { phase: 'version', prefix: 'v', aliases: [], signed: true } as const;
+
+test('the selected publication owns the environment link even when the workflow also publishes version tags', () => {
+	const refs = { ...policy, aliases: [] };
+	const tagged = {
+		...run,
+		operation: 'github-release',
+		moduleTags: [{ id: go, prefix: 'go/v' }],
+		workflow: { ...workflow, refs, publications: [release] },
+	};
+	const github = 'https://github.com/kjanat/git-remote-refs/releases/tag/v0.1.1';
+	const tag = 'https://github.com/kjanat/git-remote-refs/tree/v0.1.1';
+	expect(plannedPublicationUrls(tagged)).toEqual({
+		publicationUrl: github,
+		publicationUrls: { [release]: github, 'refs:github-release': tag, [go]: goUrl },
+	});
+	expect(plannedPublicationUrls({ ...tagged, workflow: { ...workflow, refs, publications: [go] } })).toEqual({
+		publicationUrl: goUrl,
+		publicationUrls: { [go]: goUrl, 'refs:github-release': tag },
+	});
+	expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, publications: [crate] } })).toEqual({
+		publicationUrl: crateUrl,
+		publicationUrls: { [crate]: crateUrl },
+	});
+});
+
+test('unknown and multiple destinations do not accidentally promote the first link to the environment URL', () => {
+	for (const id of [go, 'workflow:smoke']) {
+		expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, publications: [crate, id] } })).toEqual({
+			publicationUrls: { [crate]: crateUrl, ...(id === go ? { [go]: goUrl } : {}) },
+		});
+	}
+	expect(plannedPublicationUrls({ ...run, workflow })).toEqual({ publicationUrls: {} });
+	const { version: _version, ...unversioned } = run;
+	expect(plannedPublicationUrls({ ...unversioned, workflow: { ...workflow, publications: [crate] } })).toEqual({
+		publicationUrls: {},
+	});
+});
+
+test('tag prefixes including the empty prefix use the frozen execution policy', () => {
+	for (const prefix of ['', 'cli/v']) {
+		const refs = { ...policy, aliases: [], prefix };
+		const github = `https://github.com/kjanat/git-remote-refs/releases/tag/${prefix}0.1.1`;
+		const tag = `https://github.com/kjanat/git-remote-refs/tree/${prefix}0.1.1`;
+		expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, refs, publications: [release] } })).toEqual({
+			publicationUrls: { [release]: github, 'refs:promote': tag },
+			publicationUrl: github,
+		});
+		expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, refs } })).toEqual({
+			publicationUrls: { 'refs:promote': tag },
+			publicationUrl: tag,
+		});
+	}
+});
+
+test('package binding selection survives old report IDs and uses the recorded version', () => {
+	const published = {
+		id: 'cargo:git-remote-refs',
+		manager: 'cargo',
+		name: 'git-remote-refs',
+		version: '0.1.0',
+		outcome: 'succeeded',
+		required: true,
+		url: 'https://index.crates.io/gi/t-/git-remote-refs',
+	} as const;
+	const execution = { ...run, workflow: { ...workflow, publications: [crate] }, publications: [published] };
+	const previousUrl = 'https://crates.io/crates/git-remote-refs/0.1.0';
+	expect(plannedPublicationUrls(execution)).toEqual({
+		publicationUrls: { [crate]: previousUrl },
+		publicationUrl: previousUrl,
+	});
+	expect(plannedPublicationUrls({ ...run, package: { id: crate, manager: 'cargo' } })).toEqual({
+		publicationUrls: { [crate]: crateUrl },
+		publicationUrl: crateUrl,
+	});
+});
+
+test('only declared public registry and manifest pages become destinations', () => {
+	const cases: [string, string | undefined][] = [
+		['pkg:generic/pypi/widget', 'https://pypi.org/project/widget/0.1.1/'],
+		['pkg:npm/widget?repository_url=https%3A%2F%2Fregistry.example.com', undefined],
+		[
+			'pkg:vscode-extension/octo/widget?repository_url=https%3A%2F%2Fopen-vsx.org',
+			'https://open-vsx.org/extension/octo/widget/0.1.1',
+		],
+		['manifest:octo/bucket/bucket/widget.json', 'https://github.com/octo/bucket/blob/HEAD/bucket/widget.json'],
+		['manifest:octo/tap/Formula/tool.rb', 'https://github.com/octo/tap/blob/HEAD/Formula/tool.rb'],
+		['manifest:octo/tap/../tool.rb', undefined],
+		['manifest:octo/tap/install.sh', undefined],
+		['github-release:elsewhere/tool', undefined],
+		['pkg:github/elsewhere/tool@v2.0.0', 'https://github.com/elsewhere/tool/releases/tag/v2.0.0'],
+	];
+	for (const [id, url] of cases) {
+		expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, publications: [id] } })).toEqual(
+			url ? { publicationUrls: { [id]: url }, publicationUrl: url } : { publicationUrls: {} },
+		);
+	}
+});
+
+test('a per-package execution only selects its assigned package from a broad binding', () => {
+	for (const publications of [[crate, go], [crate]]) {
+		expect(plannedPublicationUrls({
+			...run,
+			workflow: { ...workflow, publications },
+			package: { id: go, manager: 'go' },
+		})).toEqual({ publicationUrls: { [go]: goUrl }, publicationUrl: goUrl });
+	}
+});
