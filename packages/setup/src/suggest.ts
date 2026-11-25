@@ -151,14 +151,15 @@ export function suggested(
 			const before = previous?.operations?.find(entry => entry.name === operation);
 			const input = generator(binding, before);
 			const needs = Array.isArray(binding.needs) ? binding.needs.map(String) : [];
-			const [first, ...rest] = needs;
-			if (!input || first === undefined) return [];
+			const backfill = binding.backfill === true;
+			if (!input || (!backfill && !needs.length)) return [];
 			const needsJobs = object(binding.needsJobs);
 			return [{
 				...input,
 				name: operation,
 				file: binding.file,
-				needs: [first, ...rest],
+				needs,
+				...(backfill ? { backfill: true as const } : {}),
 				...(Object.keys(needsJobs).length
 					? {
 						needsJobs: Object.fromEntries(

@@ -198,6 +198,18 @@ export const runs = group('runs').description('Follow, publish, cancel and recov
 			)),
 	)
 	.command(
+		base('backfill', 'Run a configured operation for a published release')
+			.arg('id', arg.string().required())
+			.arg('operation', arg.string().required())
+			.action(
+				connected((client, { args, out }) =>
+					client.call(routes.executionsBackfill, { id: args.id, operation: args.operation }).pipe(
+						Effect.flatMap(run => executionView(out, run)),
+					)
+				),
+			),
+	)
+	.command(
 		base('recover', 'Reconcile an operation, retry it, or run the current workflow for its release commit')
 			.details(
 				[

@@ -327,6 +327,14 @@ export const routes = {
 		}),
 		response: executionView,
 	}),
+	executionsBackfill: route({
+		method: 'POST',
+		path: '/api/executions/backfill',
+		auth: 'admin',
+		idempotent: true,
+		request: mutableStruct({ ...executionRef.fields, operation: text }),
+		response: executionView,
+	}),
 	executionsRecover: route({
 		method: 'POST',
 		path: '/api/executions/recover',

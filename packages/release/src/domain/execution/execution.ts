@@ -89,6 +89,7 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 			? stream.promote.workflow
 			: stream.workflows[operation];
 		if (!binding) return yield* precondition('Operation has no workflow binding');
+		if (binding.backfill && !eventId.startsWith('backfill:')) return yield* precondition('Start backfills in Beepboop');
 		if (binding.each === 'package' && request.perPackage !== true) {
 			return yield* precondition('Per-package operations run inside a release set');
 		}

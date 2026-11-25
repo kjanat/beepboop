@@ -76,6 +76,7 @@ const binding = {
 	platform: Schema.optional(platformSchema),
 	refs: Schema.optional(refPolicyValue),
 	mode: Schema.optional(Schema.Literals(['observe', 'dispatch'])),
+	backfill: Schema.optional(Schema.Boolean),
 	each: Schema.optional(Schema.Literal('package')),
 	needs: Schema.optional(strings),
 	needsJobs: Schema.optional(mutableRecord(Schema.String, strings)),
@@ -269,6 +270,9 @@ function bindingSchema() {
 		schedule: Schema.optional(cron),
 		publications: Schema.optional(packageReferences),
 		mode: Schema.optional(Schema.Literals(['observe', 'dispatch'])),
+		backfill: Schema.optional(Schema.Boolean).annotate({
+			description: 'Allow this standalone dispatch operation to run for an existing published release',
+		}),
 		each: Schema.optional(Schema.Literal('package')),
 		refs: Schema.optional(refPolicy),
 		platform: Schema.optional(platformSchema),
@@ -277,6 +281,19 @@ function bindingSchema() {
 		setup: Schema.optional(workflowSetup),
 	});
 	const checked = withValidation(shape, (binding, ctx) => {
+		if (
+			binding.backfill && (binding.mode !== 'dispatch' || binding.refs || binding.each || binding.schedule
+				|| binding.needs?.length || binding.artifactInputs?.length)
+		) {
+			issue(
+				ctx,
+				'reserved-operation',
+				'Backfill requires standalone dispatch without refs, a schedule or dependencies',
+				[
+					'backfill',
+				],
+			);
+		}
 		if (
 			binding.each
 			&& (binding.outputs !== undefined || binding.artifactInputs !== undefined || binding.refs !== undefined)
@@ -299,6 +316,7 @@ function bindingSchema() {
 		...(binding.platform ? { platform: binding.platform } : {}),
 		...(binding.refs ? { refs: binding.refs } : {}),
 		...(binding.mode === undefined ? {} : { mode: binding.mode }),
+		...(binding.backfill === undefined ? {} : { backfill: binding.backfill }),
 		...(binding.each === undefined ? {} : { each: binding.each }),
 		...(binding.needs === undefined && !binding.artifactInputs
 			? {}
@@ -496,6 +514,14 @@ function graph(stream: Stream, path: (string | number)[], ctx: ValidationContext
 	const approved = (name: string): boolean =>
 		name === 'promote' || (operationsOf.get(name)?.needs ?? []).some(approved);
 	for (const [name, operation] of operationsOf) {
+		for (const needed of operation.needs ?? []) {
+			if (operationsOf.get(needed)?.backfill) {
+				issue(ctx, 'reserved-operation', `Operation ${name} cannot depend on backfill ${needed}`, [
+					...where(name),
+					'needs',
+				]);
+			}
+		}
 		for (const input of operation.artifactInputs ?? []) {
 			if (!operationsOf.get(input.operation)?.outputs?.some(output => output.id === input.output)) {
 				issue(

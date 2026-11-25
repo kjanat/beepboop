@@ -35,6 +35,7 @@ const operation: Schema.Codec<SetupOperation, unknown> = strictStruct(
 		...workflowShape.fields,
 		...{
 			name: Schema.String,
+			backfill: Schema.optional(Schema.Literal(true)),
 			needs: strings,
 			needsJobs: Schema.optional(Schema.Record(Schema.String, strings)),
 			publications: strings,

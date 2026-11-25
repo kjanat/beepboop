@@ -57,7 +57,9 @@ export function streamSummary(
 		}
 	}
 	const observed = new Set(stream.observe?.flatMap(entry => entry.publications) ?? []);
-	const delegated = new Set(stream.operations?.flatMap(entry => entry.publications) ?? []);
+	const delegated = new Set(
+		stream.operations?.filter(entry => !entry.backfill).flatMap(entry => entry.publications) ?? [],
+	);
 	const promote = stream.promote;
 	if (promote) {
 		const own = stream.packages.filter(id => !observed.has(id) && !delegated.has(id));
@@ -112,6 +114,10 @@ export function streamSummary(
 		if (files.includes(check.file)) lines.push(`${check.subject}: ${check.message}`);
 	}
 	for (const operation of stream.operations ?? []) {
+		if (operation.backfill) {
+			lines.push(`${named(operation.file)} can backfill ${publishes(operation.publications)} for a published release.`);
+			continue;
+		}
 		const after = operation.needs.map(name => {
 			const file = stream.observe?.find(entry => entry.name === name)?.file ?? name;
 			const jobs = operation.needsJobs?.[name];

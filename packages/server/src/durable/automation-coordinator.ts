@@ -97,7 +97,10 @@ const repositoryRevisions = Layer.effect(
 	RepositoryRevisions,
 	Effect.gen(function*() {
 		const automation = yield* Automation;
-		return RepositoryRevisions.of({ get: repositoryId => automation.store.repositories.get(repositoryId) });
+		return RepositoryRevisions.of({
+			get: repositoryId => automation.store.repositories.get(repositoryId),
+			inventoryAt: execution => automation.inventoryAt(execution),
+		});
 	}),
 );
 

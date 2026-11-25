@@ -28,7 +28,7 @@ export interface LedgerExecution {
 	readonly runId?: number;
 	readonly runAttempt?: number;
 	readonly configuration: Configuration;
-	readonly workflow?: { readonly publications?: readonly string[] };
+	readonly workflow?: { readonly publications?: readonly string[]; readonly backfill?: boolean };
 	readonly publications: readonly Publication[];
 }
 

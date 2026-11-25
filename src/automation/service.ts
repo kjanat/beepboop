@@ -157,6 +157,12 @@ export class AutomationService {
 			Effect.map(enrollment => enrollment?.access.kind !== 'active'),
 		);
 	}
+	inventoryAt(execution: Pick<Execution, 'repository' | 'repositoryId' | 'sourceSha' | 'configuration'>) {
+		return repositorySnapshot(this.gateway, execution.repository, execution.repositoryId, execution.sourceSha).pipe(
+			Effect.flatMap(snapshot => fromSync(() => discover(snapshot, execution.configuration.managers))),
+		);
+	}
+
 	enqueue(repository: ReadyRepository, execution: Execution): Effect.Effect<Execution, DomainError> {
 		return Effect.gen({ self: this }, function*() {
 			if (execution.repositoryId !== repository.id) {

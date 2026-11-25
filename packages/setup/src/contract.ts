@@ -44,7 +44,8 @@ const operation = strictStruct(
 				name => name !== 'prepare' && name !== 'promote',
 				'prepare and promote are reserved operation names',
 			),
-			needs: mutableArray(identifier).check(Schema.isMinLength(1)),
+			backfill: Schema.optional(Schema.Literal(true)),
+			needs: mutableArray(identifier),
 			needsJobs: Schema.optional(
 				mutableRecord(
 					identifier,
@@ -54,7 +55,13 @@ const operation = strictStruct(
 			publications: mutableArray(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 		},
 	}).fields,
-);
+).check(Schema.makeFilter(operation =>
+	operation.backfill
+		? (operation.needs.length === 0 && !operation.needsJobs
+			? undefined
+			: 'A backfill cannot depend on release operations')
+		: (operation.needs.length > 0 ? undefined : 'Select a dependency or enable backfill')
+));
 /** Opt in to immutable patch releases and mutable major/minor action refs. */
 export const actionRelease = Schema.Union([
 	strictStruct({ kind: Schema.Literal('source') }),

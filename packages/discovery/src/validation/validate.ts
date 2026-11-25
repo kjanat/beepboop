@@ -31,7 +31,7 @@ function releaseDispatches(stream: Stream): Set<string> {
 export function validateAgainst(
 	configuration: Configuration,
 	inventory: Inventory,
-	snapshot: Pick<Snapshot, 'paths'>,
+	snapshot: Pick<Snapshot, 'paths'> & Partial<Pick<Snapshot, 'repository'>>,
 ): Diagnostic[] {
 	const diagnostics: Diagnostic[] = [];
 	const report = (
@@ -145,7 +145,7 @@ export function validateAgainst(
 		}
 		for (const [operation, binding] of operations) {
 			const at: DiagnosticSubject = { kind: 'binding', stream: name, operation };
-			const severity = dispatched.has(operation) ? 'blocking' : 'warning';
+			const severity = binding.backfill || dispatched.has(operation) ? 'blocking' : 'warning';
 			if (!paths.has(`.github/workflows/${binding.file}`)) {
 				report(
 					severity,
@@ -154,6 +154,20 @@ export function validateAgainst(
 					`Stream ${name} ${operation} uses .github/workflows/${binding.file}, which does not exist`,
 				);
 				continue;
+			}
+			if (
+				binding.backfill && (operation === 'prepare' || operation === 'promote'
+					|| (binding.ref && snapshot.repository
+						&& ![snapshot.repository.defaultBranch, `refs/heads/${snapshot.repository.defaultBranch}`].includes(
+							binding.ref,
+						)))
+			) {
+				report(
+					'blocking',
+					'binding-not-dispatchable',
+					at,
+					`Stream ${name} ${operation}: backfill must be a named operation on the default branch`,
+				);
 			}
 			if (binding.mode === 'observe') continue;
 			const workflow = inventory.workflows.find(candidate => candidate.file === binding.file);

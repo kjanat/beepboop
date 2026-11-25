@@ -56,6 +56,7 @@ export class ReleaseCommits extends Context.Service<ReleaseCommits, {
 				return yield* kept(execution.sourceSha);
 			});
 			const contains = Effect.fnUntraced(function*(execution: Execution, sha: string, token: string) {
+				if (execution.eventId.startsWith('backfill:')) return sha === execution.configurationSha;
 				if (sha === execution.sourceSha) return true;
 				if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) {
 					const all = yield* executions.all;
@@ -121,6 +122,24 @@ export class ReleaseCommits extends Context.Service<ReleaseCommits, {
 				moved: Effect.fnUntraced(function*(execution: Execution, token: string, observedRef?: string) {
 					const current = yield* head(execution, token, observedRef);
 					if (!current) return undefined;
+					if (execution.eventId.startsWith('backfill:')) {
+						if (current.sha !== execution.configurationSha) {
+							return 'Backfill workflow changed; start the backfill again';
+						}
+						const tag = execution.upstreamRelease?.tag;
+						if (!tag) return 'Backfill has no release tag';
+						const ref = yield* gateway.read(
+							Schema.NullOr(gitRefSchema),
+							`/repos/${execution.repository}/git/ref/tags/${encodeURIComponent(tag)}`,
+							token,
+						);
+						if (!ref) return `Release tag ${tag} no longer exists`;
+						const target = yield* gateway.peelTag(execution.repository, ref.object, token);
+						if (target.type !== 'commit' || target.sha !== execution.sourceSha) {
+							return `Release tag ${tag} no longer points to the backfill commit`;
+						}
+						return undefined;
+					}
 					if (current.tag) {
 						if (current.sha === execution.sourceSha) return undefined;
 						return `Tag ${current.ref} moved to ${current.sha.slice(0, 12)}; this release builds ${

@@ -14,6 +14,8 @@ export const ledgerStore = Layer.effect(
 		const executions = yield* Executions;
 		const revisions = yield* RepositoryRevisions;
 		const binder = yield* RunBinder;
+		const inventory = (repositoryId: number) =>
+			revisions.get(repositoryId).pipe(Effect.map(record => record?.inventory));
 		return LedgerStore.of({
 			get: executionId => storage.get(Keys.ledger, executionId),
 			all: storage.list(Keys.ledger).pipe(Effect.map(entries => entries.map(entry => entry.value))),
@@ -29,7 +31,9 @@ export const ledgerStore = Layer.effect(
 					publications: yield* mergePublications(execution.publications, [publication]),
 				});
 			}),
-			inventory: repositoryId => revisions.get(repositoryId).pipe(Effect.map(record => record?.inventory)),
+			inventory,
+			inventoryFor: execution =>
+				execution.workflow?.backfill ? revisions.inventoryAt(execution) : inventory(execution.repositoryId),
 		});
 	}),
 );
