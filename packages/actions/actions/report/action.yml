@@ -28,7 +28,7 @@ runs:
       shell: bash
       env:
         ARTIFACTS: ${{ inputs.artifacts }}
-        EXECUTION_ID: ${{ inputs.execution-id }}
+        EXECUTION_ID: ${{ inputs.execution-id || env.BEEPBOOP_EXECUTION_ID }}
         PUBLICATIONS: ${{ inputs.publications }}
         SERVICE_ORIGIN: ${{ inputs.service }}
       run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" report

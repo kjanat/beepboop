@@ -25,6 +25,6 @@ runs:
         REPOSITORY_PRIVATE: ${{ toJSON(github.event.repository.private) }}
         CREDENTIALS: ${{ inputs.credentials }}
         NPM_TARBALLS: ${{ inputs.npm-tarballs }}
-        EXECUTION_ID: ${{ inputs.execution-id }}
+        EXECUTION_ID: ${{ inputs.execution-id || env.BEEPBOOP_EXECUTION_ID }}
         SERVICE_ORIGIN: ${{ inputs.service }}
       run: bun "${GITHUB_ACTION_PATH}/../runtime/publish.ts"

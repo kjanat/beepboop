@@ -52,7 +52,7 @@ runs:
       id: client
       shell: bash
       env:
-        EXECUTION_ID: ${{ inputs.execution-id }}
+        EXECUTION_ID: ${{ inputs.execution-id || env.BEEPBOOP_EXECUTION_ID }}
         INPUTS: ${{ toJSON(inputs) }}
         PERMISSIONS: ${{ inputs.permissions }}
         SERVICE_ORIGIN: ${{ inputs.service }}
