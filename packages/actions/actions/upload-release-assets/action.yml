@@ -1,6 +1,9 @@
 name: Upload Beepboop draft release assets
 description: Upload and verify files on a GitHub draft release by ID
 inputs:
+  token:
+    description: Existing repository token with contents write permission. Omit to request one from Beepboop.
+    required: false
   release-id:
     description: Numeric ID of the draft release
     required: true
@@ -29,6 +32,7 @@ runs:
         service: ${{ inputs.service }}
     - name: Get repository token
       id: token
+      if: inputs.token == ''
       uses: $/packages/actions/actions/token
       with:
         service: ${{ inputs.service }}
@@ -43,5 +47,5 @@ runs:
         ASSETS: ${{ inputs.assets }}
         MANIFEST_FILE: ${{ inputs.manifest-file }}
         MANIFEST_FORMAT: ${{ inputs.format }}
-        GH_TOKEN: ${{ steps.token.outputs.token }}
+        GH_TOKEN: ${{ inputs.token || steps.token.outputs.token }}
       run: bun "${GITHUB_ACTION_PATH}/../runtime/upload-release-assets.ts"

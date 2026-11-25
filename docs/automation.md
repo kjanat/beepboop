@@ -1610,6 +1610,11 @@ ID to attach files from the build:
       dist/tool-darwin-arm64.tar.gz,,macOS Apple Silicon
 ```
 
+Both actions accept an optional `token` input, for example
+`${{ steps.bot.outputs.token }}` from an earlier step in the same job.
+Draft lookup requires contents read access, and uploading requires contents
+write access. If omitted, each action requests its own scoped token.
+
 Supply a manifest inline with `assets` or point `manifest-file` at a file
 in the workspace. The action recognizes manifest extensions (including
 `.jsonl` for NDJSON) and otherwise detects the format from the content.

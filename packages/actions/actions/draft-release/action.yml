@@ -1,6 +1,9 @@
 name: Get the execution's draft release
 description: Get the ID and asset upload URL of the GitHub release drafted for this Beepboop execution
 inputs:
+  token:
+    description: Existing repository token with contents read permission. Omit to request one from Beepboop.
+    required: false
   execution-id:
     description: Execution ID from dispatch or the begin action
     required: false
@@ -28,6 +31,7 @@ runs:
         service: ${{ inputs.service }}
     - name: Get a repository token
       id: token
+      if: inputs.token == ''
       uses: $/packages/actions/actions/token
       with:
         execution-id: ${{ steps.begin.outputs.execution-id }}
@@ -37,7 +41,7 @@ runs:
       id: draft
       shell: bash
       env:
-        GH_TOKEN: ${{ steps.token.outputs.token }}
+        GH_TOKEN: ${{ inputs.token || steps.token.outputs.token }}
         DRAFT_ID: ${{ fromJSON(steps.begin.outputs.context).draftRelease.id }}
         DRAFT_TAG: ${{ fromJSON(steps.begin.outputs.context).draftRelease.tag }}
       run: bash "${GITHUB_ACTION_PATH}/draft.sh"
