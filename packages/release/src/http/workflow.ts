@@ -16,6 +16,7 @@ import { mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { createExecution, dispatchedExecution } from '@/release/domain/execution/execution.ts';
 import type { Artifact, Execution } from '@/release/domain/execution/types.ts';
+import { plannedPublicationUrls } from '@/release/domain/publication-urls.ts';
 import { beginRelease, releasePlan } from '@/release/http/releases.ts';
 import type { EnrolledContext } from '@/server/handlers/kit';
 import { workflow, workflowToken } from '@/server/handlers/kit';
@@ -178,6 +179,7 @@ export const workflowEndpoints = {
 				context.identity,
 			);
 			return {
+				...plannedPublicationUrls(registered),
 				id: registered.id,
 				repositoryId: registered.repositoryId,
 				repository: registered.repository,

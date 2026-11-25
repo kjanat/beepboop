@@ -411,6 +411,46 @@ use the run name `Release operation ${{ inputs.beepboop_execution_id }}`.
 job. The context holds the requested version and the source commit. Calls from
 the same observed run, stream and operation attach to the same execution.
 
+Use the `publication-url` output as a deployment environment URL when the
+operation has one publication target:
+
+```yaml
+environment:
+  name: crates-io
+  url: ${{ steps.beepboop.outputs.publication-url }}
+steps:
+  - uses: kjanat/beepboop/actions/begin@v1
+    id: beepboop
+    with:
+      execution-id: ${{ inputs.beepboop_execution_id }}
+```
+
+For a job that publishes several packages, select the environment link by
+publication ID from the JSON `publication-urls` output:
+
+```yaml
+environment:
+  name: npm
+  url: ${{ fromJSON(steps.beepboop.outputs.publication-urls)['pkg:npm/%40octo/widget'] }}
+```
+
+The links point to the planned destinations and can be used before an upload
+finishes. The map is empty when the operation has no known public page.
+An operation with multiple publication targets leaves the scalar output empty.
+For example, a release of `1.2.3` can expose these entries:
+
+| Publication ID                         | Environment URL                                       |
+| -------------------------------------- | ----------------------------------------------------- |
+| `pkg:npm/%40octo/widget`               | `https://npm.im/package/@octo/widget/v/1.2.3`         |
+| `pkg:golang/github.com/octo/widget/go` | `https://pkg.go.dev/github.com/octo/widget/go@v1.2.3` |
+| `github-release:octo/widget`           | `https://github.com/octo/widget/releases/tag/v1.2.3`  |
+| `refs:promote`                         | `https://github.com/octo/widget/tree/v1.2.3`          |
+
+GitHub release and tag links use the execution’s tag policy. A version-tag
+operation can expose its tag and companion Go module alongside the explicitly
+selected publication. GHCR and Visual Studio Marketplace link to the package
+page. Docker Hub links to the tags page filtered by the release tag.
+
 Setup adopts a dispatch workflow that already calls `begin` in several jobs
 and leaves the file as it is. Every job with `begin` needs `id-token: write`,
 and its `begin` step runs without `if` or `continue-on-error`. Every checkout in

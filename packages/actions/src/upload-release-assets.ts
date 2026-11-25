@@ -8,7 +8,7 @@ import { Effect, Schema } from 'effect';
 import { parseAssetManifest } from '@/actions/asset-manifest.ts';
 import type { Environment } from '@/actions/protocol.ts';
 import { ActionFailure, attemptAsync, fail, required } from '@/actions/protocol.ts';
-import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import { validRepository } from '@/domain/repository-name.ts';
 import { gitHubRequest, githubApiVersion } from '@/github/transport.ts';
 import { runMain } from '@/host/main.ts';
 import { responseJson, scopedResponse } from '@/kernel/http/body.ts';
@@ -70,6 +70,20 @@ async function stageAssets(env: Environment, workspace: string, directory: strin
 }
 type FileAsset = Awaited<ReturnType<typeof stageAssets>>[number];
 
+const verifyReceipt = Effect.fnUntraced(function*(value: unknown, file: FileAsset, expectedId?: number) {
+	const receipt = yield* Schema.decodeUnknownEffect(assetSchema)(value);
+	if (expectedId !== undefined && receipt.id !== expectedId) return yield* fail('GitHub returned a different asset ID');
+	if (receipt.name !== file.name) {
+		return yield* fail(`GitHub renamed ${file.name} to ${receipt.name}; use that uploaded name in the manifest`);
+	}
+	if (receipt.state !== 'uploaded' || receipt.digest !== file.digest || receipt.size !== file.body.size) {
+		return yield* fail(`GitHub returned a different digest, size, or state for ${file.name}`);
+	}
+	if (file.label !== undefined && receipt.label !== file.label) {
+		return yield* fail(`GitHub did not apply the label for ${file.name}`);
+	}
+});
+
 const upload = Effect.fn('uploadDraftAsset')(function*(
 	transport: Fetcher,
 	endpoint: string,
@@ -109,16 +123,7 @@ const upload = Effect.fn('uploadDraftAsset')(function*(
 			new ActionFailure({ message: `Unreadable upload receipt for ${file.name}`, retryable: true })
 		),
 	);
-	const receipt = yield* Schema.decodeUnknownEffect(assetSchema)(value);
-	if (receipt.name !== file.name) {
-		return yield* fail(`GitHub renamed ${file.name} to ${receipt.name}; use that uploaded name in the manifest`);
-	}
-	if (receipt.state !== 'uploaded' || receipt.digest !== file.digest || receipt.size !== file.body.size) {
-		return yield* fail(`GitHub returned a different digest, size, or state for ${file.name}`);
-	}
-	if (file.label !== undefined && receipt.label !== file.label) {
-		return yield* fail(`GitHub did not apply the label for ${file.name}`);
-	}
+	yield* verifyReceipt(value, file);
 }, Effect.scoped);
 
 export const uploadReleaseAssets = Effect.fn('uploadReleaseAssets')(
@@ -127,7 +132,7 @@ export const uploadReleaseAssets = Effect.fn('uploadReleaseAssets')(
 		const repository = yield* Effect.fromResult(required(env, 'GITHUB_REPOSITORY'));
 		const token = yield* Effect.fromResult(required(env, 'GH_TOKEN'));
 		const id = yield* Effect.fromResult(required(env, 'RELEASE_ID'));
-		if (!repositoryNamePattern.test(repository) || repository.split('/').some(part => part === '.' || part === '..')) {
+		if (!validRepository(repository)) {
 			return yield* fail('Invalid GITHUB_REPOSITORY');
 		}
 		if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) return yield* fail('Invalid release-id');
@@ -196,9 +201,16 @@ export const uploadReleaseAssets = Effect.fn('uploadReleaseAssets')(
 					interrupted.delete(file.name);
 					yield* upload(transport, endpoint, token, file, interrupted);
 				} else if (file.label !== undefined && remote.label !== file.label) {
-					yield* gitHubRequest(transport, `/repos/${repository}/releases/assets/${remote.id}`, token, 'PATCH', {
-						label: file.label,
-					});
+					const receipt = yield* gitHubRequest(
+						transport,
+						`/repos/${repository}/releases/assets/${remote.id}`,
+						token,
+						'PATCH',
+						{
+							label: file.label,
+						},
+					);
+					yield* verifyReceipt(receipt, file, remote.id);
 				}
 			}
 		});

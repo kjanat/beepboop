@@ -1,6 +1,6 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Clock, Effect } from 'effect';
+import { Clock, Effect, Schema } from 'effect';
 import type { Environment, Mode } from '@/actions/protocol.ts';
 import { attempt, endpoints, exchange, fail, parseMode, requestBody, required } from '@/actions/protocol.ts';
 import { identityToken, postJson, readServiceOrigin } from '@/actions/session.ts';
@@ -14,6 +14,14 @@ function writeResult(mode: Mode, data: Record<string, unknown>, environment: Env
 	return Effect.gen(function*() {
 		if (mode === 'begin') {
 			const id = yield* Effect.fromResult(text(data.id));
+			const publicationUrl = data.publicationUrl === undefined
+				? ''
+				: yield* Effect.fromResult(text(data.publicationUrl));
+			const publicationUrls = yield* Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.NonEmptyString))(
+				data.publicationUrls ?? {},
+			);
+			yield* writeOutput('publication-url', publicationUrl);
+			yield* writeOutput('publication-urls', JSON.stringify(publicationUrls));
 			yield* writeOutput('execution-id', id);
 			const directory = yield* Effect.fromResult(required(environment, 'RUNNER_TEMP'));
 			const contextFile = join(directory, `release-context-${crypto.randomUUID()}.json`);

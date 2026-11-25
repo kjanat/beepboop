@@ -3,7 +3,7 @@ import { bareSemverPattern } from '@/domain/semver.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mapped, matchesPattern, refined, safeDecode, strictStruct } from '@/kernel/schema/structs.ts';
 
-export { compare, isPrerelease, semverPattern } from '@/domain/semver.ts';
+export { aliasSeries, compare, isPrerelease, semverPattern } from '@/domain/semver.ts';
 
 export const semVer = mapped(
 	Schema.String,

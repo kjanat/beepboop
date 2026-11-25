@@ -42,6 +42,7 @@
 		"homebrew": "bun packages/actions/src/generate-homebrew.ts",
 		"lint": "biome check . --error-on-warnings",
 		"move": "bun src/tooling/workspace/move.ts",
+		"playwright:install:chromium:shell": "bunx playwright install chromium --only-shell",
 		"prepare": "run -qs types sync && effect-tsgo patch --typescript --oxlint",
 		"prepreview": "wrangler types",
 		"preview": "astro preview",

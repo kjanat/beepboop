@@ -4,6 +4,10 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 
 export const repositoryNamePattern = /^[\w.-]+\/[\w.-]+$/;
 
+export function validRepository(repository: string): boolean {
+	return repositoryNamePattern.test(repository) && repository.split('/').every(part => part !== '.' && part !== '..');
+}
+
 export interface RepositoryReference {
 	owner?: string;
 	name: string;

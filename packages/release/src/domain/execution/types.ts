@@ -101,6 +101,7 @@ export interface Execution {
 	refPlan?: RefPlan;
 	confirmedTagOid?: string;
 	reclaims?: RefState[];
+	discoveredPublicationIds?: string[];
 	moduleTags?: ModuleTag[];
 	packageTags?: FrozenPackageTag[];
 	refNamespace?: RefNamespace;

@@ -14,8 +14,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5
-      - run: runner i -fs types gate deploy:dry
+      - uses: kjanat/mise-action@v6
+      - run: runner i -fsK types gate deploy:dry
         env:
           GITHUB_APP_ID: "0"
           GITHUB_APP_PRIVATE_KEY: "ci-build-placeholder"
@@ -27,10 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5
-      - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bunx playwright install chromium --only-shell
-      - run: bun run test:browser
+      - uses: kjanat/mise-action@v6
+      - run: runner i -fsK playwright:install:chromium:shell test:browser
       - name: Upload browser failure traces
         if: failure()
         uses: actions/upload-artifact@v7

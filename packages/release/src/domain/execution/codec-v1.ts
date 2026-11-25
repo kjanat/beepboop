@@ -182,6 +182,7 @@ export const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	refPlan: Schema.optional(refPlanSchema),
 	confirmedTagOid: Schema.optional(Schema.String),
 	reclaims: Schema.optional(refStatesSchema),
+	discoveredPublicationIds: Schema.optional(mutableArray(Schema.String)),
 	moduleTags: Schema.optional(mutableArray(mutableStruct({ id: Schema.String, prefix: Schema.String }))),
 	packageTags: Schema.optional(
 		mutableArray(mutableStruct({

@@ -3,7 +3,7 @@ import type { Package } from '@/domain/inventory.ts';
 import { matchesPackage, packageId } from '@/domain/package-identity.ts';
 import type { ModuleTag, RefChange, RefPolicy, RefState } from '@/domain/refs.ts';
 import type { SemVer } from '@/domain/version.ts';
-import { compare, isPrerelease, parseTag, semVer, tagFor } from '@/domain/version.ts';
+import { aliasSeries, compare, isPrerelease, parseTag, semVer, tagFor } from '@/domain/version.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -112,17 +112,15 @@ export function planRefs(
 		}
 		if (!full) return yield* precondition('Publish the version tag before aliases');
 		if (isPrerelease(normalized)) return [];
-		const [major, minor] = normalized.split('.');
 		const changes: RefChange[] = [];
 		for (const alias of policy.aliases) {
-			const name = `${policy.prefix}${major}${alias === 'minor' ? `.${minor}` : ''}`;
-			const inSeries = (candidate: string) => {
-				const parts = candidate.split('.');
-				return parts[0] === major && (alias === 'major' || parts[1] === minor);
-			};
+			const series = aliasSeries(normalized, alias);
+			const name = policy.prefix + series;
 			const versions = refs.flatMap(ref => {
 				const candidate = parseTag(policy, ref.name);
-				return candidate && !isPrerelease(candidate) && inSeries(candidate) ? [{ ...ref, version: candidate }] : [];
+				return candidate && !isPrerelease(candidate) && aliasSeries(candidate, alias) === series
+					? [{ ...ref, version: candidate }]
+					: [];
 			});
 			if (versions.some(ref => compare(ref.version, normalized) > 0)) {
 				return yield* precondition('Alias update would downgrade its release series');

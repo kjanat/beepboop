@@ -9,6 +9,7 @@ import {
 	repositoryChannelOutcomes,
 	wingetOutcome,
 } from '@/publication/destinations.ts';
+import { publicationRegistryHref } from '@/publication/links.ts';
 
 const widget: Package = {
 	manager: 'npm',
@@ -131,4 +132,29 @@ test('registry links carry the published version, and GoReleaser tags gain a sin
 	expect(destinationHref({ destination: 'npm', state: 'unchecked' }, widget, 'octo/widget')).toBe(
 		'https://www.npmjs.com/package/widget',
 	);
+});
+
+test('action publication links resolve scoped npm packages and preserve the tagged Go module version', () => {
+	expect(publicationRegistryHref('npm', '@octo/widget', '1.2.0-beta.1', 'octo/widget')).toBe(
+		'https://npm.im/package/@octo/widget/v/1.2.0-beta.1',
+	);
+	expect(publicationRegistryHref('npm', 'widget', '1.2.0', 'octo/widget')).toBe(
+		'https://npm.im/package/widget/v/1.2.0',
+	);
+	expect(publicationRegistryHref('go-proxy', 'example.org/widget/v2', 'v2.1.0', 'octo/widget')).toBe(
+		'https://pkg.go.dev/example.org/widget/v2@v2.1.0',
+	);
+	expect(publicationRegistryHref('open-vsx', 'octo.widget', '1.2.0', 'octo/widget')).toBe(
+		'https://open-vsx.org/extension/octo/widget/1.2.0',
+	);
+});
+
+test('container publication links use the provider package page and Docker Hub tag filters', () => {
+	const href = (image: string, version?: string) => publicationRegistryHref('oci', image, version, 'octo/widget');
+	expect(href('ghcr.io/octo/tools/widget', '1.2.0')).toBe('https://ghcr.io/octo/tools/widget');
+	expect(href('docker.io/octo/widget', '1.2.0')).toBe('https://hub.docker.com/r/octo/widget/tags?name=1.2.0');
+	expect(href('docker.io/library/alpine', '3.20')).toBe('https://hub.docker.com/_/alpine/tags?name=3.20');
+	expect(href('docker.io/library/alpine')).toBe('https://hub.docker.com/_/alpine');
+	expect(href('registry.example/octo/widget')).toBeUndefined();
+	expect(href('ghcr.io/octo/../widget')).toBeUndefined();
 });

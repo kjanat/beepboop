@@ -102,7 +102,7 @@ export function soleMatch<P extends PackageRecord>(reference: string, packages: 
 	const matches = packages.filter(pkg => matchesPackage(reference, pkg));
 	return matches.length === 1 ? matches[0] : undefined;
 }
-export function publishablePackages(packages: Package[], references?: readonly string[]): Package[] {
+export function publishablePackages(packages: readonly Package[], references?: readonly string[]): Package[] {
 	return packages.filter(pkg =>
 		publishable(pkg) && (!references || references.some(reference => matchesPackage(reference, pkg)))
 	);
