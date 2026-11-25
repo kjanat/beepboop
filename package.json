@@ -113,6 +113,9 @@
 			"onFail": "warn"
 		}
 	},
+	"patchedDependencies": {
+		"playwright-core@1.65.1": "patches/playwright-core@1.65.1.patch"
+	},
 	"trustedDependencies": [
 		"@kprint/kprint",
 		"esbuild",

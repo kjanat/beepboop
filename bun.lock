@@ -253,6 +253,9 @@
     "@kprint/kprint",
     "workerd",
   ],
+  "patchedDependencies": {
+    "playwright-core@1.65.1": "patches/playwright-core@1.65.1.patch",
+  },
   "overrides": {
     "wrangler": "4.168.0",
   },

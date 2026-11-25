@@ -1,0 +1,215 @@
+diff --git a/bin/reinstall_chrome_beta_linux.sh b/bin/reinstall_chrome_beta_linux.sh
+index 13d55dfaacaae405bff7a9824cf75d6b99a10eb7..493abc8d4a151c0f6ce85d04ab2df153735deb4f 100755
+--- a/bin/reinstall_chrome_beta_linux.sh
++++ b/bin/reinstall_chrome_beta_linux.sh
+@@ -2,12 +2,13 @@
+ set -e
+ set -x
+ 
+-if [[ $(arch) == "aarch64" ]]; then
++architecture=$(arch)
++if [[ ${architecture} == "aarch64" ]]; then
+   echo "ERROR: not supported on Linux Arm64"
+   exit 1
+ fi
+ 
+-if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
++if [[ -z "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" ]]; then
+   if [[ ! -f "/etc/os-release" ]]; then
+     echo "ERROR: cannot install on unknown linux distribution (/etc/os-release is missing)"
+     exit 1
+@@ -15,13 +16,14 @@ if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
+ 
+   ID=$(bash -c 'source /etc/os-release && echo $ID')
+   if [[ "${ID}" != "ubuntu" && "${ID}" != "debian" ]]; then
+-    echo "ERROR: cannot install on $ID distribution - only Ubuntu and Debian are supported"
++    echo "ERROR: cannot install on ${ID} distribution - only Ubuntu and Debian are supported"
+     exit 1
+   fi
+ fi
+ 
+ # 1. make sure to remove old beta if any.
+-if dpkg --get-selections | grep -q "^google-chrome-beta[[:space:]]*install$" >/dev/null; then
++selections=$(dpkg --get-selections google-chrome-beta)
++if grep -q "^google-chrome-beta[[:space:]]*install$" <<<"${selections}"; then
+   apt-get remove -y google-chrome-beta
+ fi
+ 
+diff --git a/bin/reinstall_chrome_stable_linux.sh b/bin/reinstall_chrome_stable_linux.sh
+index 64bc1393556c3a5f18662665e32f1b6d09b00c95..044824f6de02cdd8f4daf886440e672921d49ddf 100755
+--- a/bin/reinstall_chrome_stable_linux.sh
++++ b/bin/reinstall_chrome_stable_linux.sh
+@@ -2,12 +2,13 @@
+ set -e
+ set -x
+ 
+-if [[ $(arch) == "aarch64" ]]; then
++architecture=$(arch)
++if [[ ${architecture} == "aarch64" ]]; then
+   echo "ERROR: not supported on Linux Arm64"
+   exit 1
+ fi
+ 
+-if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
++if [[ -z "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" ]]; then
+   if [[ ! -f "/etc/os-release" ]]; then
+     echo "ERROR: cannot install on unknown linux distribution (/etc/os-release is missing)"
+     exit 1
+@@ -15,13 +16,14 @@ if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
+ 
+   ID=$(bash -c 'source /etc/os-release && echo $ID')
+   if [[ "${ID}" != "ubuntu" && "${ID}" != "debian" ]]; then
+-    echo "ERROR: cannot install on $ID distribution - only Ubuntu and Debian are supported"
++    echo "ERROR: cannot install on ${ID} distribution - only Ubuntu and Debian are supported"
+     exit 1
+   fi
+ fi
+ 
+ # 1. make sure to remove old stable if any.
+-if dpkg --get-selections | grep -q "^google-chrome[[:space:]]*install$" >/dev/null; then
++selections=$(dpkg --get-selections google-chrome)
++if grep -q "^google-chrome[[:space:]]*install$" <<<"${selections}"; then
+   apt-get remove -y google-chrome
+ fi
+ 
+diff --git a/bin/reinstall_msedge_beta_linux.sh b/bin/reinstall_msedge_beta_linux.sh
+index e1f156a08f74ed793b4a1ba086500a93eda44263..93c1988e20fb147658ba5376bcfd9cc271ca5954 100755
+--- a/bin/reinstall_msedge_beta_linux.sh
++++ b/bin/reinstall_msedge_beta_linux.sh
+@@ -3,12 +3,13 @@
+ set -e
+ set -x
+ 
+-if [[ $(arch) == "aarch64" ]]; then
++architecture=$(arch)
++if [[ ${architecture} == "aarch64" ]]; then
+   echo "ERROR: not supported on Linux Arm64"
+   exit 1
+ fi
+ 
+-if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
++if [[ -z "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" ]]; then
+   if [[ ! -f "/etc/os-release" ]]; then
+     echo "ERROR: cannot install on unknown linux distribution (/etc/os-release is missing)"
+     exit 1
+@@ -16,13 +17,14 @@ if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
+ 
+   ID=$(bash -c 'source /etc/os-release && echo $ID')
+   if [[ "${ID}" != "ubuntu" && "${ID}" != "debian" ]]; then
+-    echo "ERROR: cannot install on $ID distribution - only Ubuntu and Debian are supported"
++    echo "ERROR: cannot install on ${ID} distribution - only Ubuntu and Debian are supported"
+     exit 1
+   fi
+ fi
+ 
+ # 1. make sure to remove old beta if any.
+-if dpkg --get-selections | grep -q "^microsoft-edge-beta[[:space:]]*install$" >/dev/null; then
++selections=$(dpkg --get-selections microsoft-edge-beta)
++if grep -q "^microsoft-edge-beta[[:space:]]*install$" <<<"${selections}"; then
+   apt-get remove -y microsoft-edge-beta
+ fi
+ 
+@@ -39,7 +41,8 @@ if ! command -v gpg >/dev/null; then
+ fi
+ 
+ # 3. Add the GPG key, the apt repo, update the apt cache, and install the package
+-curl -L https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/microsoft.gpg
++set -o pipefail
++curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/microsoft.gpg
+ install -o root -g root -m 644 /tmp/microsoft.gpg /etc/apt/trusted.gpg.d/
+ sh -c 'echo "deb [arch=amd64] https://packages.microsoft.com/repos/edge stable main" > /etc/apt/sources.list.d/microsoft-edge-dev.list'
+ rm /tmp/microsoft.gpg
+diff --git a/bin/reinstall_msedge_dev_linux.sh b/bin/reinstall_msedge_dev_linux.sh
+index 6c1a151cc404aa729a7c952188fb2da43ac313d2..da7960cca44634e24e8b3d30c35f3f4d8fde4bc3 100755
+--- a/bin/reinstall_msedge_dev_linux.sh
++++ b/bin/reinstall_msedge_dev_linux.sh
+@@ -3,12 +3,13 @@
+ set -e
+ set -x
+ 
+-if [[ $(arch) == "aarch64" ]]; then
++architecture=$(arch)
++if [[ ${architecture} == "aarch64" ]]; then
+   echo "ERROR: not supported on Linux Arm64"
+   exit 1
+ fi
+ 
+-if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
++if [[ -z "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" ]]; then
+   if [[ ! -f "/etc/os-release" ]]; then
+     echo "ERROR: cannot install on unknown linux distribution (/etc/os-release is missing)"
+     exit 1
+@@ -16,13 +17,14 @@ if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
+ 
+   ID=$(bash -c 'source /etc/os-release && echo $ID')
+   if [[ "${ID}" != "ubuntu" && "${ID}" != "debian" ]]; then
+-    echo "ERROR: cannot install on $ID distribution - only Ubuntu and Debian are supported"
++    echo "ERROR: cannot install on ${ID} distribution - only Ubuntu and Debian are supported"
+     exit 1
+   fi
+ fi
+ 
+ # 1. make sure to remove old dev if any.
+-if dpkg --get-selections | grep -q "^microsoft-edge-dev[[:space:]]*install$" >/dev/null; then
++selections=$(dpkg --get-selections microsoft-edge-dev)
++if grep -q "^microsoft-edge-dev[[:space:]]*install$" <<<"${selections}"; then
+   apt-get remove -y microsoft-edge-dev
+ fi
+ 
+@@ -39,7 +41,8 @@ if ! command -v gpg >/dev/null; then
+ fi
+ 
+ # 3. Add the GPG key, the apt repo, update the apt cache, and install the package
+-curl -L https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/microsoft.gpg
++set -o pipefail
++curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/microsoft.gpg
+ install -o root -g root -m 644 /tmp/microsoft.gpg /etc/apt/trusted.gpg.d/
+ sh -c 'echo "deb [arch=amd64] https://packages.microsoft.com/repos/edge stable main" > /etc/apt/sources.list.d/microsoft-edge-dev.list'
+ rm /tmp/microsoft.gpg
+diff --git a/bin/reinstall_msedge_stable_linux.sh b/bin/reinstall_msedge_stable_linux.sh
+index 93bd766bc3e8d7f241764ac8a7abeff48d5774e6..f0c2790847da9f8d3be3ad96cb1918bb9d7083e3 100755
+--- a/bin/reinstall_msedge_stable_linux.sh
++++ b/bin/reinstall_msedge_stable_linux.sh
+@@ -3,12 +3,13 @@
+ set -e
+ set -x
+ 
+-if [[ $(arch) == "aarch64" ]]; then
++architecture=$(arch)
++if [[ ${architecture} == "aarch64" ]]; then
+   echo "ERROR: not supported on Linux Arm64"
+   exit 1
+ fi
+ 
+-if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
++if [[ -z "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE}" ]]; then
+   if [[ ! -f "/etc/os-release" ]]; then
+     echo "ERROR: cannot install on unknown linux distribution (/etc/os-release is missing)"
+     exit 1
+@@ -16,13 +17,14 @@ if [ -z "$PLAYWRIGHT_HOST_PLATFORM_OVERRIDE" ]; then
+ 
+   ID=$(bash -c 'source /etc/os-release && echo $ID')
+   if [[ "${ID}" != "ubuntu" && "${ID}" != "debian" ]]; then
+-    echo "ERROR: cannot install on $ID distribution - only Ubuntu and Debian are supported"
++    echo "ERROR: cannot install on ${ID} distribution - only Ubuntu and Debian are supported"
+     exit 1
+   fi
+ fi
+ 
+ # 1. make sure to remove old stable if any.
+-if dpkg --get-selections | grep -q "^microsoft-edge-stable[[:space:]]*install$" >/dev/null; then
++selections=$(dpkg --get-selections microsoft-edge-stable)
++if grep -q "^microsoft-edge-stable[[:space:]]*install$" <<<"${selections}"; then
+   apt-get remove -y microsoft-edge-stable
+ fi
+ 
+@@ -39,7 +41,8 @@ if ! command -v gpg >/dev/null; then
+ fi
+ 
+ # 3. Add the GPG key, the apt repo, update the apt cache, and install the package
+-curl -L https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/microsoft.gpg
++set -o pipefail
++curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/microsoft.gpg
+ install -o root -g root -m 644 /tmp/microsoft.gpg /etc/apt/trusted.gpg.d/
+ sh -c 'echo "deb [arch=amd64] https://packages.microsoft.com/repos/edge stable main" > /etc/apt/sources.list.d/microsoft-edge-stable.list'
+ rm /tmp/microsoft.gpg
