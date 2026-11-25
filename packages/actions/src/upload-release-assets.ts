@@ -31,6 +31,10 @@ const assetSchema = Schema.Struct({
 	state: Schema.String,
 });
 
+function emptyStarter(asset: typeof assetSchema.Type) {
+	return asset.state === 'starter' && asset.size === 0 && asset.digest === null;
+}
+
 async function workspaceFile(root: string, path: string) {
 	if (isAbsolute(path)) throw new Error(`Expected a workspace-relative path: ${path}`);
 	const resolved = await realpath(resolve(root, path));
@@ -157,7 +161,14 @@ export const uploadReleaseAssets = Effect.fn('uploadReleaseAssets')(
 			}
 			for (const file of files) {
 				const remote = existing.get(file.name);
-				if (remote?.state === 'starter' && remote.size === 0 && !remote.digest && interrupted.has(file.name)) continue;
+				if (remote && emptyStarter(remote)) {
+					if (interrupted.has(file.name)) continue;
+					return yield* new ActionFailure({
+						message:
+							`Upload of ${file.name} is still incomplete (asset ID ${remote.id}). Retry after the active upload finishes; if its uploader stopped, remove the empty starter and rerun.`,
+						retryable: true,
+					});
+				}
 				if (
 					remote && (remote.state !== 'uploaded' || remote.digest !== file.digest || remote.size !== file.body.size)
 				) {
@@ -170,7 +181,17 @@ export const uploadReleaseAssets = Effect.fn('uploadReleaseAssets')(
 				const remote = existing.get(file.name);
 				if (!remote || remote.state === 'starter') {
 					if (remote) {
-						yield* gitHubRequest(transport, `/repos/${repository}/releases/assets/${remote.id}`, token, 'DELETE');
+						const path = `/repos/${repository}/releases/assets/${remote.id}`;
+						const current = yield* Schema.decodeUnknownEffect(Schema.NullOr(assetSchema))(
+							yield* gitHubRequest(transport, path, token),
+						);
+						if (!current || current.id !== remote.id || current.name !== file.name || !emptyStarter(current)) {
+							return yield* new ActionFailure({
+								message: `Asset ${remote.id} changed during upload recovery`,
+								retryable: true,
+							});
+						}
+						yield* gitHubRequest(transport, path, token, 'DELETE');
 					}
 					interrupted.delete(file.name);
 					yield* upload(transport, endpoint, token, file, interrupted);

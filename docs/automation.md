@@ -1628,7 +1628,10 @@ choose a different filename.
 
 The action checks the supplied digests before uploading and uses the draft’s
 numeric ID. A retry reuses an uploaded asset with matching bytes and can update
-its label. An existing asset with different bytes fails the step.
+its label. An existing asset with different bytes fails the step. If a rerun
+finds an empty GitHub `starter` asset, it polls for completion. If the asset
+stays empty, the error identifies it by ID. Confirm the previous uploader has
+stopped before removing the abandoned asset and retrying.
 
 Repositories with immutable releases accept assets only before publication.
 

@@ -126,16 +126,36 @@ test('finds a later-page upload and updates only its display label', async () =>
 	expect(requests.length).toBe(4);
 });
 
-test('a remote digest conflict or incomplete upload prevents all uploads in the batch', async () => {
+test('a remote digest conflict prevents all uploads in the batch', async () => {
 	writeFileSync(join(workspace, 'one'), content);
-	for (const asset of [{ ...remote, digest: 'sha256:wrong' }, { ...remote, state: 'starter', size: 0, digest: null }]) {
-		const methods: string[] = [];
-		await expect(run(async (input, init) => {
-			methods.push(String(init?.method));
-			return Response.json(String(input).endsWith(releasePath) ? draft : [asset]);
-		}, { ASSETS: `one\n${file}` })).rejects.toThrow('asset ID 17');
-		expect(methods).toEqual(['GET', 'GET']);
-	}
+	const methods: string[] = [];
+	await expect(run(async (input, init) => {
+		methods.push(String(init?.method));
+		return Response.json(String(input).endsWith(releasePath) ? draft : [{ ...remote, digest: 'sha256:wrong' }]);
+	}, { ASSETS: `one\n${file}` })).rejects.toThrow('asset ID 17');
+	expect(methods).toEqual(['GET', 'GET']);
+});
+
+const starter = { ...remote, state: 'starter', size: 0, digest: null };
+
+test('rerun waits for a pre-existing starter and reuses it once uploaded', async () => {
+	let lists = 0;
+	await run(async (input, init) => {
+		expect(init?.method).toBe('GET');
+		if (String(input).endsWith(releasePath)) return Response.json(draft);
+		lists++;
+		return Response.json(lists === 1 ? [starter] : [remote]);
+	});
+	expect(lists).toBe(2);
+});
+
+test('rerun polls a persistent foreign starter with bounded reads and reports its ID', async () => {
+	const methods: string[] = [];
+	await expect(run(async (input, init) => {
+		methods.push(String(init?.method));
+		return Response.json(String(input).endsWith(releasePath) ? draft : [starter]);
+	})).rejects.toThrow('incomplete (asset ID 17)');
+	expect(methods).toEqual(Array(6).fill('GET'));
 });
 
 test('refuses an ID from a different execution before contacting GitHub', async () => {
@@ -153,7 +173,8 @@ test('recovers the empty starter left by its own failed 502 upload', async () =>
 	await run(async (input, init) => {
 		if (String(input).endsWith(releasePath)) return Response.json(draft);
 		if (init?.method === 'GET') {
-			return Response.json(posts ? [{ ...remote, state: 'starter', size: 0, digest: null }] : []);
+			if (String(input).endsWith('/releases/assets/17')) return Response.json(starter);
+			return Response.json(posts ? [starter] : []);
 		}
 		if (init?.method === 'DELETE') {
 			expect(String(input)).toEndWith('/releases/assets/17');
@@ -165,4 +186,25 @@ test('recovers the empty starter left by its own failed 502 upload', async () =>
 	});
 	expect(posts).toBe(2);
 	expect(deletes).toBe(1);
+});
+
+test('a starter completed between listing and cleanup survives recovery after a 502', async () => {
+	let lists = 0;
+	let posts = 0;
+	let rechecks = 0;
+	await run(async (input, init) => {
+		if (init?.method === 'POST') {
+			posts++;
+			return new Response(null, { status: 502 });
+		}
+		expect(init?.method).toBe('GET');
+		if (String(input).endsWith(releasePath)) return Response.json(draft);
+		if (String(input).endsWith('/releases/assets/17')) {
+			rechecks++;
+			return Response.json(remote);
+		}
+		lists++;
+		return Response.json(lists === 1 ? [] : [lists === 2 ? starter : remote]);
+	});
+	expect({ lists, posts, rechecks }).toEqual({ lists: 3, posts: 1, rechecks: 1 });
 });

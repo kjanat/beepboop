@@ -69,7 +69,7 @@ function detectFormat(input: string, manifestPath: string) {
 	// A delimiter inside a quoted filename belongs to the field.
 	const delimiter = text.replace(/"(?:[^"]|"")*"/g, '').match(/[,\t]/)?.[0];
 	if (delimiter === '\t') return 'tsv';
-	if (delimiter === ',') return 'csv';
+	if (delimiter === ',' || /^"/m.test(text)) return 'csv';
 	return 'nl-sv';
 }
 

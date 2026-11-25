@@ -74,3 +74,21 @@ test('recognized manifest extensions select the parser and an explicit format ov
 	expect(() => parseAssetManifest('dist/not-json', 'auto', 'dist/assets.json')).toThrow();
 	expect(parseAssetManifest(JSON.stringify([second]), 'auto', 'dist/manifest')).toEqual([second]);
 });
+
+test('single-column CSV quoting survives automatic detection across records', () => {
+	const quoted = '"dist/part,1.zip"';
+	expect(parseAssetManifest(quoted)).toEqual([{ asset: 'dist/part,1.zip' }]);
+	expect(parseAssetManifest(quoted + '\n"dist/part,2.zip"')).toEqual([
+		{ asset: 'dist/part,1.zip' },
+		{ asset: 'dist/part,2.zip' },
+	]);
+	expect(parseAssetManifest('asset\r\nplain.zip\r\n"part ""two"".zip"')).toEqual([
+		{ asset: 'plain.zip' },
+		{ asset: 'part "two".zip' },
+	]);
+	expect(parseAssetManifest('"dist/pkg,1.zip"\t\tLinux binary')).toEqual([
+		{ asset: 'dist/pkg,1.zip', displayname: 'Linux binary' },
+	]);
+	expect(parseAssetManifest(quoted, 'nl-sv')).toEqual([{ asset: quoted }]);
+	expect(() => parseAssetManifest('"unclosed')).toThrow();
+});
