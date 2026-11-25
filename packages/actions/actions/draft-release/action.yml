@@ -1,0 +1,47 @@
+name: Get the execution's draft release
+description: Get the ID and asset upload URL of the GitHub release drafted for this Beepboop execution
+inputs:
+  token:
+    description: Existing repository token with contents read permission. Omit to request one from Beepboop.
+    required: false
+  execution-id:
+    description: Execution ID from dispatch or the begin action
+    required: false
+  service:
+    description: Release automation service origin
+    default: https://beepboop.kjanat.dev
+outputs:
+  execution-id:
+    description: Beepboop execution that owns this draft
+    value: ${{ steps.begin.outputs.execution-id }}
+  release-id:
+    description: Numeric GitHub release ID
+    value: ${{ steps.draft.outputs.release-id }}
+  upload-url:
+    description: GitHub's upload URL template for this release
+    value: ${{ steps.draft.outputs.upload-url }}
+runs:
+  using: composite
+  steps:
+    - name: Get the execution context
+      id: begin
+      uses: $/packages/actions/actions/begin
+      with:
+        execution-id: ${{ inputs.execution-id || env.BEEPBOOP_EXECUTION_ID }}
+        service: ${{ inputs.service }}
+    - name: Get a repository token
+      id: token
+      if: inputs.token == ''
+      uses: $/packages/actions/actions/token
+      with:
+        execution-id: ${{ steps.begin.outputs.execution-id }}
+        permission-contents: read
+        service: ${{ inputs.service }}
+    - name: Get the draft by ID
+      id: draft
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token || steps.token.outputs.token }}
+        DRAFT_ID: ${{ fromJSON(steps.begin.outputs.context).draftRelease.id }}
+        DRAFT_TAG: ${{ fromJSON(steps.begin.outputs.context).draftRelease.tag }}
+      run: bash "${GITHUB_ACTION_PATH}/draft.sh"

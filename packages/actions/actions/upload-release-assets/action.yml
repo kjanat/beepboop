@@ -1,0 +1,51 @@
+name: Upload Beepboop draft release assets
+description: Upload and verify files on a GitHub draft release by ID
+inputs:
+  token:
+    description: Existing repository token with contents write permission. Omit to request one from Beepboop.
+    required: false
+  release-id:
+    description: Numeric ID of the draft release
+    required: true
+  assets:
+    description: Inline asset manifest. Set either assets or manifest-file.
+  manifest-file:
+    description: Workspace-relative path to the asset manifest
+  format:
+    description: Manifest format override. Auto detects the file extension or inline content.
+    default: auto
+    options: [auto, nl-sv, csv, tsv, json, ndjson]
+    required: false
+  execution-id:
+    description: Beepboop execution ID from the workflow dispatch or begin step
+  service:
+    description: Beepboop service origin
+    default: https://beepboop.kjanat.dev
+runs:
+  using: composite
+  steps:
+    - name: Get the execution context
+      id: begin
+      uses: $/packages/actions/actions/begin
+      with:
+        execution-id: ${{ inputs.execution-id || env.BEEPBOOP_EXECUTION_ID }}
+        service: ${{ inputs.service }}
+    - name: Get repository token
+      id: token
+      if: inputs.token == ''
+      uses: $/packages/actions/actions/token
+      with:
+        service: ${{ inputs.service }}
+        execution-id: ${{ steps.begin.outputs.execution-id }}
+        permission-contents: write
+    - name: Upload draft assets
+      shell: bash
+      env:
+        DRAFT_ID: ${{ fromJSON(steps.begin.outputs.context).draftRelease.id }}
+        DRAFT_TAG: ${{ fromJSON(steps.begin.outputs.context).draftRelease.tag }}
+        RELEASE_ID: ${{ inputs.release-id }}
+        ASSETS: ${{ inputs.assets }}
+        MANIFEST_FILE: ${{ inputs.manifest-file }}
+        MANIFEST_FORMAT: ${{ inputs.format }}
+        GH_TOKEN: ${{ inputs.token || steps.token.outputs.token }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/upload-release-assets.ts"

@@ -165,6 +165,7 @@ test('the publish step bundles the runtime, pushes the first distribution and re
 			'100644 runtime/publish.ts',
 			'100644 runtime/pull-request.ts',
 			'100644 runtime/refs.ts',
+			'100644 runtime/upload-release-assets.ts',
 		]);
 		expect(await Bun.file(output).text()).toMatch(new RegExp(`^commit<<(value_[0-9a-f-]+)\\n${commit}\\n\\1\\n$`));
 		expect(await Bun.file(summary).text()).toBe(

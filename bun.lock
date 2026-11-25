@@ -57,6 +57,7 @@
         "@beepboopbot/host": "workspace:*",
         "@beepboopbot/kernel": "workspace:*",
         "@beepboopbot/publication": "workspace:*",
+        "csv-parse": "^7.0.3",
         "effect": "^4.1.2",
       },
     },
@@ -252,6 +253,9 @@
     "@kprint/kprint",
     "workerd",
   ],
+  "patchedDependencies": {
+    "playwright-core@1.65.1": "patches/playwright-core@1.65.1.patch",
+  },
   "overrides": {
     "wrangler": "4.168.0",
   },
@@ -955,6 +959,8 @@
     "css-what": ["css-what@7.0.0", "", {}, "sha512-wD5oz5xibMOPHzy13CyGmogB3phdvcDaB5t0W/Nr5Z2O/agcB8YwOz6e2Lsp10pNDzBoDO9nVa3RGs/2BttpHQ=="],
 
     "csso": ["csso@5.0.5", "", { "dependencies": { "css-tree": "~2.2.0" } }, "sha512-0LrrStPOdJj+SPCCrGhzryycLjwcgUSHBtxNA8aIDxf0GLsRh1cKYhB00Gd1lDOS4yGH69+SNn13+TWbVHETFQ=="],
+
+    "csv-parse": ["csv-parse@7.0.3", "", {}, "sha512-YFd3QM/yo17vH91L1IOZuvl09zM0zEEtdfTcOCKWcMdM++MNaQSyp09slXyFCLaPXvHstQFx/xC8myiFHSMUvw=="],
 
     "debug": ["debug@4.4.3", "", { "dependencies": { "ms": "^2.1.3" }, "peerDependencies": { "supports-color": "*" }, "optionalPeers": ["supports-color"] }, "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA=="],
 
