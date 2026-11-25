@@ -1,0 +1,37 @@
+name: Generate a Homebrew cask
+description: Generate a Homebrew cask from cask metadata and release checksums
+inputs:
+  config:
+    description: Cask metadata JSON file
+    required: true
+  version:
+    description: Stable release version
+    required: true
+  tag:
+    description: Release tag (defaults to v followed by the version)
+  checksums:
+    description: Release SHA256 checksums file
+    required: true
+  out:
+    description: Output directory
+    required: true
+outputs:
+  file:
+    description: Absolute path of the generated cask
+    value: ${{ steps.generate.outputs.file }}
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      id: bun
+      uses: $/actions/deps/bun
+    - name: Generate cask
+      id: generate
+      shell: bash
+      env:
+        HOMEBREW_CASK_CHECKSUMS: ${{ inputs.checksums }}
+        HOMEBREW_CASK_CONFIG: ${{ inputs.config }}
+        HOMEBREW_CASK_OUT: ${{ inputs.out }}
+        HOMEBREW_CASK_TAG: ${{ inputs.tag }}
+        HOMEBREW_CASK_VERSION: ${{ inputs.version }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/generate-homebrew.ts"
