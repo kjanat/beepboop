@@ -1,0 +1,41 @@
+name: Release automation begin
+description: Begin a repository release operation using GitHub OIDC
+inputs:
+  service:
+    description: Release automation service origin
+    default: https://beepboop.kjanat.dev
+  execution-id:
+    description: Execution ID from dispatch or the begin action
+    required: false
+  stream:
+    description: stream
+    default: main
+  operation:
+    description: operation
+    default: publish
+  version:
+    description: version
+    default: ""
+outputs:
+  execution-id:
+    description: execution-id
+    value: ${{ steps.client.outputs.execution-id }}
+  context:
+    description: Release metadata and a contextFile path for the full runner-local context
+    value: ${{ steps.client.outputs.context }}
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      id: bun
+      uses: $/actions/deps/bun
+    - name: Begin release
+      id: client
+      shell: bash
+      env:
+        EXECUTION_ID: ${{ inputs.execution-id || env.BEEPBOOP_EXECUTION_ID }}
+        OPERATION: ${{ inputs.operation }}
+        RELEASE_VERSION: ${{ inputs.version }}
+        SERVICE_ORIGIN: ${{ inputs.service }}
+        STREAM: ${{ inputs.stream }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" begin
