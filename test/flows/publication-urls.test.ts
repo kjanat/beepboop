@@ -189,3 +189,24 @@ test('planning and recovery agree on the selected version and registry', async (
 		expect(requests).toEqual(endpoint ? [endpoint] : []);
 	}
 });
+
+test('tag-triggered Cargo links use the crate version', () => {
+	const id = 'pkg:cargo/widget';
+	const url = 'https://crates.io/crates/widget/1.2.3-beta.1';
+	expect(plannedPublicationUrls({ ...run, version: 'v1.2.3-beta.1', workflow: { ...workflow, publications: [id] } }))
+		.toEqual({ publicationUrls: { [id]: url }, publicationUrl: url });
+});
+
+test('publish selects all stream packages even when only one is required', () => {
+	const configuration = structuredClone(run.configuration);
+	const stream = configuration.streams.main;
+	if (!stream) throw new Error('Expected main stream');
+	stream.packages = [crate, 'pkg:npm/widget'];
+	stream.required = [crate];
+	const publish = { ...run, operation: 'publish', configuration };
+	expect(plannedPublicationUrls(publish)).toEqual({
+		publicationUrls: { [crate]: crateUrl, 'pkg:npm/widget': 'https://npm.im/package/widget/v/0.1.1' },
+	});
+	expect(plannedPublicationUrls({ ...publish, workflow: { ...workflow, publications: [crate] } }))
+		.toEqual({ publicationUrls: { [crate]: crateUrl }, publicationUrl: crateUrl });
+});

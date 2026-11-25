@@ -15,7 +15,6 @@ type TargetExecution = Pick<
 	| 'publications'
 	| 'workflow'
 	| 'package'
-	| 'releaseSet'
 	| 'release'
 	| 'draftRelease'
 	| 'moduleTags'
@@ -26,10 +25,7 @@ function selectedPublicationIds(run: TargetExecution, refId: string): Set<string
 	const binding = run.package;
 	if (binding) return new Set([declared?.find(id => selectorKey(id) === binding.id) ?? binding.id]);
 	if (declared) return new Set(declared);
-	if (run.operation === 'publish') {
-		const required = run.releaseSet?.required ?? run.configuration.streams[run.stream]?.required;
-		if (required) return new Set(required);
-	}
+	if (run.operation === 'publish') return new Set(run.configuration.streams[run.stream]?.packages);
 	return new Set(run.publications.map(publication => publication.id).filter(id => id !== refId));
 }
 

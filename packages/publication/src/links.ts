@@ -42,7 +42,9 @@ export function registryHref(
 	if (destination === 'pypi') {
 		return `https://pypi.org/project/${encodePath(name)}/${version ? `${encodePath(version)}/` : ''}`;
 	}
-	if (destination === 'crates-io') return `https://crates.io/crates/${encodePath(name, version ?? '')}`;
+	if (destination === 'crates-io') {
+		return `https://crates.io/crates/${encodePath(name, version?.replace(/^v/, '') ?? '')}`;
+	}
 	if (destination === 'jsr') return `${packagePages.jsr(name)}${version ? `@${encodeURIComponent(version)}` : ''}`;
 	if (destination === 'go-proxy') {
 		return `https://pkg.go.dev/${encodePath(name)}${
