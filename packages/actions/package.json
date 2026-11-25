@@ -13,6 +13,7 @@
 		"@beepboopbot/host": "workspace:*",
 		"@beepboopbot/kernel": "workspace:*",
 		"@beepboopbot/publication": "workspace:*",
+		"csv-parse": "^7.0.3",
 		"effect": "^4.1.2"
 	}
 }

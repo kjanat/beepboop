@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Effect } from 'effect';
-import { bundleRuntime } from '@/tooling/actions/runtime-bundle';
+import { bundleRuntime, entrypoints } from '@/tooling/actions/runtime-bundle';
 
 const examples = join(import.meta.dir, '../../examples');
 const digest = (seed: string) => seed.repeat(64).slice(0, 64);
@@ -50,8 +50,7 @@ test('bundled runtimes keep the Bun pragma and leave out source paths', () => {
 			readFileSync(join(runtime, name), 'utf8').split('\n').filter(line => line.startsWith('// ')),
 		]),
 	);
-	expect(comments).toEqual(Object.fromEntries(Object.keys(comments).map(name => [name, ['// @bun']])));
-	expect(Object.keys(comments).length).toBe(8);
+	expect(comments).toEqual(Object.fromEntries(entrypoints.map(name => [`${name}.ts`, ['// @bun']])));
 });
 
 test('the bundled generator actions run without installed packages', () => {

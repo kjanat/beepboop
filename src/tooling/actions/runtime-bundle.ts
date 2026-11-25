@@ -14,6 +14,7 @@ export const entrypoints = [
 	'publish',
 	'pull-request',
 	'refs',
+	'upload-release-assets',
 ] as const;
 
 function withoutModuleComments(bundle: string): string {

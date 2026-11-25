@@ -1590,12 +1590,38 @@ When a dispatched operation lists `github-release:<owner>/<repo>` in its
 `publications`, Beepboop creates a draft release before it dispatches the run.
 The draft has the tag `<prefix><version>` and targets the release commit.
 Beepboop marks the draft as a prerelease for prerelease versions. The run's
-`context.draftRelease` holds the draft's `id` and `tag`. Upload release assets
-to the draft during the run:
+`context.draftRelease` holds the draft's `id` and `tag`. Once the draft exists, `draft-release`
+returns its numeric `release-id` and GitHub’s `upload-url` template. Use the
+ID to attach files from the build:
 
-```sh
-gh release upload "$TAG" target/package/*.crate
+```yaml
+- uses: kjanat/beepboop/actions/draft-release@v1
+  id: draft
+  with:
+    execution-id: ${{ inputs.beepboop_execution_id }}
+
+- uses: kjanat/beepboop/actions/upload-release-assets@v1
+  with:
+    execution-id: ${{ inputs.beepboop_execution_id }}
+    release-id: ${{ steps.draft.outputs.release-id }}
+    format: csv
+    assets: |
+      asset,sha256,displayname
+      dist/tool-linux-amd64.tar.gz,,Linux x86-64
+      dist/tool-darwin-arm64.tar.gz,,macOS Apple Silicon
 ```
+
+Supply a manifest inline with `assets` or point `manifest-file` at a file
+in the workspace. CSV and TSV rows can include the local asset path, expected
+SHA-256 and display name. JSON accepts an array of objects with the same
+fields. NDJSON accepts one object per line. Use `nl-sv` for one literal
+file path per line. A display name is the GitHub asset label. The downloadable
+filename defaults to the local basename. Set the optional `name` field to
+choose a different filename.
+
+The action checks the supplied digests before uploading and uses the draft’s
+numeric ID. A retry reuses an uploaded asset with matching bytes and can update
+its label. An existing asset with different bytes fails the step.
 
 Repositories with immutable releases accept assets only before publication.
 
