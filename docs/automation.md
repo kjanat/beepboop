@@ -646,14 +646,16 @@ metadata. Manifest
 problems and more than 100 check runs always stop a release.
 
 `beepboop release` and the dashboard start a release on every stream that can
-publish one shared version. Some streams only prepare the version, from both
-places: a stream that versions each package on its own, a tag-based stream
-without a promotion that publishes the version tag, and, when the release
-writes a new version, a stream that keeps its version only in version files
-or prepares it in its own workflow with `prepare.strategy:
-"workflow"`, and a release of only some of the stream's packages. The Start
-release workflow starts a
-release only when the stream lists it in `startFrom`:
+publish one shared version. For a stream that writes its version only to
+`versionFiles`, configure a dispatchable promotion with `refs.phase: "version"`.
+Beepboop then uses that tag prefix to find the last release and follows the
+prepared version through its merge.
+
+Independent versions and tag-based streams without a matching tag publisher
+support preparation only. The same applies to a new version when the stream
+has only version files and no tag publisher, delegates preparation to its own
+workflow, or selects only some of its packages. To start a release from a
+GitHub Actions workflow, list that workflow in `startFrom`:
 
 ```json
 {

@@ -10,8 +10,9 @@ import type { StartChannel } from '@/domain/release-start.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { semver } from '@/domain/semver.ts';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
+import { releaseTagPrefix } from '@/domain/start-refusal.ts';
 import { nextVersion, parseVersionRequest } from '@/domain/version-request.ts';
-import { latestTag, tagPrefix, versionsInFiles } from '@/domain/version-tags.ts';
+import { latestReleaseTag, tagPrefix, versionsInFiles } from '@/domain/version-tags.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { capabilitySentence, releasable, releaseCapability, startRefusal } from '@/release/domain/capability.ts';
@@ -89,7 +90,7 @@ interface ReleaseInput {
 
 function latestTagVersion(service: AutomationService, repository: ReadyRepository, prefix: string) {
 	return service.gateway.tagRefs(repository.name, repository.id).pipe(
-		Effect.map(refs => latestTag(refs.map(ref => ref.name), prefix)),
+		Effect.map(refs => latestReleaseTag(refs.map(ref => ref.name), prefix)),
 	);
 }
 
@@ -163,8 +164,9 @@ export function releasePlan(
 			return yield* precondition('Package is outside this release stream');
 		}
 		let target: unknown = input.version;
-		if (stream.versionSource?.kind === 'tags') {
-			const latest = yield* latestTagVersion(service, repository, stream.versionSource.prefix);
+		const prefix = releaseTagPrefix(stream, repository.inventory);
+		if (prefix !== undefined) {
+			const latest = yield* latestTagVersion(service, repository, prefix);
 			const request = yield* parseVersionRequest(input.version);
 			if (!latest && !('version' in request)) {
 				return yield* precondition('Select an explicit version for the first release');
@@ -183,14 +185,15 @@ export function releasePlan(
 				? request.version
 				: yield* resolvePackageVersion(yield* selectedReleasePackages(repository.inventory, selected), request);
 		}
+		const manifests = versionsInFiles(repository.inventory) && (prefix === undefined || stream.packages?.length !== 0);
 		const planAt = (at: Snapshot): Effect.Effect<ReleasePlan, DomainError> =>
-			stream.prepare.strategy !== 'workflow' && versionsInFiles(repository.inventory)
+			stream.prepare.strategy !== 'workflow' && manifests
 				? planRelease(at, repository.inventory, target, selected, undefined, stream.versionFiles)
 				: stream.prepare.strategy !== 'workflow' && stream.versionFiles?.length
 				? planVersionFiles(at, target, stream.versionFiles)
 				: delegatedPlan(at, repository.inventory, stream, target, selected);
 		const head = yield* planAt(snapshot);
-		const plan = stream.versionSource?.kind === 'tags' || head.edits.length || head.requiresPreparation
+		const plan = prefix !== undefined || head.edits.length || head.requiresPreparation
 			? head
 			: yield* carriedPlan(service, selection, input.stream, head, selected, planAt);
 		const planId = yield* planIdentity(plan, repository);

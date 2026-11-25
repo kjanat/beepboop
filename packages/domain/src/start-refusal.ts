@@ -3,15 +3,25 @@ import type { Inventory } from '@/domain/inventory.ts';
 import { publishablePackages } from '@/domain/package-identity.ts';
 import { versionsInFiles } from '@/domain/version-tags.ts';
 
-export function hasTagPromotion(stream: Stream, prefix: string): boolean {
+export function promotionTagPrefix(stream: Stream): string | undefined {
 	const workflow = stream.promote.workflow;
 	return workflow !== undefined && workflow.mode !== 'observe' && !workflow.ref?.includes('*')
-		&& workflow.refs?.phase === 'version' && workflow.refs.prefix === prefix;
+		&& workflow.refs?.phase === 'version' ? workflow.refs.prefix : undefined;
+}
+
+/** Managed version files can carry a release to its merge when promotion publishes the corresponding tag. */
+export function releaseTagPrefix(stream: Stream, inventory: Inventory): string | undefined {
+	if (stream.versionSource) return stream.versionSource.prefix;
+	if (stream.versioning !== 'workspace' || stream.prepare.strategy === 'workflow' || !stream.versionFiles?.length) {
+		return undefined;
+	}
+	const packages = publishablePackages(inventory.packages, stream.packages);
+	return versionsInFiles({ ...inventory, packages }) ? undefined : promotionTagPrefix(stream);
 }
 
 export function streamStartRefusal(name: string, stream: Stream): string | undefined {
 	if (stream.versioning === 'independent') return `${name} cannot start releases: it needs one shared version`;
-	if (stream.versionSource?.kind === 'tags' && !hasTagPromotion(stream, stream.versionSource.prefix)) {
+	if (stream.versionSource?.kind === 'tags' && promotionTagPrefix(stream) !== stream.versionSource.prefix) {
 		return `${name} needs a dispatchable promotion that publishes a version tag with prefix "${stream.versionSource.prefix}"`;
 	}
 	return undefined;
@@ -31,7 +41,7 @@ function preparationRefusal(
 	if (chosen.length < publishablePackages(inventory.packages, stream.packages).length) {
 		return `${name} shares one version across its packages, and a release of only some of them does not start publication`;
 	}
-	if (stream.versionSource?.kind === 'tags') return undefined;
+	if (releaseTagPrefix(stream, inventory) !== undefined) return undefined;
 	return versionsInFiles({ ...inventory, packages: chosen })
 		? undefined
 		: `${name} keeps its version outside package manifests, and merging a version bump there does not start publication`;

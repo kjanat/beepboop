@@ -6,10 +6,12 @@ import type { Reply } from '@root/test/support/http.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { executions, promotions } from '@root/test/support/releases.ts';
 import {
+	dispatchedPublishWorkflow,
 	editableConfiguration,
 	licenseText,
 	npmManifest,
 	passChecks,
+	plugin,
 	widget,
 } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -730,6 +732,61 @@ test('a tag-based stream without a promotion that publishes the version tag only
 	expect(preparation.status).toBe(200);
 	expect(decodeSync(execution, preparation.body)).toMatchObject({ operation: 'prepare' });
 	expect(preparation.body).not.toHaveProperty('started');
+});
+
+test.each([false, true])('a private plugin release starts and publishes on merge (unrelated npm package: %p)', async unrelated => {
+	const repository = plugin(world.github);
+	const githubRelease = `github-release:${repository.name}`;
+	const baseline = world.github.head(repository);
+	repository.refs.set('tags/0.1.0', baseline);
+	repository.refs.set('tags/v9.0.0', baseline);
+	const head = world.github.push(repository, {
+		...(unrelated ? { 'package.json': npmManifest('widget', '1.0.0') } : {}),
+		'.github/workflows/publish.yml': dispatchedPublishWorkflow('Publish', 'main', 'release', ''),
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['npm', 'cargo', 'workflow', 'github-release'],
+			streams: {
+				main: {
+					...(unrelated ? { packages: [] } : {}),
+					versionFiles: [{ path: 'Cargo.toml', format: 'toml', key: ['package', 'version'] }],
+					startFrom: [{ via: 'action', workflow: 'start-release.yml' }],
+					prepare: { strategy: 'managed' },
+					promote: {
+						workflow: { file: 'publish.yml', refs: { phase: 'version', prefix: '' }, publications: [githubRelease] },
+					},
+					mustPublish: [githubRelease],
+				},
+			},
+		}),
+	}, 'Manage the plugin version in its private Cargo manifest');
+	passChecks(repository, head.sha);
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const result = await runAction(world, 'start', { repository, runId: 77, sha: head.sha, file: 'start-release.yml' }, {
+		STREAM: 'main',
+		RELEASE_VERSION: 'patch',
+	});
+	expect(decodeSync(execution, JSON.parse(result.outputs.result ?? '{}'))).toMatchObject({ operation: 'prepare' });
+	await world.wait(16_000);
+	const [pull] = repository.pulls;
+	if (!pull) throw new Error('No version PR');
+	expect(await promotions(api)).toEqual([]);
+	const merged = world.github.merge(repository, pull.number);
+	expect(world.github.file(repository, 'Cargo.toml')).toContain('version = "0.1.1"');
+	passChecks(repository, merged.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	await world.wait(16_000);
+	const [promotion, ...others] = await promotions(api);
+	expect(others).toEqual([]);
+	expect(promotion).toMatchObject({
+		version: '0.1.1',
+		sourceSha: merged.sha,
+		approvedBy: 'start',
+		started: { via: 'action' },
+	});
+	expect(repository.runs.map(run => run.inputs.beepboop_execution_id)).toEqual([promotion?.id]);
 });
 
 test('a tag-based dashboard start promotes the reviewed version after its version PR merges', async () => {

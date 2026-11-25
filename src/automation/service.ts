@@ -28,9 +28,9 @@ import type { RefState } from '@/domain/refs.ts';
 import type { Access, ReadyRepository } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { compareVersions } from '@/domain/semver.ts';
-import { hasTagPromotion } from '@/domain/start-refusal.ts';
+import { promotionTagPrefix, releaseTagPrefix } from '@/domain/start-refusal.ts';
 import { semVer } from '@/domain/version.ts';
-import { latestTag, versionsInFiles } from '@/domain/version-tags.ts';
+import { latestReleaseTag, versionsInFiles } from '@/domain/version-tags.ts';
 import { GitHubApp, isolateGitHubApp } from '@/github/app.ts';
 import { workflowRunsSchema } from '@/github/resources.ts';
 import { GitHubTransport, gitHubTransportLayer } from '@/github/transport.ts';
@@ -421,8 +421,9 @@ export class AutomationService {
 			let setupMerge: { sha: string; body: string } | null | undefined;
 			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
 				if (!stream.promote.workflow) continue;
-				if (stream.versionSource?.kind === 'tags') {
-					yield* this.releasePreparedTags(repository, name, stream, stream.versionSource.prefix);
+				const prefix = releaseTagPrefix(stream, repository.inventory);
+				if (prefix !== undefined) {
+					yield* this.releasePreparedTags(repository, name, stream, prefix);
 					continue;
 				}
 				const packages = publishablePackages(repository.inventory.packages, stream.packages);
@@ -520,11 +521,11 @@ export class AutomationService {
 		prefix: string,
 	): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			if (!hasTagPromotion(stream, prefix)) return;
+			if (promotionTagPrefix(stream) !== prefix) return;
 			const versions = yield* this.coordinators.preparationVersions(repository.id, name);
 			if (!versions.length) return;
 			const tags = yield* this.gateway.tagRefs(repository.name, repository.id);
-			const latest = latestTag(tags.map(ref => ref.name), prefix);
+			const latest = latestReleaseTag(tags.map(ref => ref.name), prefix);
 			const packages = publishablePackages(repository.inventory.packages, stream.packages);
 			for (const version of versions.sort(compareVersions)) {
 				if (latest && compareVersions(version, latest) <= 0) continue;
@@ -535,7 +536,7 @@ export class AutomationService {
 				if (!prepared) continue;
 				const snapshot = yield* this.releaseHeld(repository, stream, packages, prepared);
 				if (!snapshot) continue;
-				const plan = versionsInFiles(repository.inventory)
+				const plan = stream.packages?.length !== 0 && versionsInFiles(repository.inventory)
 					? yield* planRelease(snapshot, repository.inventory, version, stream.packages, undefined, stream.versionFiles)
 					: stream.versionFiles?.length
 					? yield* planVersionFiles(snapshot, version, stream.versionFiles)
