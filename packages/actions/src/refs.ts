@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import { Effect, Result } from 'effect';
 import type { Invalid } from '@/actions/protocol.ts';
 import { ActionFailure, attempt, refuse } from '@/actions/protocol.ts';
-import type { DistributionEvidence, RefChange, RefPlan } from '@/domain/refs.ts';
+import type { DistributionEvidence, RefChange, RefPlan, RefState } from '@/domain/refs.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
 import { git } from '@/host/git.ts';
+import { writeOutputTo } from '@/host/github-output.ts';
 import { runMain } from '@/host/main.ts';
 import { shaPattern } from '@/kernel/schema/ids.ts';
 import { array, boolean, record, text } from '@/kernel/schema/result.ts';
@@ -174,7 +175,7 @@ function prepareAncestry(
 	});
 }
 
-function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, ActionFailure> {
+function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<RefState | undefined, ActionFailure> {
 	return Effect.gen(function*() {
 		if (
 			plan.distribution
@@ -183,6 +184,7 @@ function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, A
 		) return yield* new ActionFailure({ message: 'Distribution refs must target the authorized distribution commit' });
 		const leases: string[] = [];
 		const refspecs: string[] = [];
+		let versionTag: RefState | undefined;
 		if (plan.distribution && (yield* prepareAncestry(plan.distribution, git, remote))) {
 			const ref = `refs/heads/${plan.distribution.branch}`;
 			leases.push(`--force-with-lease=${ref}:${plan.distribution.expected}`);
@@ -203,11 +205,15 @@ function publish(plan: RefPlan, git: Git, remote: string): Effect.Effect<void, A
 				continue;
 			}
 			const object = change.annotated ? yield* prepareTag(git, remote, ref, change, plan.version) : change.commit;
+			if (change === plan.changes[0] && change.annotated && change.object === undefined) {
+				versionTag = { name: change.name, commit: change.commit, oid: object };
+			}
 			if (plan.distribution && (yield* git.read('ls-remote', remote, ref)).split(/\s+/)[0] === object) continue;
 			leases.push(`--force-with-lease=${ref}:${change.expected ?? ''}`);
 			refspecs.push(`${object}:${ref}`);
 		}
 		if (refspecs.length) yield* git.read('push', '--atomic', ...leases, remote, ...refspecs);
+		return versionTag;
 	});
 }
 
@@ -225,7 +231,7 @@ export function publishRefs(
 	root: string,
 	remote: string,
 	token?: string,
-): Effect.Effect<void, ActionFailure> {
+): Effect.Effect<RefState | undefined, ActionFailure> {
 	const publicKey = plan.publicKey;
 	if (plan.distribution && publicKey === undefined) {
 		return Effect.fail(new ActionFailure({ message: 'Distribution publication requires the signing key' }));
@@ -301,6 +307,12 @@ if (import.meta.main) {
 			attempt((): unknown => JSON.parse(REF_PLAN)).pipe(Result.flatMap(parsePlan)),
 		);
 		if (!repositoryNamePattern.test(plan.repository)) return yield* Effect.fromResult(refuse('Invalid destination'));
-		yield* publishRefs(plan, GITHUB_WORKSPACE, `https://github.com/${plan.repository}.git`, REF_TOKEN);
+		const versionTag = yield* publishRefs(
+			plan,
+			GITHUB_WORKSPACE,
+			`https://github.com/${plan.repository}.git`,
+			REF_TOKEN,
+		);
+		if (versionTag) yield* writeOutputTo(process.env.GITHUB_OUTPUT, 'version-tag', JSON.stringify(versionTag));
 	}));
 }

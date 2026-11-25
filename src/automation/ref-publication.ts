@@ -78,6 +78,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 		version: string,
 		primary: string,
 		conflicts: RefState[],
+		restartId?: string,
 	) => Effect.Effect<RefState[], DomainError>;
 	readonly packageTags: (
 		repositoryId: number,
@@ -180,6 +181,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 				conflicts: readonly RefState[],
 				registries: boolean,
 				primary: string,
+				restartId?: string,
 			) {
 				const version = release.version;
 				if (!version || !conflicts.length || conflicts.some(tag => tag.name !== primary)) return [];
@@ -194,20 +196,28 @@ export class RefPublication extends Context.Service<RefPublication, {
 					)
 				);
 				if (shipped) return [];
-				const pushed: string[] = [];
+				const owned: RefState[] = [];
 				for (const execution of releases) {
 					if (
 						!['failed', 'cancelled'].includes(execution.state)
+						|| (restartId !== undefined && restartId !== execution.id)
 						|| !execution.publications.some(publication =>
 							publication.id === 'refs:promote' && publication.outcome === 'succeeded'
 						)
 					) continue;
 					for (const change of execution.refPlan?.changes ?? []) {
-						if (change.object === undefined || (change.expected !== null && !change.replaces)) continue;
-						pushed.push(`${change.name} ${change.commit} ${yield* tagObjectId(change.object)}`);
+						if (!change.annotated || (change.expected !== null && !change.replaces)) continue;
+						const tag = conflicts.find(ref => ref.name === change.name && ref.commit === change.commit);
+						if (!tag || owned.includes(tag) || tag.oid === tag.commit) continue;
+						// Resuming the same execution leaves the previously confirmed tag in place.
+						const oid = change.object !== undefined
+							? yield* tagObjectId(change.object)
+							: restartId === execution.id
+							? execution.confirmedTagOid
+							: undefined;
+						if (tag.oid === oid) owned.push(tag);
 					}
 				}
-				const owned = conflicts.filter(tag => pushed.includes(`${tag.name} ${tag.commit} ${tag.oid}`));
 				if (owned.length !== conflicts.length) return [];
 				const record = yield* automation.store.repositories.get(release.repositoryId);
 				const stream = record?.configuration?.streams[release.stream];
@@ -248,7 +258,11 @@ export class RefPublication extends Context.Service<RefPublication, {
 						`/repos/${release.repository}/releases/tags/${encodeURIComponent(tag.name)}`,
 						token,
 					);
-					if (published !== null) return [];
+					if (
+						published
+						&& !(published.draft
+							&& releases.some(execution => execution.id === restartId && execution.draftRelease?.id === published.id))
+					) return [];
 				}
 				if (!registries) return owned;
 				if (!record || !stream) return [];
@@ -506,6 +520,22 @@ export class RefPublication extends Context.Service<RefPublication, {
 				if (complete) {
 					const problem = yield* distributionProblem(execution, plan, refs);
 					if (problem) return yield* precondition(problem);
+					if (request.versionTag) {
+						const tag = request.versionTag;
+						const primary = plan.changes[0];
+						if (
+							policy.phase !== 'version' || tag.name !== `${policy.prefix}${version}`
+							|| primary?.name !== tag.name || !primary.annotated || primary.object !== undefined
+							|| (primary.expected !== null && !primary.replaces) || tag.commit !== primary.commit
+							|| tag.oid === tag.commit
+						) {
+							return yield* precondition('Version tag receipt differs from the authorized ref plan');
+						}
+						if (execution.confirmedTagOid && execution.confirmedTagOid !== tag.oid) {
+							return yield* precondition('Confirmed version tag changed');
+						}
+						execution.confirmedTagOid = tag.oid;
+					}
 					execution.publications = yield* mergePublications(execution.publications, [{
 						id: `refs:${execution.operation}`,
 						manager: 'workflow',
@@ -559,11 +589,12 @@ export class RefPublication extends Context.Service<RefPublication, {
 					version: string,
 					primary: string,
 					conflicts: RefState[],
+					restartId?: string,
 				) {
 					const record = yield* automation.store.repositories.get(repositoryId);
 					if (!record) return [];
 					const probe = { repository: record.name, repositoryId: record.id, stream, version };
-					return yield* reclaimableTags(probe, conflicts, true, primary);
+					return yield* reclaimableTags(probe, conflicts, true, primary, restartId);
 				}),
 				packageTags: Effect.fnUntraced(function*(
 					repositoryId: number,

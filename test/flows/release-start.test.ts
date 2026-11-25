@@ -6,10 +6,12 @@ import type { Reply } from '@root/test/support/http.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { executions, promotions } from '@root/test/support/releases.ts';
 import {
+	dispatchedPublishWorkflow,
 	editableConfiguration,
 	licenseText,
 	npmManifest,
 	passChecks,
+	plugin,
 	widget,
 } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -732,6 +734,76 @@ test('a tag-based stream without a promotion that publishes the version tag only
 	expect(preparation.body).not.toHaveProperty('started');
 });
 
+test.each([false, true])(
+	'a private plugin release starts and publishes on merge (unrelated npm package: %p)',
+	async unrelated => {
+		const repository = plugin(world.github);
+		const githubRelease = `github-release:${repository.name}`;
+		const baseline = world.github.head(repository);
+		repository.refs.set('tags/0.1.0', baseline);
+		repository.refs.set('tags/v9.0.0', baseline);
+		const head = world.github.push(repository, {
+			...(unrelated ? { 'package.json': npmManifest('widget', '1.0.0') } : {}),
+			'.github/workflows/publish.yml': dispatchedPublishWorkflow('Publish', 'main', 'release', ''),
+			'.github/beepboop.json': JSON.stringify({
+				managers: ['npm', 'cargo', 'workflow', 'github-release'],
+				streams: {
+					main: {
+						...(unrelated ? { packages: [] } : {}),
+						versionFiles: [{ path: 'Cargo.toml', format: 'toml', key: ['package', 'version'] }],
+						startFrom: [{ via: 'action', workflow: 'start-release.yml' }],
+						prepare: { strategy: 'managed' },
+						promote: {
+							workflow: { file: 'publish.yml', refs: { phase: 'version', prefix: '' }, publications: [githubRelease] },
+						},
+						mustPublish: [githubRelease],
+					},
+				},
+			}),
+		}, 'Manage the plugin version in its private Cargo manifest');
+		passChecks(repository, head.sha);
+		const api = bearer(world, await world.cliSession());
+		expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+		const result = await runAction(
+			world,
+			'start',
+			{ repository, runId: 77, sha: head.sha, file: 'start-release.yml' },
+			{ STREAM: 'main', RELEASE_VERSION: 'patch' },
+		);
+		expect(decodeSync(execution, JSON.parse(result.outputs.result ?? '{}'))).toMatchObject({ operation: 'prepare' });
+		await world.wait(16_000);
+		const [pull] = repository.pulls;
+		if (!pull) throw new Error('No version PR');
+		expect(await promotions(api)).toEqual([]);
+		const merged = world.github.merge(repository, pull.number);
+		expect(world.github.file(repository, 'Cargo.toml')).toContain('version = "0.1.1"');
+		passChecks(repository, merged.sha);
+		const later = world.github.push(repository, { 'NOTES.md': 'Later work\n' }, 'Continue after the release PR');
+		passChecks(repository, later.sha);
+		expect((await world.push(repository)).status).toBe(202);
+		await world.wait(16_000);
+		expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+		await world.wait(16_000);
+		const [promotion, ...others] = await promotions(api);
+		expect(others).toEqual([]);
+		expect(promotion).toMatchObject({
+			version: '0.1.1',
+			sourceSha: merged.sha,
+			approvedBy: 'start',
+			started: { via: 'action' },
+		});
+		const request = { repositoryId: repository.id, stream: 'main', version: '0.1.1' };
+		const planned = await api('/api/releases/plan', request);
+		expect(planned.status).toBe(200);
+		const { sourceSha, planId } = decodeSync(plan, planned.body);
+		expect(sourceSha).toBe(merged.sha);
+		const prepared = await api('/api/releases/prepare', { ...request, sourceSha, planId, start: true });
+		expect(prepared.status).toBe(200);
+		expect(prepared.body).toMatchObject({ id: promotion?.id, sourceSha: merged.sha });
+		expect(repository.runs.map(run => run.inputs.beepboop_execution_id)).toEqual([promotion?.id]);
+	},
+);
+
 test('a tag-based dashboard start promotes the reviewed version after its version PR merges', async () => {
 	const { repository, api } = await configured([{ via: 'dashboard' }]);
 	const configuration = JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}');
@@ -1099,4 +1171,98 @@ test('the release action refreshes a stale branch head and refuses a run on anot
 	expect(decodeSync(execution, started.body)).toMatchObject({ operation: 'prepare' });
 	await landed(repository);
 	await publishedOnce(api, repository, 'action');
+});
+
+test('force restarts the stopped promotion that created the latest plugin tag at its original commit', async () => {
+	const repository = plugin(world.github);
+	const publication = `github-release:${repository.name}`;
+	const head = world.github.push(repository, {
+		'.github/workflows/publish.yml': dispatchedPublishWorkflow('Publish', 'main', 'release', ''),
+		'.github/beepboop.json': JSON.stringify({
+			managers: ['cargo', 'workflow', 'github-release'],
+			streams: {
+				main: {
+					versionFiles: [{ path: 'Cargo.toml', format: 'toml', key: ['package', 'version'] }],
+					prepare: { strategy: 'managed' },
+					promote: {
+						workflow: { file: 'publish.yml', refs: { phase: 'version', prefix: '' }, publications: [publication] },
+					},
+					mustPublish: [publication],
+				},
+			},
+		}),
+	}, 'Release the private plugin');
+	passChecks(repository, head.sha);
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+	const request = { repositoryId: repository.id, stream: 'main', version: '0.1.0' };
+	const preview = (force = true) => api('/api/releases/plan', { ...request, force });
+	const prepare = (force: boolean, reviewed: ReturnType<typeof decodePlan>) =>
+		api('/api/releases/prepare', { ...request, ...reviewed, force, start: true });
+	const decodePlan = (reply: Reply) => decodeSync(plan, reply.body);
+	const original = await prepare(false, decodePlan(await preview(false)));
+	expect(original.status).toBe(200);
+	const { id } = decodeSync(execution, original.body);
+	await world.wait(16_000);
+	const [run] = repository.runs;
+	if (!run) throw new Error('Expected a dispatched promotion');
+	run.status = 'in_progress';
+	const identity = runIdentity(repository, run, 'publish.yml');
+	await begin(world, identity, id, 'main', 'promote');
+	await runAction(world, 'refs-plan', identity, { EXECUTION_ID: id });
+	const oid = 'a'.repeat(40);
+	const versionTag = { name: request.version, commit: head.sha, oid };
+	const confirm = (tag: typeof versionTag) =>
+		runAction(world, 'refs-complete', identity, { EXECUTION_ID: id, VERSION_TAG: JSON.stringify(tag) });
+	await expect(confirm({ ...versionTag, commit: 'e'.repeat(40) })).rejects.toThrow('authorized ref plan');
+	await expect(confirm({ ...versionTag, oid: head.sha })).rejects.toThrow('authorized ref plan');
+	world.github.recordTag(repository, request.version, oid, head.sha, true);
+	await confirm(versionTag);
+	await expect(confirm({ ...versionTag, oid: 'd'.repeat(40) })).rejects.toThrow('Confirmed version tag changed');
+	expect((await preview()).status).toBe(422);
+	run.status = 'completed';
+	run.conclusion = 'failure';
+	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
+	await world.wait(16_000);
+	expect((await promotions(api))[0]?.state).toBe('failed');
+	const next = world.github.push(repository, { 'NOTES.md': 'Unrelated' }, 'Document the plugin');
+	passChecks(repository, next.sha);
+	expect((await world.push(repository)).status).toBe(202);
+	await world.wait(16_000);
+	expect((await preview(false)).status).toBe(422);
+	world.github.recordTag(repository, '0.2.0', 'b'.repeat(40), next.sha, true);
+	expect((await preview()).status).toBe(422);
+	repository.refs.delete('tags/0.2.0');
+	world.github.recordTag(repository, request.version, 'c'.repeat(40), head.sha, true);
+	expect((await preview()).status).toBe(422);
+	world.github.recordTag(repository, request.version, 'c'.repeat(40), next.sha, true);
+	expect((await preview()).status).toBe(422);
+	world.github.recordTag(repository, request.version, oid, head.sha, true);
+	const resumed = decodePlan(await preview());
+	expect(resumed.sourceSha).toBe(head.sha);
+	const [draft] = repository.releases;
+	if (!draft) throw new Error('Expected a draft release');
+	draft.draft = false;
+	expect((await prepare(true, resumed)).status).toBe(422);
+	draft.draft = true;
+	expect((await prepare(false, resumed)).status).toBe(422);
+	expect((await prepare(true, resumed)).body).toMatchObject({ id, sourceSha: head.sha, state: 'ready' });
+	await world.wait(16_000);
+	expect(repository.runs.map(entry => entry.inputs.beepboop_execution_id)).toEqual([id, id]);
+	expect(repository.refs.get('tags/0.1.0')).toBe(oid);
+	const retry = repository.runs[1];
+	if (!retry) throw new Error('Expected a new workflow run');
+	retry.status = 'in_progress';
+	const retried = runIdentity(repository, retry, 'publish.yml');
+	await begin(world, retried, id, 'main', 'promote');
+	await runAction(world, 'refs-plan', retried, { EXECUTION_ID: id });
+	await runAction(world, 'refs-complete', retried, { EXECUTION_ID: id, VERSION_TAG: JSON.stringify(versionTag) });
+	await runAction(world, 'release', retried, { EXECUTION_ID: id });
+	retry.status = 'completed';
+	retry.conclusion = 'success';
+	await world.workflowRun(repository, retry, 'success', 'workflow_dispatch');
+	await world.wait(16_000);
+	expect((await promotions(api)).map(entry => [entry.id, entry.state])).toEqual([[id, 'succeeded']]);
+	expect(repository.releases.map(entry => [entry.tag, entry.draft])).toEqual([['0.1.0', false]]);
+	expect((await preview()).status).toBe(422);
 });

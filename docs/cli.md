@@ -86,12 +86,16 @@ stops, and merging it publishes the release. A failing check or a refused bump
 ends the command with exit code 1 and the reason. The command polls every 5 seconds for at most 60 minutes. After that it stops
 following with exit code 1, and the release goes on in Beepboop. `--json` prints the started
 release and returns at once. Spinners and progress bars stay off when the
-output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release). A stream
-that versions each package on its own, a tag-based stream without a
-promotion that publishes the version tag, and, when the release writes a new
-version, a stream that keeps its version only in version files or prepares
-it with `prepare.strategy: "workflow"`, only prepare the version, and
-`promote.publishWhen` decides when it publishes.
+output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release).
+
+For a managed stream that stores its version only in `versionFiles`, the CLI
+can start publication when the promotion workflow publishes a matching version
+tag. Independent versions and tag-based streams without a matching tag
+publisher support preparation only. A new version also stops after preparation
+when `prepare.strategy: "workflow"` delegates the bump. If no publishable
+package manifest carries the version, starting publication requires a workflow
+that publishes the version tag. In those cases, `promote.publishWhen`
+determines when publication starts.
 
 The confirmation defaults to no. `--yes` skips only the confirmation; the
 preview still prints. When stdin is not a terminal the CLI prints the preview

@@ -6,12 +6,14 @@ import { routes } from '@/contract/routes';
 import { planHookUpdates } from '@/discovery/managers/precommit.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, publishablePackages } from '@/domain/package-identity.ts';
+import type { RefState } from '@/domain/refs.ts';
 import type { StartChannel } from '@/domain/release-start.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { semver } from '@/domain/semver.ts';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
+import { releaseTagPrefix } from '@/domain/start-refusal.ts';
 import { nextVersion, parseVersionRequest } from '@/domain/version-request.ts';
-import { latestTag, tagPrefix, versionsInFiles } from '@/domain/version-tags.ts';
+import { latestReleaseTag, tagPrefix, versionsInFiles } from '@/domain/version-tags.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { capabilitySentence, releasable, releaseCapability, startRefusal } from '@/release/domain/capability.ts';
@@ -22,7 +24,7 @@ import { createReleasePreparation } from '@/release/domain/managed.ts';
 import { planVersionFiles } from '@/release/domain/planning/editors.ts';
 import { planRelease, selectedReleasePackages } from '@/release/domain/planning/managers.ts';
 import { planReleaseSet } from '@/release/domain/planning/plan.ts';
-import { conflictMessage } from '@/release/domain/refs.ts';
+import { conflictMessage, releaseCommit } from '@/release/domain/refs.ts';
 import { resolvePackageVersion } from '@/release/domain/version.ts';
 import type { AdminContext } from '@/server/handlers/kit';
 import { admin, readyRepository } from '@/server/handlers/kit';
@@ -37,6 +39,7 @@ export interface PlannedRelease {
 	selected: string[] | undefined;
 	plan: ReleasePlan;
 	planId: string;
+	restart?: Execution;
 }
 
 function ready(service: AutomationService, repositoryId: number): Effect.Effect<ReadyRepository, DomainError> {
@@ -85,12 +88,52 @@ interface ReleaseInput {
 	stream: string;
 	version?: unknown;
 	packages?: string[] | undefined;
+	force?: boolean | undefined;
 }
 
-function latestTagVersion(service: AutomationService, repository: ReadyRepository, prefix: string) {
-	return service.gateway.tagRefs(repository.name, repository.id).pipe(
-		Effect.map(refs => latestTag(refs.map(ref => ref.name), prefix)),
-	);
+/** A tagged retry resumes the execution that created the tag, even if the default branch has advanced. */
+function taggedRestart(
+	service: AutomationService,
+	selection: Selected,
+	name: string,
+	version: string,
+	tag: RefState,
+	selected: string[] | undefined,
+): Effect.Effect<PlannedRelease, DomainError> {
+	return Effect.gen(function*() {
+		const { repository, stream } = selection;
+		const packages = publishablePackages(repository.inventory.packages, selected);
+		if (packages.length !== publishablePackages(repository.inventory.packages, stream.packages).length) {
+			return yield* precondition('A restart must include the original release stream');
+		}
+		const promotions = yield* service.coordinators.promotions(repository.id, name, version);
+		const stopped = promotions.filter(execution =>
+			(execution.state === 'failed' || execution.state === 'cancelled')
+			&& execution.eventId === `release:${version}:${execution.sourceSha}` && releaseCommit(execution) === tag.commit
+		);
+		const [restart] = stopped;
+		if (
+			!restart || stopped.length !== 1 || !(yield* service.coordinators.reclaimable(
+				repository.id,
+				name,
+				version,
+				tag.name,
+				[tag],
+				restart.id,
+			)).length
+		) {
+			return yield* precondition(`Tag ${tag.name} is not owned by a stopped, unpublished release`);
+		}
+		const plan: ReleasePlan = {
+			version,
+			sourceSha: restart.sourceSha,
+			edits: [],
+			packages,
+			requiresPreparation: false,
+			diagnostics: [`Restart stopped promotion ${restart.id} on its original commit`],
+		};
+		return { selection, selected, plan, planId: yield* planIdentity(plan, repository), restart };
+	});
 }
 
 export function delegatedPlan(
@@ -163,9 +206,15 @@ export function releasePlan(
 			return yield* precondition('Package is outside this release stream');
 		}
 		let target: unknown = input.version;
-		if (stream.versionSource?.kind === 'tags') {
-			const latest = yield* latestTagVersion(service, repository, stream.versionSource.prefix);
+		const prefix = releaseTagPrefix(stream, repository.inventory);
+		if (prefix !== undefined) {
+			const tags = yield* service.gateway.tagRefs(repository.name, repository.id);
+			const latest = latestReleaseTag(tags.map(tag => tag.name), prefix);
 			const request = yield* parseVersionRequest(input.version);
+			if (input.force && 'version' in request && request.version === latest) {
+				const tag = tags.find(ref => ref.name === `${prefix}${request.version}`);
+				if (tag) return yield* taggedRestart(service, selection, input.stream, request.version, tag, selected);
+			}
 			if (!latest && !('version' in request)) {
 				return yield* precondition('Select an explicit version for the first release');
 			}
@@ -183,8 +232,9 @@ export function releasePlan(
 				? request.version
 				: yield* resolvePackageVersion(yield* selectedReleasePackages(repository.inventory, selected), request);
 		}
+		const manifests = versionsInFiles(repository.inventory) && (prefix === undefined || stream.packages?.length !== 0);
 		const planAt = (at: Snapshot): Effect.Effect<ReleasePlan, DomainError> =>
-			stream.prepare.strategy !== 'workflow' && versionsInFiles(repository.inventory)
+			stream.prepare.strategy !== 'workflow' && manifests
 				? planRelease(at, repository.inventory, target, selected, undefined, stream.versionFiles)
 				: stream.prepare.strategy !== 'workflow' && stream.versionFiles?.length
 				? planVersionFiles(at, target, stream.versionFiles)
@@ -223,7 +273,7 @@ function opensVersionPr(stream: Stream, plan: ReleasePlan): boolean {
 
 export function beginRelease(
 	service: AutomationService,
-	{ selection, selected, plan, planId }: PlannedRelease,
+	{ selection, selected, plan, planId, restart }: PlannedRelease,
 	name: string,
 	actor: string,
 	started?: ReleaseStarted,
@@ -235,6 +285,16 @@ export function beginRelease(
 		if (refusal) return yield* precondition(refusal);
 		if (versionPrMerge && !opensVersionPr(stream, plan)) {
 			return yield* precondition(`${plan.version} of ${name} opens no version PR to merge`);
+		}
+		if (restart && started?.force) {
+			const queued = yield* service.enqueue(repository, {
+				...restart,
+				approvedBy: 'start',
+				initiatedBy: actor,
+				started,
+			});
+			yield* service.store.audit(actor, 'release.start', queued.id);
+			return queued;
 		}
 		if (!plan.edits.length && !plan.requiresPreparation) {
 			const claim = yield* service.tagClaims(repository, name, stream, plan.version, plan.sourceSha);

@@ -46,6 +46,7 @@ export interface CoordinatorRpc {
 		complete?: boolean,
 		suppliedFiles?: DistributionFile[],
 		artifact?: DistributionArtifact,
+		versionTag?: RefState,
 	): Promise<unknown>;
 	publishRelease(id: string, identity: RunIdentity): Promise<unknown>;
 	releasePublished(tag: string): Promise<unknown>;
@@ -80,6 +81,7 @@ export interface CoordinatorRpc {
 		version: string,
 		primary: string,
 		conflicts: RefState[],
+		restartId?: string,
 	): Promise<unknown>;
 	packageTags(
 		repositoryId: number,
@@ -132,6 +134,7 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 		complete: boolean,
 		suppliedFiles?: DistributionFile[],
 		artifact?: DistributionArtifact,
+		versionTag?: RefState,
 	) => Effect.Effect<RefPlan, DomainError>;
 	readonly publishRelease: (
 		repositoryId: number,
@@ -221,6 +224,7 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 		version: string,
 		primary: string,
 		conflicts: RefState[],
+		restartId?: string,
 	) => Effect.Effect<RefState[], DomainError>;
 	readonly packageTags: (
 		repositoryId: number,
@@ -295,8 +299,8 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 				call(preparationResultSchema, repositoryId, rpc => rpc.prepared(id, identity, edits)),
 			report: (repositoryId, id, identity, publications, artifacts) =>
 				call(executionSchema, repositoryId, rpc => rpc.report(id, identity, publications, artifacts)),
-			refs: (repositoryId, id, identity, complete, suppliedFiles, artifact) =>
-				call(refPlanSchema, repositoryId, rpc => rpc.refs(id, identity, complete, suppliedFiles, artifact)),
+			refs: (repositoryId, id, identity, complete, suppliedFiles, artifact, versionTag) =>
+				call(refPlanSchema, repositoryId, rpc => rpc.refs(id, identity, complete, suppliedFiles, artifact, versionTag)),
 			publishRelease: (repositoryId, id, identity) =>
 				call(executionSchema, repositoryId, rpc => rpc.publishRelease(id, identity)),
 			releasePublished: (repositoryId, tag) => send(repositoryId, rpc => rpc.releasePublished(tag)),
@@ -331,8 +335,12 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 				call(mutableArray(preparedReleaseSchema), repositoryId, rpc => rpc.preparationResults(stream, version)),
 			promotions: (repositoryId, stream, version) =>
 				call(executions, repositoryId, rpc => rpc.promotions(stream, version)),
-			reclaimable: (repositoryId, stream, version, primary, conflicts) =>
-				call(refStatesSchema, repositoryId, rpc => rpc.reclaimable(repositoryId, stream, version, primary, conflicts)),
+			reclaimable: (repositoryId, stream, version, primary, conflicts, restartId) =>
+				call(
+					refStatesSchema,
+					repositoryId,
+					rpc => rpc.reclaimable(repositoryId, stream, version, primary, conflicts, restartId),
+				),
 			packageTags: (repositoryId, stream, apply, after, actor) =>
 				call(packageTagPage, repositoryId, rpc => rpc.packageTags(repositoryId, stream, apply, after, actor)),
 			reindex: repositoryId => call(Schema.Finite, repositoryId, rpc => rpc.reindex(repositoryId)),

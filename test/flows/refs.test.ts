@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { commitAll, gitOutput, materialize } from '@root/test/support/actions.ts';
+import { actionOutputs, commitAll, gitOutput, materialize, runRuntime } from '@root/test/support/actions.ts';
 import { Effect, Exit, Schema } from 'effect';
 import { publishRefs } from '@/actions/refs.ts';
 import type { Package } from '@/domain/inventory.ts';
@@ -103,7 +103,19 @@ function moving() {
 test('a replacing ref plan moves the version tag to the new release commit under a lease', async () => {
 	const { checkout, origin, old, fixed, plan, dispose } = moving();
 	try {
-		await Effect.runPromise(publishRefs(plan(old), checkout.dir, origin));
+		const output = join(checkout.dir, 'github-output');
+		gitOutput(checkout.dir, ['config', `url.${origin}.insteadOf`, 'https://github.com/octo/widget.git']);
+		await runRuntime('refs', {
+			REF_PLAN: JSON.stringify(plan(old)),
+			REF_TOKEN: 'test-token',
+			GITHUB_WORKSPACE: checkout.dir,
+			GITHUB_OUTPUT: output,
+		});
+		expect(JSON.parse(actionOutputs(output)['version-tag'] ?? 'null')).toEqual({
+			name: 'v1.0.0',
+			oid: gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0']),
+			commit: fixed,
+		});
 		expect(gitOutput(origin, ['rev-parse', 'refs/tags/v1.0.0^{commit}'])).toBe(fixed);
 		expect(gitOutput(origin, ['cat-file', '-t', 'refs/tags/v1.0.0'])).toBe('tag');
 	} finally {

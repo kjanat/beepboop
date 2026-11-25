@@ -25,6 +25,10 @@ export function latestTag(
 		return accept(version) ? [version.replace(/^v/, '')] : [];
 	}).sort(compareVersions).at(-1);
 }
+export function latestReleaseTag(tags: readonly string[], prefix: string): string | undefined {
+	// Promotion writes the configured prefix followed by a bare version.
+	return latestTag(tags, prefix, version => !version.startsWith('v'));
+}
 export function tagQueries(paths: readonly string[]): string[] {
 	const prefixes = new Set<string>();
 	for (const path of paths) {

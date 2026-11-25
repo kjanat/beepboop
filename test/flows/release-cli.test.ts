@@ -1067,7 +1067,7 @@ test('release help explains the flow, and the command list keeps the one-line de
 	const text = help.stdout.join('').replace(/\s+/g, ' ');
 	expect(text).toContain('The release bumps the version and publishes it, and nothing asks again.');
 	expect(text).toContain(
-		'a tag-based one without a tag-publishing workflow, and, when the release writes a new version, one that keeps its version only in version files or prepares it with `prepare.strategy: workflow`, only prepare the version',
+		'Managed version files can start a release when the promotion workflow publishes the version tag.',
 	);
 	expect(text).toContain('`versionLands: via-version-pr` opens the version PR');
 	const root = (await app.execute(['--help'], { isTTY: false, env: {} })).stdout.join('').replace(/\s+/g, ' ');
@@ -1216,6 +1216,7 @@ test('release --force --json starts the release without asking', async () => {
 	const forced = await run(['release', '1.0.1', '--repository', repository.name, '--force', '--json']);
 	expect(forced.exitCode).toBe(0);
 	expect(JSON.parse(forced.stdout.join(''))).toHaveProperty('preparation.operation', 'promote');
+	expect(requests.find(call => call.path === '/api/releases/plan')?.body).toMatchObject({ force: true });
 	expect(prepareCalls().map(call => call.body)).toEqual([expect.objectContaining({ force: true })]);
 });
 

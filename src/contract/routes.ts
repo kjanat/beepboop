@@ -266,6 +266,7 @@ export const routes = {
 			stream: text,
 			version: Schema.Unknown,
 			packages: Schema.optional(mutableArray(text)),
+			force: Schema.optional(Schema.Boolean),
 		}),
 		response: planReview,
 	}),
@@ -589,7 +590,10 @@ export const routes = {
 		path: '/api/workflow/refs-complete',
 		auth: 'workflow',
 		idempotent: true,
-		request: mutableStruct({ executionId: text }),
+		request: mutableStruct({
+			executionId: text,
+			versionTag: Schema.optional(mutableStruct({ name: text, oid: sha, commit: sha })),
+		}),
 		response: Schema.Unknown,
 	}),
 	workflowRelease: route({

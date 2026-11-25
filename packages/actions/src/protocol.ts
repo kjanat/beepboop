@@ -172,6 +172,10 @@ export function requestBody(mode: Mode, environment: Environment, now: number): 
 				return { executionId, files };
 			}
 			case 'refs-complete':
+				return {
+					executionId,
+					...(environment.VERSION_TAG ? { versionTag: yield* json(environment.VERSION_TAG) } : {}),
+				};
 			case 'release':
 				return { executionId };
 			case 'token':

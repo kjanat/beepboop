@@ -340,9 +340,10 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		complete = false,
 		suppliedFiles: DistributionFile[] = [],
 		artifact?: DistributionArtifact,
+		versionTag?: RefState,
 	): Promise<RefPlan> {
 		return this.serial(
-			refsRequest(complete, suppliedFiles, artifact).pipe(
+			refsRequest(complete, suppliedFiles, artifact, versionTag).pipe(
 				Effect.flatMap(request => RefPublication.use(publication => publication.refs(id, identity, request))),
 			),
 			'coordinator.refs',
@@ -449,9 +450,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 		version: string,
 		primary: string,
 		conflicts: RefState[],
+		restartId?: string,
 	): Promise<RefState[]> {
 		return this.run(
-			RefPublication.use(publication => publication.reclaimable(repositoryId, stream, version, primary, conflicts)),
+			RefPublication.use(publication =>
+				publication.reclaimable(repositoryId, stream, version, primary, conflicts, restartId)
+			),
 			'coordinator.reclaimable',
 			{ repositoryId, stream, version },
 		);
