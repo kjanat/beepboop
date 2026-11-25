@@ -1,14 +1,13 @@
 import { Result } from 'effect';
-import { isManagerName, managerSpec } from '@/domain/catalog.ts';
+import { isManagerName, type ManagerName, managerSpec } from '@/domain/catalog.ts';
 import { matchesPublication, parseReleaseIdentity, selectorKey } from '@/domain/package-identity.ts';
-import { purlDefinitions } from '@/domain/purl/index.ts';
+import { type PackageIdentity, purlDefinitions } from '@/domain/purl/index.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
-import { isPrerelease, semVer, tagFor } from '@/domain/version.ts';
+import { defaultTagPolicy, isPrerelease, semVer, tagFor } from '@/domain/version.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import { githubHref, publicationRegistryHref } from '@/publication/links.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
-import { githubRelease } from '@/release/domain/github-release.ts';
-import { referenceProbe } from '@/release/domain/reference-probe.ts';
+import { identityPublicationName, legacyPublicationName } from '@/release/domain/reference-probe.ts';
 
 type TargetExecution = Pick<
 	Execution,
@@ -34,45 +33,55 @@ function manifestHref(name: string): string | undefined {
 	return parts.length ? githubHref(repository, 'blob', 'HEAD', ...parts) : undefined;
 }
 
+function publicationName(id: string, identity?: PackageIdentity) {
+	if (!identity) return legacyPublicationName(id);
+	if (identity.type === 'generic' && identity.namespace && isManagerName(identity.namespace)) {
+		return { manager: identity.namespace, name: identity.name };
+	}
+	return identityPublicationName(identity);
+}
+
+function destinationFor(manager: ManagerName, identity?: PackageIdentity) {
+	const primary = manager === 'manifest' ? 'manifest' : managerSpec(manager).destinations?.primary;
+	const registry = identity?.qualifiers?.repository_url?.replace(/\/$/, '');
+	if (!identity || !registry) return primary;
+	if (manager === 'vscode' && registry === 'https://open-vsx.org') return 'open-vsx';
+	const registered = purlDefinitions.get(identity.type)?.repository.default_repository_url;
+	if (registry === registered?.replace(/\/$/, '')) return primary;
+}
+
+function executionReleaseTag(run: TargetExecution): string | undefined {
+	const recorded = run.release?.tag ?? run.draftRelease?.tag;
+	if (recorded !== undefined) return recorded;
+	const version = safeDecode(semVer, run.version);
+	if (version.success) return tagFor(run.workflow?.refs ?? defaultTagPolicy, version.data);
+}
+
+function githubReleaseHref(run: TargetExecution, repository: string, tag?: string): string | undefined {
+	if (!repositoryNamePattern.test(repository) || repository.split('/').some(part => part === '.' || part === '..')) {
+		return undefined;
+	}
+	if (tag === undefined && repository.toLowerCase() === run.repository.toLowerCase()) tag = executionReleaseTag(run);
+	return tag ? githubHref(repository, 'releases', 'tag', tag) : undefined;
+}
+
 function targetUrl(run: TargetExecution, id: string): string | undefined {
 	const parsed = id.startsWith('pkg:') ? parseReleaseIdentity(id) : undefined;
 	if (parsed && Result.isFailure(parsed)) return undefined;
 	const identity = parsed?.success;
 	const reported = run.publications.find(publication => matchesPublication(id, publication));
-	const version = identity?.version ?? reported?.version ?? run.version;
-	if (!version) return undefined;
-	const probe = identity?.type === 'generic' && identity.namespace && isManagerName(identity.namespace)
-		? { manager: identity.namespace, name: identity.name }
-		: referenceProbe(id, version);
-	const publication = reported ?? probe;
-	if (!publication) return undefined;
-	const { manager, name } = publication;
-	const registry = identity?.qualifiers?.repository_url?.replace(/\/$/, '');
-	const openVsx = manager === 'vscode' && registry === 'https://open-vsx.org';
-	if (registry && !openVsx) {
-		const defaultRegistry = identity && purlDefinitions.get(identity.type)?.repository.default_repository_url;
-		if (registry !== defaultRegistry?.replace(/\/$/, '')) return undefined;
-	}
-	if (manager === 'manifest') return manifestHref(name);
-	const destination = openVsx ? 'open-vsx' : managerSpec(manager).destinations?.primary;
+	const target = reported ?? publicationName(id, identity);
+	const pinnedVersion = identity?.version ?? reported?.version;
+	const version = pinnedVersion ?? run.version;
+	if (!target || !version) return undefined;
+
+	const { manager, name } = target;
+	const destination = destinationFor(manager, identity);
 	if (!destination) return undefined;
-	if (manager === 'github-release') {
-		if (!repositoryNamePattern.test(name) || name.split('/').some(part => part === '.' || part === '..')) {
-			return undefined;
-		}
-		const local = name.toLowerCase() === run.repository.toLowerCase();
-		const tag = identity?.version ?? reported?.version ?? (local
-			? run.release?.tag ?? run.draftRelease?.tag
-				?? (safeDecode(semVer, run.version).success ? githubRelease(run)?.tag : undefined)
-			: undefined);
-		return tag ? githubHref(name, 'releases', 'tag', tag) : undefined;
-	}
-	return publicationRegistryHref(
-		destination,
-		name,
-		manager === 'goreleaser' ? `v${version.replace(/^v/, '')}` : version,
-		run.repository,
-	);
+	if (destination === 'manifest') return manifestHref(name);
+	if (manager === 'github-release') return githubReleaseHref(run, name, pinnedVersion);
+	const registryVersion = manager === 'goreleaser' ? `v${version.replace(/^v/, '')}` : version;
+	return publicationRegistryHref(destination, name, registryVersion, run.repository);
 }
 
 function refUrl(run: TargetExecution): string | undefined {
