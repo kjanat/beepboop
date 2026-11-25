@@ -8,7 +8,7 @@ import { Effect, Schema } from 'effect';
 import { parseAssetManifest } from '@/actions/asset-manifest.ts';
 import type { Environment } from '@/actions/protocol.ts';
 import { ActionFailure, attemptAsync, fail, required } from '@/actions/protocol.ts';
-import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import { validRepository } from '@/domain/repository-name.ts';
 import { gitHubRequest, githubApiVersion } from '@/github/transport.ts';
 import { runMain } from '@/host/main.ts';
 import { responseJson, scopedResponse } from '@/kernel/http/body.ts';
@@ -127,7 +127,7 @@ export const uploadReleaseAssets = Effect.fn('uploadReleaseAssets')(
 		const repository = yield* Effect.fromResult(required(env, 'GITHUB_REPOSITORY'));
 		const token = yield* Effect.fromResult(required(env, 'GH_TOKEN'));
 		const id = yield* Effect.fromResult(required(env, 'RELEASE_ID'));
-		if (!repositoryNamePattern.test(repository) || repository.split('/').some(part => part === '.' || part === '..')) {
+		if (!validRepository(repository)) {
 			return yield* fail('Invalid GITHUB_REPOSITORY');
 		}
 		if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) return yield* fail('Invalid release-id');

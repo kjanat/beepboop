@@ -128,3 +128,27 @@ test('a per-package execution only selects its assigned package from a broad bin
 		})).toEqual({ publicationUrls: { [go]: goUrl }, publicationUrl: goUrl });
 	}
 });
+
+test('an explicitly selected ref uses the same alias as the workflow for a release with build metadata', () => {
+	const id = 'refs:promote';
+	const refs = { ...policy, phase: 'aliases' as const, aliases: ['minor' as const], prefix: 'cli/v' };
+	const execution = { ...run, version: '2.10.0+ci.9', workflow: { ...workflow, refs, publications: [id] } };
+	const url = 'https://github.com/kjanat/git-remote-refs/tree/cli/v2.10';
+	expect(plannedPublicationUrls(execution)).toEqual({ publicationUrl: url, publicationUrls: { [id]: url } });
+	expect(plannedPublicationUrls({ ...execution, version: '2.10.0-rc.1' })).toEqual({ publicationUrls: {} });
+});
+
+test('registry matching normalizes the origin and preserves the registry path', () => {
+	for (
+		const [registry, known] of [
+			['HTTPS://Open-VSX.Org:443/', true],
+			['https://open-vsx.org/Custom', false],
+		] as const
+	) {
+		const id = 'pkg:vscode-extension/octo/widget?repository_url=' + encodeURIComponent(registry);
+		const url = 'https://open-vsx.org/extension/octo/widget/0.1.1';
+		expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, publications: [id] } })).toEqual(
+			known ? { publicationUrls: { [id]: url }, publicationUrl: url } : { publicationUrls: {} },
+		);
+	}
+});
