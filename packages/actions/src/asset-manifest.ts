@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { basename, extname } from 'node:path';
 import { parse } from 'csv-parse/sync';
 import { Schema } from 'effect';
 import { decodeSync, matchesPattern, mutableArray, refined, strictStruct } from '@/kernel/schema/structs.ts';
@@ -57,8 +57,28 @@ function records(input: string, format: string): unknown {
 	}
 }
 
-export function parseAssetManifest(input: string, format: string): AssetManifestEntry[] {
-	const entries = decodeSync(manifest, records(input.replace(/^\uFEFF/, ''), format));
+function detectFormat(input: string, manifestPath: string) {
+	const extension = extname(manifestPath).slice(1).toLowerCase();
+	if (['csv', 'tsv', 'json', 'ndjson', 'nl-sv'].includes(extension)) return extension;
+	if (extension === 'jsonl') return 'ndjson';
+
+	const text = input.trimStart();
+	if (text.startsWith('[')) return 'json';
+	if (text.startsWith('{')) return 'ndjson';
+
+	// A delimiter inside a quoted filename belongs to the field.
+	const delimiter = text.replace(/"(?:[^"]|"")*"/g, '').match(/[,\t]/)?.[0];
+	if (delimiter === '\t') return 'tsv';
+	if (delimiter === ',') return 'csv';
+	return 'nl-sv';
+}
+
+export function parseAssetManifest(input: string, format = 'auto', manifestPath = ''): AssetManifestEntry[] {
+	const source = input.replace(/^\uFEFF/, '');
+	const entries = decodeSync(
+		manifest,
+		records(source, format === 'auto' ? detectFormat(source, manifestPath) : format),
+	);
 	const names = new Set<string>();
 	for (const item of entries) {
 		const name = decodeSync(filename, item.name ?? basename(item.asset));

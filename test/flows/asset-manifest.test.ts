@@ -46,3 +46,31 @@ test('invalid records and duplicate output names fail before upload', () => {
 		expect(() => parseAssetManifest(source, format)).toThrow();
 	}
 });
+
+test('inline asset manifests infer the format and keep labels and digests', () => {
+	const entries = [first, second];
+	expect(parseAssetManifest('\uFEFF\n' + JSON.stringify(entries, null, 2))).toEqual(entries);
+	expect(parseAssetManifest(entries.map(item => JSON.stringify(item)).join('\r\n'))).toEqual(entries);
+	for (const delimiter of [',', '\t']) {
+		const source = [
+			['asset', 'sha256', 'displayname'].join(delimiter),
+			['dist/pkg', digest, 'Linux binary'].join(delimiter),
+		].join('\n');
+		expect(parseAssetManifest(source)).toEqual([{ asset: 'dist/pkg', sha256: digest, displayname: 'Linux binary' }]);
+	}
+	expect(parseAssetManifest('dist/archive,,Compressed archive')).toEqual([
+		{ asset: 'dist/archive', displayname: 'Compressed archive' },
+	]);
+	expect(parseAssetManifest('dist/pkg 1.zip\r\ndist/pkg 2.zip\n')).toEqual([{ asset: 'dist/pkg 1.zip' }, second]);
+	expect(() => parseAssetManifest('[{"asset": "missing closing bracket"}')).toThrow();
+});
+
+test('recognized manifest extensions select the parser and an explicit format overrides the extension', () => {
+	const source = 'dist/build,,Linux binary';
+	expect(parseAssetManifest(source, 'auto', 'dist/assets.nl-sv')).toEqual([{ asset: source }]);
+	expect(parseAssetManifest(source, 'csv', 'dist/assets.nl-sv')).toEqual([
+		{ asset: 'dist/build', displayname: 'Linux binary' },
+	]);
+	expect(() => parseAssetManifest('dist/not-json', 'auto', 'dist/assets.json')).toThrow();
+	expect(parseAssetManifest(JSON.stringify([second]), 'auto', 'dist/manifest')).toEqual([second]);
+});

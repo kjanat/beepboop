@@ -1604,7 +1604,6 @@ ID to attach files from the build:
   with:
     execution-id: ${{ inputs.beepboop_execution_id }}
     release-id: ${{ steps.draft.outputs.release-id }}
-    format: csv
     assets: |
       asset,sha256,displayname
       dist/tool-linux-amd64.tar.gz,,Linux x86-64
@@ -1612,7 +1611,10 @@ ID to attach files from the build:
 ```
 
 Supply a manifest inline with `assets` or point `manifest-file` at a file
-in the workspace. CSV and TSV rows can include the local asset path, expected
+in the workspace. The action recognizes manifest extensions (including
+`.jsonl` for NDJSON) and otherwise detects the format from the content.
+Set `format` to override detection, for example `format: nl-sv` for a
+literal path containing a comma. CSV and TSV rows can include the local asset path, expected
 SHA-256 and display name. JSON accepts an array of objects with the same
 fields. NDJSON accepts one object per line. Use `nl-sv` for one literal
 file path per line. A display name is the GitHub asset label. The downloadable

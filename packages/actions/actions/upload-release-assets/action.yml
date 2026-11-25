@@ -9,8 +9,10 @@ inputs:
   manifest-file:
     description: Workspace-relative path to the asset manifest
   format:
-    description: Manifest format (nl-sv, csv, tsv, json, or ndjson)
-    default: nl-sv
+    description: Manifest format override. Auto detects the file extension or inline content.
+    default: auto
+    options: [auto, nl-sv, csv, tsv, json, ndjson]
+    required: false
   execution-id:
     description: Beepboop execution ID from the workflow dispatch or begin step
   service:

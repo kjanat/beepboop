@@ -47,7 +47,7 @@ async function stageAssets(env: Environment, workspace: string, directory: strin
 	const source = env.MANIFEST_FILE
 		? await readFile(await workspaceFile(root, env.MANIFEST_FILE), 'utf8')
 		: env.ASSETS ?? '';
-	const entries = parseAssetManifest(source, env.MANIFEST_FORMAT || 'nl-sv');
+	const entries = parseAssetManifest(source, env.MANIFEST_FORMAT || undefined, env.MANIFEST_FILE);
 	const files = [];
 	for (const [index, entry] of entries.entries()) {
 		const sourceFile = await workspaceFile(root, entry.asset);
