@@ -57,7 +57,9 @@ export function streamSummary(
 		}
 	}
 	const observed = new Set(stream.observe?.flatMap(entry => entry.publications) ?? []);
-	const delegated = new Set(stream.operations?.flatMap(entry => entry.publications) ?? []);
+	const delegated = new Set(
+		stream.operations?.filter(entry => !entry.backfill).flatMap(entry => entry.publications) ?? [],
+	);
 	const promote = stream.promote;
 	if (promote) {
 		const own = stream.packages.filter(id => !observed.has(id) && !delegated.has(id));

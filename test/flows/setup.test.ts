@@ -1577,6 +1577,11 @@ test('adoption can add a standalone backfill without delegating promotion public
 		parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
 	);
 	expect(plan.blockers).toEqual([]);
+	const summaryStream = plan.choices.streams[0];
+	if (!summaryStream) throw new Error('Expected a setup stream');
+	expect(streamSummary(summaryStream, plan).join('\n')).toContain(
+		'When a release publishes, release.yml (new) publishes widget to npm',
+	);
 	const observed = await Effect.runPromise(parseSetupPlan(
 		(await api('/api/repositories/setup/preview', {
 			repository: repository.name,
