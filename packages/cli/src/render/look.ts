@@ -56,7 +56,7 @@ export function step<A, E>(
 	succeed: (value: A) => string,
 ): Effect.Effect<A, E> {
 	return Effect.suspend(() => {
-		const spinner = out.spinner(text);
+		const spinner = out.spinner(text, { concurrent: true });
 		return work.pipe(
 			Effect.tap(value => Effect.sync(() => spinner.succeed(succeed(value)))),
 			Effect.tapError(() => Effect.sync(() => spinner.fail(text))),

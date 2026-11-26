@@ -29,7 +29,7 @@ export function login(
 					})
 				),
 			);
-			warnOutage(response);
+			yield* warnOutage(response);
 			if (response.status === 202) {
 				yield* pending();
 				yield* client.pause(1500);

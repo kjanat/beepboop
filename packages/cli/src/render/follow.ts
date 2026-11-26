@@ -225,6 +225,7 @@ export function followRelease(
 			followed.bumped
 				? `Applying the ${look.version(followed.version)} version bump`
 				: `Starting the release of ${look.version(followed.version)}`,
+			{ concurrent: true },
 		);
 		const bars = new Map<string, { handle: ProgressHandle; done: number }>();
 		const open = () => [...bars.values()].filter(bar => bar.done >= 0);
@@ -328,7 +329,7 @@ export function followRelease(
 						promotionId = promotion.id;
 						bars.clear();
 						started = false;
-						spinner = out.spinner(`Waiting for checks on ${sha}`);
+						spinner = out.spinner(`Waiting for checks on ${sha}`, { concurrent: true });
 						continue;
 					}
 				}

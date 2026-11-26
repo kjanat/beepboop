@@ -46,7 +46,7 @@ export const auth = group('auth').description('Sign in, inspect your session, or
 							if (!flags.browser) return;
 							if (!(yield* openBrowser(url))) out.status('Could not open the browser. Open the login page above.');
 						}).pipe(Effect.ensuring(Effect.sync(() => {
-							waiting = out.spinner('Waiting for you to approve this terminal in the browser');
+							waiting = out.spinner('Waiting for you to approve this terminal in the browser', { concurrent: true });
 						}))), () => Effect.sync(() => waiting?.update('Still waiting for your approval in the browser'))).pipe(
 							Effect.tapError(() => Effect.sync(() => waiting?.fail('Login did not complete'))),
 						);
