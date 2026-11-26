@@ -154,11 +154,6 @@ test('triage delivers only its granted credential to the configured default-bran
 		expect(result.status).toBe(200);
 		expect(result.body).toEqual({ key: 'test-classifier-key' });
 	}
-	const action = await runAction(world, 'triage', { ...run, event: 'pull_request_target' }, {});
-	expect(action.outputs).toEqual({ 'typesafe-api-key': 'test-classifier-key' });
-	const logs = action.logs.map(line => line.replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g, '<GitHub OIDC JWT>'));
-	expect(logs).toEqual(['::add-mask::<GitHub OIDC JWT>', '::add-mask::test-classifier-key']);
-	expect(action.environment).toBe('');
 	expect(refusal(await triage({ file: 'ci.yml' }))).toEqual([403, 'Workflow is not configured for triage credentials']);
 	for (const overrides of [{ ref: 'refs/heads/feature' }, { event: 'pull_request' }, { event: 'push' }]) {
 		expect(refusal(await triage(overrides)), JSON.stringify(overrides)).toEqual([
@@ -175,4 +170,20 @@ test('triage delivers only its granted credential to the configured default-bran
 		403,
 		'Workflow identity is not eligible',
 	]);
+});
+
+test('triage action masks its OIDC token and TypeSafe key and exports only the key as a step output', async () => {
+	const oidcToken = 'fake-triage-oidc-token';
+	const typeSafeKey = 'fake-triage-typesafe-key';
+	world.network.serve('triage.test', async request => {
+		expect(request.method).toBe('POST');
+		expect(new URL(request.url).pathname).toBe('/api/workflow/triage');
+		expect(request.headers.get('Authorization')).toBe(`Bearer ${oidcToken}`);
+		expect(await request.json()).toEqual({});
+		return Response.json({ key: typeSafeKey });
+	});
+	const action = await runAction(world, 'triage', oidcToken, { SERVICE_ORIGIN: 'https://triage.test' });
+	expect(action.outputs).toEqual({ 'typesafe-api-key': typeSafeKey });
+	expect(action.logs).toEqual([`::add-mask::${oidcToken}`, `::add-mask::${typeSafeKey}`]);
+	expect(action.environment).toBe('');
 });
