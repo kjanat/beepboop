@@ -172,18 +172,31 @@ test('triage delivers only its granted credential to the configured default-bran
 	]);
 });
 
-test('triage action masks its OIDC token and TypeSafe key and exports only the key as a step output', async () => {
-	const oidcToken = 'fake-triage-oidc-token';
-	const typeSafeKey = 'fake-triage-typesafe-key';
-	world.network.serve('triage.test', async request => {
-		expect(request.method).toBe('POST');
-		expect(new URL(request.url).pathname).toBe('/api/workflow/triage');
-		expect(request.headers.get('Authorization')).toBe(`Bearer ${oidcToken}`);
-		expect(await request.json()).toEqual({});
-		return Response.json({ key: typeSafeKey });
-	});
-	const action = await runAction(world, 'triage', oidcToken, { SERVICE_ORIGIN: 'https://triage.test' });
-	expect(action.outputs).toEqual({ 'typesafe-api-key': typeSafeKey });
-	expect(action.logs).toEqual([`::add-mask::${oidcToken}`, `::add-mask::${typeSafeKey}`]);
-	expect(action.environment).toBe('');
-});
+const deactivatedTypeSafeKeys = [
+	[
+		'first',
+		'apikey_211647c1719f14c74be089009b9b5666587e_a9231087badd7e233b5a7676cda2df2dea9c76553ebeaf9224eb6e397be5386f',
+	],
+	[
+		'second',
+		'apikey_211655573ff2144d438784bf8c5f83ff30a6_521aff90f9ca1c77a490d337a50b088b2532ae305df1aab012a79160838f0a53',
+	],
+] as const;
+
+test.each(deactivatedTypeSafeKeys)(
+	'triage action masks the OIDC token and the %s TypeSafe key',
+	async (_, typeSafeKey) => {
+		const oidcToken = 'fake-triage-oidc-token';
+		world.network.serve('triage.test', async request => {
+			expect(request.method).toBe('POST');
+			expect(new URL(request.url).pathname).toBe('/api/workflow/triage');
+			expect(request.headers.get('Authorization')).toBe(`Bearer ${oidcToken}`);
+			expect(await request.json()).toEqual({});
+			return Response.json({ key: typeSafeKey });
+		});
+		const action = await runAction(world, 'triage', oidcToken, { SERVICE_ORIGIN: 'https://triage.test' });
+		expect(action.outputs).toEqual({ 'typesafe-api-key': typeSafeKey });
+		expect(action.logs).toEqual([`::add-mask::${oidcToken}`, `::add-mask::${typeSafeKey}`]);
+		expect(action.environment).toBe('');
+	},
+);
