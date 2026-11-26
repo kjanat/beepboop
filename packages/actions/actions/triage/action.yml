@@ -1,0 +1,32 @@
+name: Beepboop triage
+description: Triage GitHub issues and pull requests with an OIDC-delivered TypeSafe credential
+inputs:
+  service:
+    description: Beepboop service origin
+    default: https://beepboop.kjanat.dev
+  target:
+    description: Issue or pull request URL or owner/repo#number. Defaults to the triggering item.
+  labels:
+    description: JSON array of existing labels to consider. Defaults to all labels.
+  apply:
+    description: Write changes to GitHub. Set to false to preview.
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      uses: $/packages/actions/actions/deps/bun
+    - name: Get TypeSafe credential
+      id: credential
+      shell: bash
+      env:
+        SERVICE_ORIGIN: ${{ inputs.service }}
+      run: bun "${GITHUB_ACTION_PATH}/../runtime/client.ts" triage
+    - name: Triage issue or pull request
+      uses: kjanat/actions@51c1463840bc424a321106a0e3fd266b0af58291 # triage
+      with:
+        typesafe-api-key: ${{ steps.credential.outputs.typesafe-api-key }}
+        token: ${{ github.token }}
+        target: ${{ inputs.target }}
+        labels: ${{ inputs.labels }}
+        apply: ${{ inputs.apply }}

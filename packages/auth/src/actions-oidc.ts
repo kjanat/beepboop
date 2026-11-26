@@ -26,6 +26,7 @@ export function workflowIdentity(
 	audience: string,
 	ownerId: number,
 	issuerKeys: JwsKeyResolver,
+	allowPullRequestTarget = false,
 ): Effect.Effect<RunIdentity, DomainError> {
 	return Effect.gen(function*() {
 		const token = request.headers.get('authorization')?.replace(/^Bearer /, '');
@@ -62,7 +63,7 @@ export function workflowIdentity(
 				...(typeof payload.environment === 'string' ? { environment: payload.environment } : {}),
 			};
 		}));
-		if (identity.ownerId !== ownerId || identity.event === 'pull_request_target') {
+		if (identity.ownerId !== ownerId || (!allowPullRequestTarget && identity.event === 'pull_request_target')) {
 			return yield* forbidden('Workflow identity is not eligible');
 		}
 		return identity;

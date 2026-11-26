@@ -1202,6 +1202,48 @@ Copy the value with **Copy latest value to GitHub** on the Secrets page.
 runtime grants. A workflow with a copied secret reads
 `${{ secrets.CARGO_REGISTRY_TOKEN }}` itself.
 
+### Triage issues and pull requests
+
+`kjanat/beepboop/actions/triage@v1` fetches the stored `TYPESAFE_API_KEY` with
+GitHub OIDC and passes it to the triage action. The job needs no checkout, stored
+GitHub secret, or release execution. Set `apply: "false"` to preview changes.
+
+```yaml
+name: Triage
+on:
+  issues: { types: [opened, edited, reopened] }
+  pull_request_target: { types: [opened, edited, reopened, synchronize] }
+permissions:
+  id-token: write
+  issues: write
+  pull-requests: write
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: kjanat/beepboop/actions/triage@v1
+        with:
+          labels: ${{ vars.TRIAGE_LABELS }}
+```
+
+Add `TYPESAFE_API_KEY` to the selected stream's `credentials` list in
+`.github/beepboop.json` and add a `workflows.triage` entry to that stream:
+
+```json
+{ "file": "triage.yml", "mode": "observe", "required": false }
+```
+
+After merging that configuration, grant the alias to the workflow:
+
+```sh
+beepboop secrets grant owner/repo TYPESAFE_API_KEY --stream main --operation triage
+```
+
+Beepboop checks the repository, workflow file, default branch, event and any
+granted environment before delivering the key. Keep the triage job limited to
+trusted workflow code, including for `pull_request_target` runs. Manual runs can
+pass a `target` input such as `owner/repo#123`.
+
 After the first release, set up trusted publishing on crates.io. Open the
 crate's **Settings**, then **Trusted Publishing**, and add a GitHub publisher:
 

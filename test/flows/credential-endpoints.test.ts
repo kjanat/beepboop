@@ -1,7 +1,9 @@
 import { expect, test } from 'bun:test';
+import { runAction } from '@root/test/support/actions.ts';
 import { discoveredWidget } from '@root/test/support/client.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer } from '@root/test/support/http.ts';
+import { editableConfiguration, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Cause, Effect, Exit } from 'effect';
@@ -106,4 +108,68 @@ test('workflow credential delivery refuses an alias the stream does not request 
 		'Alias not requested by the stream',
 	]);
 	expect(read).toEqual(['npm-token', 'npm-token']);
+});
+
+test('triage delivers only its granted credential to the configured default-branch workflow', async () => {
+	const repository = widget(world.github);
+	const configuration = editableConfiguration();
+	world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify({
+			...configuration,
+			streams: {
+				main: {
+					...configuration.streams.main,
+					credentials: ['npm-token', 'TYPESAFE_API_KEY'],
+					workflows: { triage: { file: 'triage.yml', mode: 'observe', required: false } },
+				},
+			},
+		}),
+		'.github/workflows/triage.yml':
+			'name: Triage\non: { issues: { types: [opened] } }\njobs:\n  triage:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ready\n',
+	}, 'Configure triage');
+	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
+
+	const elevated = async (path: string, body: Record<string, unknown>) => {
+		await world.db.prepare('DELETE FROM sessions WHERE id=?').bind('proof').run();
+		await world.elevate();
+		return api(path, { ...body, proof: 'proof' });
+	};
+	const run = { repository, sha: world.github.head(repository), file: 'triage.yml', runId: 42, event: 'issues' };
+	const triage = async (overrides: Partial<typeof run> & { ref?: string } = {}) =>
+		bearer(world, await world.runToken({ ...run, ...overrides }))('/api/workflow/triage', {});
+
+	expect(refusal(await triage())).toEqual([403, 'Credential grant denied']);
+	for (const [alias, value] of [['TYPESAFE_API_KEY', 'test-classifier-key'], ['npm-token', 'test-release-key']]) {
+		expect((await elevated('/api/credentials/replace', { alias, value })).status).toBe(200);
+		expect(
+			(await elevated('/api/credentials/grant', {
+				selection: { alias, repositoryId: repository.id, stream: 'main', operation: 'triage', delivery: 'runtime' },
+			})).body,
+		).toEqual({ granted: true });
+	}
+	for (const event of ['issues', 'pull_request_target', 'workflow_dispatch']) {
+		const token = await world.runToken({ ...run, event });
+		const result = await bearer(world, token)('/api/workflow/triage', { aliases: ['npm-token'] });
+		expect(result.status).toBe(200);
+		expect(result.body).toEqual({ key: 'test-classifier-key' });
+	}
+	const action = await runAction(world, 'triage', { ...run, event: 'pull_request_target' }, {});
+	expect(action.outputs).toEqual({ 'typesafe-api-key': 'test-classifier-key' });
+	expect(action.logs.map(line => line.startsWith('::add-mask::'))).toEqual([true, true]);
+	expect(action.logs.at(-1)).toBe('::add-mask::test-classifier-key');
+	expect(action.environment).toBe('');
+	expect(refusal(await triage({ file: 'ci.yml' }))).toEqual([403, 'Workflow is not configured for triage credentials']);
+	for (const overrides of [{ ref: 'refs/heads/feature' }, { event: 'pull_request' }, { event: 'push' }]) {
+		expect((await triage(overrides)).status).toBe(403);
+	}
+	const pullRequestTarget = bearer(world, await world.runToken({ ...run, event: 'pull_request_target' }));
+	expect(
+		refusal(await pullRequestTarget('/api/workflow/credentials', { executionId: 'x', aliases: ['TYPESAFE_API_KEY'] })),
+	)
+		.toEqual([403, 'Workflow identity is not eligible']);
+	expect(refusal(await pullRequestTarget('/api/workflow/token', {}))).toEqual([
+		403,
+		'Workflow identity is not eligible',
+	]);
 });
