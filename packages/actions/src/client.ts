@@ -66,6 +66,10 @@ function writeResult(mode: Mode, data: Record<string, unknown>, environment: Env
 				yield* writeOutput(alias, value);
 			}
 			yield* writeOutput('values', JSON.stringify(data));
+		} else if (mode === 'triage') {
+			const key = yield* Effect.fromResult(text(data.key));
+			yield* mask(key);
+			yield* writeOutput('typesafe-api-key', key);
 		} else if (mode === 'token') {
 			if (typeof data.token !== 'string') return yield* fail('Invalid token response');
 			if (environment.TOKEN_IDENTITY === 'true') {

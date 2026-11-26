@@ -567,6 +567,14 @@ export const routes = {
 		request: mutableStruct({ executionId: text, aliases: mutableArray(text) }),
 		response: mutableRecord(Schema.String, Schema.String),
 	}),
+	workflowTriage: route({
+		method: 'POST',
+		path: '/api/workflow/triage',
+		auth: 'workflow',
+		idempotent: true,
+		request: mutableStruct({}),
+		response: mutableStruct({ key: Schema.NonEmptyString }),
+	}),
 	workflowRefsPlan: route({
 		method: 'POST',
 		path: '/api/workflow/refs-plan',

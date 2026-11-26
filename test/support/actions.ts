@@ -58,7 +58,7 @@ async function withRuntime<A>(prefix: string, work: (directory: string, runtime:
 export function runAction(
 	world: World,
 	mode: string,
-	run: RunIdentity,
+	run: RunIdentity | string,
 	variables: Record<string, string>,
 ): Promise<ActionResult> {
 	return withRuntime('beepboop-action-', async (directory, runtime) => {
@@ -66,7 +66,7 @@ export function runAction(
 		const output = join(directory, 'output'), environment = join(directory, 'env');
 		writeFileSync(output, '');
 		writeFileSync(environment, '');
-		const token = await world.runToken(run);
+		const token = typeof run === 'string' ? run : await world.runToken(run);
 		world.network.serve(tokenHost, request => {
 			if (request.headers.get('authorization') !== 'Bearer request-token') {
 				return Response.json({ message: 'Bad credentials' }, { status: 401 });

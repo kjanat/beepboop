@@ -16,6 +16,7 @@ export const modes = [
 	'prepared',
 	'report',
 	'credentials',
+	'triage',
 	'refs-plan',
 	'refs-complete',
 	'release',
@@ -29,6 +30,7 @@ export const endpoints = {
 	prepared: { path: '/api/workflow/prepared', idempotent: true },
 	report: { path: '/api/workflow/report', idempotent: true },
 	credentials: { path: '/api/workflow/credentials', idempotent: true },
+	triage: { path: '/api/workflow/triage', idempotent: true },
 	'refs-plan': { path: '/api/workflow/refs-plan', idempotent: true },
 	'refs-complete': { path: '/api/workflow/refs-complete', idempotent: true },
 	release: { path: '/api/workflow/release', idempotent: true },
@@ -124,6 +126,8 @@ export function requestBody(mode: Mode, environment: Environment, now: number): 
 			}
 			case 'credentials':
 				return { executionId, aliases: yield* array(yield* json(environment.ALIASES || '[]')) };
+			case 'triage':
+				return {};
 			case 'refs-plan': {
 				if (environment.DISTRIBUTION_ARTIFACT_ID || environment.DISTRIBUTION_ARTIFACT_DIGEST) {
 					const id = Number(yield* required(environment, 'DISTRIBUTION_ARTIFACT_ID'));

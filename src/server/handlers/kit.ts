@@ -104,12 +104,13 @@ export function elevated<Q extends Contract, S extends Contract>(
 	};
 }
 
-function identify(context: Context): Effect.Effect<RunIdentity, DomainError> {
+function identify(context: Context, allowPullRequestTarget = false): Effect.Effect<RunIdentity, DomainError> {
 	return workflowIdentity(
 		context.request,
 		context.env.APPLICATION_ORIGIN,
 		Number(context.env.OWNER_ID),
 		context.service.authentication.workflowKeys,
+		allowPullRequestTarget,
 	);
 }
 
@@ -131,12 +132,13 @@ export function workflowToken<Q extends Contract, S extends Contract>(
 export function workflow<Q extends Contract, S extends Contract>(
 	route: Route<Q, S>,
 	handle: Handle<Q, S, EnrolledContext>,
+	options?: { readonly allowPullRequestTarget: boolean },
 ): Endpoint<Route<Q, S>> {
 	return {
 		route,
 		run: (context, read) =>
 			Effect.gen(function*() {
-				const identity = yield* identify(context);
+				const identity = yield* identify(context, options?.allowPullRequestTarget);
 				const enrollment = yield* context.service.store.repositories.get(identity.repositoryId);
 				if (!enrollment || readiness(enrollment).kind === 'suspended') {
 					return yield* forbidden('Repository is not enrolled or has been suspended');

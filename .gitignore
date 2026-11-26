@@ -21,3 +21,4 @@ worker-configuration.d.ts
 /packages/cli/cli.js
 /packages/cli/*.tgz
 .review-artifacts/
+package.metadata.beepboop.txt
