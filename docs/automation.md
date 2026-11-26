@@ -1202,6 +1202,36 @@ Copy the value with **Copy latest value to GitHub** on the Secrets page.
 runtime grants. A workflow with a copied secret reads
 `${{ secrets.CARGO_REGISTRY_TOKEN }}` itself.
 
+After the first release, set up trusted publishing on crates.io. Open the
+crate's **Settings**, then **Trusted Publishing**, and add a GitHub publisher:
+
+- the repository owner and the repository name
+- the workflow filename, such as `publish-crates.yml`
+- the job's environment, if the job sets one
+
+Then edit the promote workflow. Add a `rust-lang/crates-io-auth-action@v1`
+step before `beepboop_publish`, remove the `credentials` input, and set
+`CARGO_REGISTRY_TOKEN` from the auth step's `token` output:
+
+```yaml
+- uses: rust-lang/crates-io-auth-action@v1
+  id: auth
+- id: beepboop_publish
+  name: Publish selected packages
+  uses: kjanat/beepboop/actions/publish@v1
+  with:
+    execution-id: ${{ steps.beepboop.outputs.execution-id }}
+  env:
+    CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+```
+
+The build commands of `actions/publish` see this variable too.
+
+The generated job already has `id-token: write`. `beepboop secrets list` prints
+the grant ID. Remove the grant with `beepboop secrets revoke <grant-id>`, and
+revoke the API token on crates.io. A crate that you add later needs a token for
+its first version again.
+
 ### Triage issues and pull requests
 
 `kjanat/beepboop/actions/triage@v1` fetches the stored `TYPESAFE_API_KEY` with
@@ -1243,36 +1273,6 @@ Beepboop checks the repository, workflow file, default branch, event and any
 granted environment before delivering the key. Keep the triage job limited to
 trusted workflow code, including for `pull_request_target` runs. Manual runs can
 pass a `target` input such as `owner/repo#123`.
-
-After the first release, set up trusted publishing on crates.io. Open the
-crate's **Settings**, then **Trusted Publishing**, and add a GitHub publisher:
-
-- the repository owner and the repository name
-- the workflow filename, such as `publish-crates.yml`
-- the job's environment, if the job sets one
-
-Then edit the promote workflow. Add a `rust-lang/crates-io-auth-action@v1`
-step before `beepboop_publish`, remove the `credentials` input, and set
-`CARGO_REGISTRY_TOKEN` from the auth step's `token` output:
-
-```yaml
-- uses: rust-lang/crates-io-auth-action@v1
-  id: auth
-- id: beepboop_publish
-  name: Publish selected packages
-  uses: kjanat/beepboop/actions/publish@v1
-  with:
-    execution-id: ${{ steps.beepboop.outputs.execution-id }}
-  env:
-    CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-```
-
-The build commands of `actions/publish` see this variable too.
-
-The generated job already has `id-token: write`. `beepboop secrets list` prints
-the grant ID. Remove the grant with `beepboop secrets revoke <grant-id>`, and
-revoke the API token on crates.io. A crate that you add later needs a token for
-its first version again.
 
 ## Repository token
 

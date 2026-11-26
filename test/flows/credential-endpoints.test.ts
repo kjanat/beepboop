@@ -139,9 +139,12 @@ test('triage delivers only its granted credential to the configured default-bran
 	const triage = async (overrides: Partial<typeof run> & { ref?: string } = {}) =>
 		bearer(world, await world.runToken({ ...run, ...overrides }))('/api/workflow/triage', {});
 
-	expect(refusal(await triage())).toEqual([403, 'Credential grant denied']);
-	for (const [alias, value] of [['TYPESAFE_API_KEY', 'test-classifier-key'], ['npm-token', 'test-release-key']]) {
+	const credentials = [['TYPESAFE_API_KEY', 'test-classifier-key'], ['npm-token', 'test-release-key']];
+	for (const [alias, value] of credentials) {
 		expect((await elevated('/api/credentials/replace', { alias, value })).status).toBe(200);
+	}
+	expect(refusal(await triage())).toEqual([403, 'Credential grant denied']);
+	for (const [alias] of credentials) {
 		expect(
 			(await elevated('/api/credentials/grant', {
 				selection: { alias, repositoryId: repository.id, stream: 'main', operation: 'triage', delivery: 'runtime' },
