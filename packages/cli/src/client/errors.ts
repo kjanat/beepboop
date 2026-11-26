@@ -1,5 +1,5 @@
 import { CLIError } from '@kjanat/dreamcli';
-import { Effect } from 'effect';
+import { Context, Effect } from 'effect';
 import { failure, signIn } from '@/cli/render/output';
 import type { ApiFailure, Unreachable } from '@/contract/client';
 import { failureOf } from '@/contract/client';
@@ -17,13 +17,23 @@ const codes = {
 	internal: 'SERVER_ERROR',
 } as const satisfies Record<ErrorCode, string>;
 
-let warned = false;
-export function warnOutage(response: Response): void {
-	const notice = response.headers.get('beepboop-github-status');
-	if (!notice || warned) return;
-	warned = true;
-	process.stderr.write(`warning: ${notice}\n`);
+export function reportOutageOnce(write: (warning: string) => void): (notice: string) => void {
+	let warned = false;
+	return notice => {
+		if (warned) return;
+		warned = true;
+		write(`warning: ${notice}`);
+	};
 }
+
+export const ReportOutage = Context.Reference<(notice: string) => void>('beepboop/cli/ReportOutage', {
+	defaultValue: () => reportOutageOnce(warning => process.stderr.write(`${warning}\n`)),
+});
+
+export const warnOutage = Effect.fnUntraced(function*(response: Response) {
+	const notice = response.headers.get('beepboop-github-status');
+	if (notice) (yield* ReportOutage)(notice);
+});
 export function localFailure(error: unknown): CLIError {
 	return failure(error instanceof Error ? error.message : String(error), 'LOCAL_IO');
 }

@@ -76,7 +76,7 @@ export class Client {
 					redirect: 'error',
 					signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
 				})
-			).pipe(Effect.tap(response => Effect.sync(() => warnOutage(response))));
+			).pipe(Effect.tap(warnOutage));
 	}
 	call<Q extends Contract, S extends Contract>(
 		route: Route<Q, S>,

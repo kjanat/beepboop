@@ -1,7 +1,8 @@
-import type { CLIError } from '@kjanat/dreamcli';
+import type { CLIError, Out } from '@kjanat/dreamcli';
 import { arg, command, flag } from '@kjanat/dreamcli';
 import { Effect } from 'effect';
 import { Client } from '@/cli/client/api';
+import { ReportOutage, reportOutageOnce } from '@/cli/client/errors';
 import { defaultServer } from '@/cli/config';
 import { diagnostics } from '@/cli/render/output';
 import { routes } from '@/contract/routes';
@@ -34,12 +35,16 @@ export function enrolled(client: Client, repository: string) {
 	return client.call(routes.repositoriesResolve, { repository });
 }
 
-export function runCommand(work: Effect.Effect<unknown, CLIError>): Promise<void> {
-	return Effect.runPromise(Effect.asVoid(work));
+export function runCommand(out: Out): (work: Effect.Effect<unknown, CLIError>) => Promise<void> {
+	return work =>
+		Effect.runPromise(
+			Effect.asVoid(work).pipe(Effect.provideService(ReportOutage, reportOutageOnce(warning => out.warn(warning)))),
+		);
 }
 
-export function connected<P extends { flags: { server: string } }>(
+export function connected<P extends { flags: { server: string }; out: Out }>(
 	work: (client: Client, params: P) => Effect.Effect<unknown, CLIError>,
 ): (params: P) => Promise<void> {
-	return params => runCommand(Client.at(params.flags.server).pipe(Effect.flatMap(client => work(client, params))));
+	return params =>
+		runCommand(params.out)(Client.at(params.flags.server).pipe(Effect.flatMap(client => work(client, params))));
 }

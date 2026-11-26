@@ -73,7 +73,7 @@ export const notifications = group('notifications').description('Send package re
 				arg.string({ pattern: watchedPackagePattern }).describe('Package as registry:name, for example npm:svgo'),
 			)
 			.action(({ flags, args, out }) =>
-				runCommand(Effect.gen(function*() {
+				runCommand(out)(Effect.gen(function*() {
 					const separator = args.package.indexOf(':');
 					const registry = watchedRegistries.find(candidate => candidate === args.package.slice(0, separator));
 					const name = args.package.slice(separator + 1);

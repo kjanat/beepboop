@@ -59,7 +59,7 @@ function reviewRelease<I extends object>(
 	{ review, operation, flags, repository, input, selection, plan, prepare }: ReleaseReview<I>,
 	out: Out,
 ): Promise<void> {
-	return runCommand(Effect.gen(function*() {
+	return runCommand(out)(Effect.gen(function*() {
 		if (operation === review.prepare && (!flags.sourceSha || !flags.planId)) {
 			return yield* Effect.fail(failure(
 				`${review.subject} needs --sourceSha and --planId`,

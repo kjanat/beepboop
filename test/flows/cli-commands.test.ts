@@ -187,16 +187,22 @@ test('secrets and notifications list as tables, and adding and subscribing repor
 
 test('auth login shows the wait for browser approval, then signs in, as JSON and piped', async () => {
 	const fresh = await world.cliSession();
+	const notice = 'GitHub reports an incident';
+	const headers = { 'beepboop-github-status': notice };
 	let answers = 0;
 	world.network.serve(new URL(origin).host, request =>
 		new URL(request.url).pathname === '/auth/cli/token'
-			? (answers++ % 2 === 0 ? new Response(null, { status: 202 }) : Response.json({ token: fresh }))
+			? (answers++ % 2 === 0
+				? new Response(null, { status: 202, headers })
+				: Response.json({ token: fresh }, { headers }))
 			: world.handle(request));
 	const pauses = spyOn(client, 'pause').mockReturnValue(Effect.void);
 	const tty = await runCli(['auth', 'login', '--browser=false']);
 	expect([tty.exitCode, tty.stderr.join('')]).toEqual([
 		0,
-		expect.stringMatching(/^Login page: https:\/\/\S+\/auth\/cli\/authorize\?challenge=\S+\nConfirm code: \S+\n$/),
+		expect.stringMatching(
+			/^Login page: https:\/\/\S+\/auth\/cli\/authorize\?challenge=\S+\nConfirm code: \S+\nwarning: GitHub reports an incident\n$/,
+		),
 	]);
 	expect(tty.activity).toEqual([
 		{ type: 'spinner:start', text: 'Waiting for you to approve this terminal in the browser' },
@@ -207,7 +213,8 @@ test('auth login shows the wait for browser approval, then signs in, as JSON and
 	expect(pauses).toHaveBeenCalledWith(1500);
 	const json = await runCli(['auth', 'login', '--browser=false', '--json']);
 	expect(JSON.parse(json.stdout.join(''))).toEqual({ server: origin, signedIn: true });
-	expect(json.stderr.join('')).not.toContain('Waiting for you');
+	expect(json.stderr.join('')).toEndWith(`warning: ${notice}\n`);
+	expect(json.stderr.join('').match(/warning:/g)).toHaveLength(1);
 	const piped = await app.execute(['auth', 'login', '--browser=false'], { isTTY: false, env: {} });
 	expect(piped.exitCode).toBe(0);
 	expect([...piped.stdout, ...piped.stderr].join('')).not.toContain('Waiting for you');
