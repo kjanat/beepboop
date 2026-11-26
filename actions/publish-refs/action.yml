@@ -1,0 +1,47 @@
+name: Publish release refs
+description: Publish the execution's authorized version tag or major/minor aliases
+inputs:
+  token:
+    description: Destination repository token with contents write permission
+    required: true
+  files:
+    description: JSON array of configured generated distribution paths; omit for source-only releases
+    default: "[]"
+  artifact-id:
+    description: GitHub Actions artifact containing repository-relative distribution paths and root beepboop-distribution.json manifest (see this action's README)
+  artifact-digest:
+    description: SHA-256 digest returned by actions/upload-artifact
+  service:
+    description: Beepboop service origin
+    default: https://beepboop.kjanat.dev
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      id: bun
+      uses: $/actions/deps/bun
+    - name: Plan refs
+      id: plan
+      shell: bash
+      env:
+        SERVICE_ORIGIN: "${{ inputs.service }}"
+        DISTRIBUTION_PATHS: "${{ inputs.files }}"
+        DISTRIBUTION_ARTIFACT_ID: "${{ inputs.artifact-id }}"
+        DISTRIBUTION_ARTIFACT_DIGEST: "${{ inputs.artifact-digest }}"
+        SCRIPT: "${{ github.action_path }}/../runtime/client.ts"
+      run: bun "${SCRIPT}" refs-plan
+    - name: Push refs
+      id: push
+      shell: bash
+      env:
+        REF_PLAN: "${{ steps.plan.outputs.result }}"
+        REF_TOKEN: "${{ inputs.token }}"
+        SCRIPT: "${{ github.action_path }}/../runtime/refs.ts"
+      run: bun "${SCRIPT}"
+    - name: Confirm refs
+      shell: bash
+      env:
+        VERSION_TAG: "${{ steps.push.outputs.version-tag }}"
+        SERVICE_ORIGIN: "${{ inputs.service }}"
+        SCRIPT: "${{ github.action_path }}/../runtime/client.ts"
+      run: bun "${SCRIPT}" refs-complete
