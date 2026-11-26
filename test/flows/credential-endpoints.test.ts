@@ -156,12 +156,15 @@ test('triage delivers only its granted credential to the configured default-bran
 	}
 	const action = await runAction(world, 'triage', { ...run, event: 'pull_request_target' }, {});
 	expect(action.outputs).toEqual({ 'typesafe-api-key': 'test-classifier-key' });
-	expect(action.logs.map(line => line.startsWith('::add-mask::'))).toEqual([true, true]);
-	expect(action.logs.at(-1)).toBe('::add-mask::test-classifier-key');
+	const logs = action.logs.map(line => line.replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g, '<GitHub OIDC JWT>'));
+	expect(logs).toEqual(['::add-mask::<GitHub OIDC JWT>', '::add-mask::test-classifier-key']);
 	expect(action.environment).toBe('');
 	expect(refusal(await triage({ file: 'ci.yml' }))).toEqual([403, 'Workflow is not configured for triage credentials']);
 	for (const overrides of [{ ref: 'refs/heads/feature' }, { event: 'pull_request' }, { event: 'push' }]) {
-		expect((await triage(overrides)).status).toBe(403);
+		expect(refusal(await triage(overrides)), JSON.stringify(overrides)).toEqual([
+			403,
+			'Triage requires an issue, target pull request or manual run from the default branch',
+		]);
 	}
 	const pullRequestTarget = bearer(world, await world.runToken({ ...run, event: 'pull_request_target' }));
 	expect(
