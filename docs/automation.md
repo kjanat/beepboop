@@ -421,8 +421,7 @@ environment:
 steps:
   - uses: kjanat/beepboop/actions/begin@v1
     id: beepboop
-    with:
-      execution-id: ${{ inputs.beepboop_execution_id }}
+    with: { execution-id: "${{ inputs.beepboop_execution_id }}" }
 ```
 
 For a job that publishes several packages, select the environment link by
@@ -1219,10 +1218,8 @@ step before `beepboop_publish`, remove the `credentials` input, and set
 - id: beepboop_publish
   name: Publish selected packages
   uses: kjanat/beepboop/actions/publish@v1
-  with:
-    execution-id: ${{ steps.beepboop.outputs.execution-id }}
-  env:
-    CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+  with: { execution-id: "${{ steps.beepboop.outputs.execution-id }}" }
+  env: { CARGO_REGISTRY_TOKEN: "${{ steps.auth.outputs.token }}" }
 ```
 
 The build commands of `actions/publish` see this variable too.
@@ -1252,8 +1249,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: kjanat/beepboop/actions/triage@v1
-        with:
-          labels: ${{ vars.TRIAGE_LABELS }}
+        with: { labels: "${{ vars.TRIAGE_LABELS }}" }
 ```
 
 Add `TYPESAFE_API_KEY` to the selected stream's `credentials` list in
@@ -1293,8 +1289,7 @@ qualify too. Other bots, apps and users get no token.
     permission-contents: write
     permission-pull-requests: write
 - run: gh pr comment "$PR" --body "Done."
-  env:
-    GH_TOKEN: ${{ steps.beepboop.outputs.token }}
+  env: { GH_TOKEN: "${{ steps.beepboop.outputs.token }}" }
 ```
 
 The action takes `permission-contents`, `permission-pull-requests`,
@@ -1316,8 +1311,7 @@ step's `env` even when an earlier failure skips the step, so fall back to an
 empty object:
 
 ```yaml
-env:
-  "${{ insert }}": ${{ fromJSON(steps.beepboop.outputs.gitId || '{}') }}
+env: { "${{ insert }}": "${{ fromJSON(steps.beepboop.outputs.gitId || '{}') }}" }
 ```
 
 The audit log records every token that Beepboop issues.
@@ -1326,8 +1320,7 @@ A run that Beepboop dispatched passes its execution ID:
 
 ```yaml
 - uses: kjanat/beepboop/actions/token@v1
-  with:
-    execution-id: ${{ inputs.beepboop_execution_id }}
+  with: { execution-id: "${{ inputs.beepboop_execution_id }}" }
 ```
 
 Beepboop checks that the run is that execution's dispatch. The repository,
@@ -1361,11 +1354,11 @@ permissions:
   id-token: write
 steps:
   - uses: actions/checkout@v7
-  - run: dprint fmt
+  - uses: kjanat/actions@fmt
   - uses: kjanat/beepboop/actions/pull-request@v1
     with:
       branch: autofix/dprint
-      title: "style: apply dprint formatting"
+      title: "style: apply kprint formatting"
       body: Formatting drift from the scheduled `dprint fmt` run.
 ```
 
@@ -1679,8 +1672,7 @@ ID to attach files from the build:
 ```yaml
 - uses: kjanat/beepboop/actions/draft-release@v1
   id: draft
-  with:
-    execution-id: ${{ inputs.beepboop_execution_id }}
+  with: { execution-id: "${{ inputs.beepboop_execution_id }}" }
 
 - uses: kjanat/beepboop/actions/upload-release-assets@v1
   with:
