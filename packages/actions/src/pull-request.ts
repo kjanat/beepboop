@@ -99,6 +99,17 @@ function textAt(value: unknown, ...keys: string[]): Effect.Effect<string, Invali
 	return field(value, ...keys).pipe(Effect.flatMap(found => Effect.fromResult(text(found))));
 }
 
+function missingMetadata(pull: unknown, key: 'labels' | 'assignees', value: string | undefined) {
+	const requested = new Set((value ?? '').split('\n').map(item => item.trim()).filter(Boolean));
+	if (!requested.size) return Effect.succeed([]);
+	return Effect.gen(function*() {
+		const entries = yield* Effect.fromResult(array(yield* field(pull, key)));
+		const present = yield* Effect.forEach(entries, entry => textAt(entry, key === 'labels' ? 'name' : 'login'));
+		const normalized = new Set(present.map(item => item.toLowerCase()));
+		return [...requested].filter(item => !normalized.has(item.toLowerCase()));
+	});
+}
+
 function staged(
 	root: string,
 	paths: string[],
@@ -289,6 +300,10 @@ export function pullRequest(environment: Environment): Effect.Effect<PullRequest
 		if (typeof number !== 'number') return yield* fail('GitHub returned no pull request number');
 		const stale = (yield* field(found, 'title')) !== title || ((yield* field(found, 'body')) ?? '') !== body;
 		if (stale) yield* api('PATCH', `${repo}/pulls/${number}`, { title, body });
+		const labels = yield* missingMetadata(found, 'labels', environment.PR_LABELS);
+		const assignees = yield* missingMetadata(found, 'assignees', environment.PR_ASSIGNEES);
+		if (labels.length) yield* api('POST', `${repo}/issues/${number}/labels`, { labels });
+		if (assignees.length) yield* api('POST', `${repo}/issues/${number}/assignees`, { assignees });
 		const final = yield* api('GET', `${repo}/pulls/${number}`);
 		if (
 			(yield* textAt(final, 'state')) !== 'open' || (yield* textAt(final, 'title')) !== title
@@ -296,8 +311,16 @@ export function pullRequest(environment: Environment): Effect.Effect<PullRequest
 			|| (yield* textAt(final, 'head', 'sha')) !== head || (yield* textAt(final, 'base', 'ref')) !== base
 			|| (yield* textAt(yield* api('GET', `${repo}/git/ref/${ref}`), 'object', 'sha')) !== head
 		) return yield* fail('Pull request changed concurrently before outputs; inspect it and rerun');
+		const missingLabels = yield* missingMetadata(final, 'labels', environment.PR_LABELS);
+		if (missingLabels.length) {
+			return yield* fail(`Pull request #${number} is missing labels: ${missingLabels.join(', ')}`);
+		}
+		const missingAssignees = yield* missingMetadata(final, 'assignees', environment.PR_ASSIGNEES);
+		if (missingAssignees.length) {
+			return yield* fail(`Pull request #${number} is missing assignees: ${missingAssignees.join(', ')}`);
+		}
 		return {
-			operation: created ? 'created' : pushed || stale ? 'updated' : 'none',
+			operation: created ? 'created' : pushed || stale || labels.length || assignees.length ? 'updated' : 'none',
 			number,
 			url: yield* textAt(final, 'html_url'),
 			headSha: head,

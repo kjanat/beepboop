@@ -148,6 +148,26 @@ test('a rerun pushes nothing for the same changes and replaces the commit for ne
 	expect(Object.keys(filesAt(repository, updated.headSha ?? ''))).toContain('NOTES.md');
 });
 
+test('labels and assignees are added on creation and repaired without replacing existing metadata', async () => {
+	const { repository, checkout, requests } = checkedOut();
+	writeFileSync(join(checkout.dir, 'README.md'), '# widget\n\nFormatted.\n');
+	const inputs = { PR_LABELS: ' release \nmaintenance', PR_ASSIGNEES: 'octocat' };
+	const created = await open(repository, checkout.dir, inputs);
+	const pull = one(repository.pulls, 'pull request');
+	expect(pull.labels).toEqual(['release', 'maintenance']);
+	expect(pull.assignees).toEqual(['octocat']);
+
+	pull.labels = ['triage'];
+	pull.assignees = ['hubot'];
+	expect(await open(repository, checkout.dir, inputs)).toEqual({ ...created, operation: 'updated' });
+	expect(pull.labels).toEqual(['triage', 'release', 'maintenance']);
+	expect(pull.assignees).toEqual(['hubot', 'octocat']);
+
+	requests.length = 0;
+	expect(await open(repository, checkout.dir, inputs)).toEqual({ ...created, operation: 'none' });
+	expect(requests.filter(request => /^(POST|PATCH) /.test(request))).toEqual([]);
+});
+
 test('add-paths limits the commit and base names the target branch', async () => {
 	const { repository, checkout, trees } = checkedOut();
 	repository.refs.set('heads/next', checkout.sha);
