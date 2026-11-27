@@ -21,16 +21,19 @@ export function editTomlVersion(
 	before: string,
 	inSection: (heading: string) => boolean,
 	version: string,
+	key = 'version',
 ): string | undefined {
+	const keyPattern = key.split('.').map(escapeRegExp).join(String.raw`[ \t]*\.[ \t]*`);
+	const assignment = new RegExp(String.raw`^([ \t]*${keyPattern}[ \t]*=[ \t]*)(["'])([^"'\r\n]*)\2([ \t]*(?:#[^\r\n]*)?\r?)$`);
 	let current = '', count = 0;
 	const after = before.split('\n').map(line => {
 		const heading = /^\s*\[([^\]]+)\]/.exec(line);
 		if (heading) current = heading[1] ?? '';
-		if (inSection(current) && /^\s*version\s*=\s*["']/.test(line)) {
+		if (!inSection(current)) return line;
+		return line.replace(assignment, (_, prefix: string, quote: string, _prior: string, suffix: string) => {
 			count++;
-			return line.replace(/(version\s*=\s*)["'][^"']*["']/, `$1"${version}"`);
-		}
-		return line;
+			return `${prefix}${quote}${version}${quote}${suffix}`;
+		});
 	}).join('\n');
 	return count === 1 ? after : undefined;
 }

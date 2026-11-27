@@ -10,6 +10,25 @@ import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 
+function workspaceVersion(source: string): unknown {
+	return Result.getOrElse(
+		Result.try(() => object(object(parseToml(source).workspace).package).version),
+		() => undefined,
+	);
+}
+
+function editWorkspaceVersion(before: string, version: string): string | undefined {
+	const previous = workspaceVersion(before);
+	if (typeof previous !== 'string') return undefined;
+	if (previous === version) return before;
+
+	// Do not accept a line match that did not update the actual parsed workspace field.
+	const table = editTomlVersion(before, heading => heading.replace(/[ \t]/g, '') === 'workspace.package', version);
+	if (table !== undefined && workspaceVersion(table) === version) return table;
+	const after = editTomlVersion(before, heading => heading.trim() === 'workspace', version, 'package.version');
+	return after !== undefined && workspaceVersion(after) === version ? after : undefined;
+}
+
 export const cargoDiscoverer = {
 	name: 'cargo',
 	identity: pkg => packageIdentity({ type: 'cargo', name: pkg.name, version: pkg.version }),
@@ -89,7 +108,9 @@ export const cargoDiscoverer = {
 		const [path, key] = source.split('#');
 		if (!path || !key) return Effect.fail(precondition('Invalid version source'));
 		const section = key.slice(0, -'.version'.length);
-		const after = editTomlVersion(before, heading => heading === section, version);
+		const after = key === 'workspace.package.version'
+			? editWorkspaceVersion(before, version)
+			: editTomlVersion(before, heading => heading === section, version);
 		return after === undefined ? Effect.fail(precondition(`Cannot safely edit ${source}`)) : Effect.succeed(after);
 	},
 	updateDependencies({ snapshot, packages, version, changed }) {
