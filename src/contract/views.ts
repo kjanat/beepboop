@@ -38,6 +38,8 @@ export const executionView = looseStruct({
 	version: Schema.optional(Schema.String),
 	sourceSha: Schema.String,
 	updatedAt: Schema.Finite,
+	reason: Schema.optional(Schema.String),
+	pendingApproval: Schema.optional(mutableStruct({ actor: Schema.String, sourceSha: Schema.String })),
 });
 export type ExecutionView = Decoded<typeof executionView>;
 

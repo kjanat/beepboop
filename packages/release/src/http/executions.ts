@@ -40,6 +40,7 @@ export const executionEndpoints = {
 				? service.store.filteredExecutions(input)
 				: service.store.executions(),
 	),
+	executionsGet: admin(routes.executionsGet, (input, { service }) => execution(service, input.id, input.repositoryId)),
 	executionsBinaries: admin(
 		routes.executionsBinaries,
 		(input, { service }) =>
@@ -66,7 +67,14 @@ export const executionEndpoints = {
 		(input, { service, actor }) =>
 			execution(service, input.id, input.repositoryId).pipe(
 				Effect.flatMap(found =>
-					service.coordinators.approve(found.repositoryId, found.id, input.sourceSha, actor, input.force === true)
+					service.coordinators.approve(
+						found.repositoryId,
+						found.id,
+						input.sourceSha,
+						actor,
+						input.force === true,
+						input.waitForChecks === true,
+					)
 				),
 			),
 	),

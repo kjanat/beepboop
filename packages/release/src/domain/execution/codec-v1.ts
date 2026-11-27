@@ -230,6 +230,7 @@ export const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	reruns: Schema.optional(mutableArray(mutableStruct({ id: Schema.Finite, attempt: Schema.Finite }))),
 	versionPrMerge: Schema.optional(versionPrMerge),
 	approvedAt: Schema.optional(Schema.Finite),
+	pendingApproval: Schema.optional(mutableStruct({ actor: Schema.String, sourceSha: Schema.String })),
 	publications: mutableArray(packagePublication),
 	artifacts: mutableArray(artifact),
 	createdAt: Schema.Finite,

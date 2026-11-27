@@ -1,17 +1,16 @@
-import type { CLIError } from '@kjanat/dreamcli';
+import type { CLIError, Out } from '@kjanat/dreamcli';
 import { arg, flag, group } from '@kjanat/dreamcli';
-import { Clock, Duration, Effect, Result, Schema } from 'effect';
+import { Deferred, Effect } from 'effect';
 import type { Client } from '@/cli/client/api';
 import { base, connected } from '@/cli/command';
 import { checkoutRepository } from '@/cli/git-checkout';
-import { followInterval, followLimit, followRelease } from '@/cli/render/follow';
+import { followInterval, followRelease } from '@/cli/render/follow';
 import { lookOf, step } from '@/cli/render/look';
 import { executionTable, executionView } from '@/cli/render/views';
 import { routes } from '@/contract/routes';
 import type { ExecutionStateView, ExecutionView } from '@/contract/views';
 import { executionStates } from '@/contract/views';
 import { checkChoices } from '@/domain/release-gates.ts';
-import { apiError } from '@/kernel/errors/domain-error.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 
 const recoveryVerb = { reconcile: 'Reconciling', retry: 'Retrying', redispatch: 'Dispatching' } as const;
@@ -32,7 +31,6 @@ interface RunFilters {
 }
 
 const ownerName = /^[\w.-]+\/[\w.-]+$/;
-const isApiError = Schema.is(apiError);
 
 function listedRepository(
 	client: Client,
@@ -78,6 +76,79 @@ function serverFilter(repository: string | undefined, filters: RunFilters) {
 		...(filters.version === undefined ? {} : { version: filters.version }),
 		...(filters.limit === undefined ? {} : { limit: filters.limit }),
 	};
+}
+
+function watchApproval(client: Client, out: Out, queued: ExecutionView) {
+	return Effect.gen(function*() {
+		const input = process.stdin;
+		const id = { id: queued.id, repositoryId: queued.repositoryId };
+		const key = yield* Deferred.make<'detach' | 'cancel' | 'force'>();
+		yield* Effect.acquireRelease(
+			Effect.sync(() => {
+				const raw = input.isRaw;
+				const paused = input.isPaused();
+				const receive = (data: Buffer) => {
+					const pressed = data.toString();
+					const action = pressed === '\x03'
+						? 'cancel'
+						: pressed === 'q'
+						? 'detach'
+						: pressed === 'f'
+						? 'force'
+						: undefined;
+					if (action) Deferred.doneUnsafe(key, Effect.succeed(action));
+				};
+				input.setRawMode(true);
+				input.on('data', receive);
+				input.resume();
+				return () => {
+					input.off('data', receive);
+					input.setRawMode(raw);
+					if (paused || !input.listenerCount('data')) input.pause();
+				};
+			}),
+			restore => Effect.sync(restore),
+		);
+		out.status('q detach · Ctrl+C cancel release · f force publish');
+		let current = queued;
+		const poll = Effect.gen(function*() {
+			while (true) {
+				yield* client.pause(followInterval);
+				const next = yield* client.call(routes.executionsGet, id);
+				if (!next.pendingApproval) return next;
+				if (next.reason && next.reason !== current.reason) out.status(next.reason);
+				current = next;
+			}
+		});
+		const result = yield* Effect.raceFirst(Deferred.await(key), poll);
+		if (result === 'cancel') {
+			const cancelled = yield* step(
+				out,
+				'Cancelling the release',
+				client.call(routes.executionsCancel, id),
+				() => 'Release cancelled',
+			);
+			out.setExitCode(130);
+			return cancelled;
+		}
+		if (result === 'force') {
+			return yield* step(
+				out,
+				'Forcing publication',
+				client.call(routes.executionsApprove, {
+					...id,
+					sourceSha: queued.sourceSha,
+					force: true,
+				}),
+				() => 'Forced publication started',
+			);
+		}
+		if (result === 'detach') return current;
+		if (result.state === 'awaiting-approval' || result.state === 'failed' || result.state === 'cancelled') {
+			out.setExitCode(1);
+		}
+		return result;
+	}).pipe(Effect.scoped);
 }
 
 export const runs = group('runs').description('Follow, publish, cancel and recover release operations')
@@ -127,54 +198,47 @@ export const runs = group('runs').description('Follow, publish, cancel and recov
 	.command(
 		base('publish', 'Publish a release waiting for you, from the exact reviewed source commit')
 			.alias('approve')
+			.details(
+				'While Beepboop waits for checks, press q to detach, Ctrl+C to cancel the release, or f to force publication. After detaching, use runs cancel or runs publish --force.',
+			)
 			.arg('id', arg.string().prompt({ kind: 'input', message: 'Execution ID' }).required()).flag(
 				'sourceSha',
 				flag.string({ pattern: approvalShaPattern }).describe('Reviewed commit SHA, full or at least 7 characters')
 					.prompt({ kind: 'input', message: 'Reviewed source commit SHA (7+ characters)' })
 					.required(),
 			)
-			.flag('force', flag.boolean().default(false).describe('Publish even when the signature or checks fail'))
+			.flag(
+				'force',
+				flag.boolean().default(false).describe('Publish even when the signature or checks fail or are running'),
+			)
+			.flag(
+				'detach',
+				flag.boolean().default(false).describe('Queue publication if checks are running and return immediately'),
+			)
 			.action(connected((client, { flags, args, out }) =>
 				Effect.gen(function*() {
 					const look = lookOf(out);
-					const approve = client.call(routes.executionsApprove, {
-						id: args.id,
-						sourceSha: flags.sourceSha,
-						force: flags.force,
-					});
-					yield* executionView(
+					const approved = yield* step(
 						out,
-						yield* step(
-							out,
-							`Publishing ${look.id(args.id)} at ${look.sha(flags.sourceSha)}`,
-							Effect.gen(function*() {
-								const start = yield* Clock.monotonicTimeNanos;
-								let waiting: string | undefined;
-								while (true) {
-									const result = yield* Effect.result(approve);
-									if (Result.isSuccess(result)) return result.success;
-									const problem = result.failure.details?.problem;
-									if (!isApiError(problem) || problem.code !== 'precondition' || problem.retry !== 'checks') {
-										return yield* Effect.fail(result.failure);
-									}
-									if (waiting !== result.failure.message) {
-										waiting = result.failure.message;
-										out.status(`Waiting for checks: ${waiting}`);
-									}
-									yield* client.pause(followInterval);
-									if (
-										Duration.isGreaterThanOrEqualTo(
-											Duration.nanos((yield* Clock.monotonicTimeNanos) - start),
-											followLimit,
-										)
-									) {
-										return yield* Effect.fail(result.failure);
-									}
-								}
-							}),
-							published => `Publishing ${look.id(published.id)} started`,
-						),
+						`Approving ${look.id(args.id)} at ${look.sha(flags.sourceSha)}`,
+						client.call(routes.executionsApprove, {
+							id: args.id,
+							sourceSha: flags.sourceSha,
+							force: flags.force,
+							waitForChecks: true,
+						}),
+						run => run.pendingApproval ? 'Approval queued' : `Publishing ${look.id(run.id)} started`,
 					);
+					const interactive = !out.jsonMode && process.stdin.isTTY && process.stderr.isTTY;
+					let run = approved;
+					if (approved.pendingApproval && interactive && !flags.detach) {
+						if (approved.reason) out.status(approved.reason);
+						run = yield* watchApproval(client, out, approved);
+					}
+					if (run.pendingApproval && !out.jsonMode) {
+						out.status('Beepboop will publish after the checks pass.');
+					}
+					yield* executionView(out, run);
 				})
 			)),
 	)

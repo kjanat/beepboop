@@ -50,7 +50,6 @@ export const apiError = Schema.Union([
 	mutableStruct({
 		code: Schema.Literal('precondition'),
 		diagnostics: mutableArray(diagnostic),
-		retry: Schema.optional(Schema.Literal('checks')),
 	}),
 	mutableStruct({
 		code: Schema.Literal('upstream'),

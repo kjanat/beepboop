@@ -129,6 +129,7 @@ export class Executions extends Context.Service<Executions, {
 			});
 			const put = Effect.fnUntraced(function*(execution: Execution) {
 				Object.assign(execution, identifyExecution(execution));
+				if (execution.state !== 'awaiting-approval') delete execution.pendingApproval;
 				const previous = yield* stored(execution.id);
 				const following = yield* continuations(execution);
 				if (

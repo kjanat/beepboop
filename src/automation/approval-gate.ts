@@ -1,5 +1,6 @@
 import { Clock, Context, Effect, Layer } from 'effect';
 import { RefPublication } from '@/automation/ref-publication.ts';
+import { ReleaseCommits } from '@/automation/release-commits.ts';
 import { ReleaseSets } from '@/automation/release-sets.ts';
 import { Automation } from '@/automation/service.ts';
 import { wakeUp } from '@/automation/wake-up.ts';
@@ -65,11 +66,15 @@ function skippedNote(gate: ReleaseGate, fact: string, skip: GateSkip): string {
 }
 
 export class ApprovalGate extends Context.Service<ApprovalGate, {
-	readonly checks: (execution: Execution) => Effect.Effect<CommitChecks, DomainError>;
 	readonly problems: (execution: Execution) => Effect.Effect<string[], DomainError>;
 	readonly metadataBlocks: (execution: Execution) => Effect.Effect<string[], DomainError>;
 	readonly forced: (id: string, pkg: LedgerPackage) => Effect.Effect<LedgerPackage, DomainError>;
-	readonly admit: (execution: Execution, actor: string, target: string) => Effect.Effect<Execution, DomainError>;
+	readonly approve: (
+		execution: Execution,
+		actor: string,
+		force: boolean,
+		waitForChecks: boolean,
+	) => Effect.Effect<Execution, DomainError>;
 	readonly review: (
 		execution: Execution,
 		executions: Execution[],
@@ -84,6 +89,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 			const { gateway, store } = automation;
 			const executions = yield* Executions;
 			const refs = yield* RefPublication;
+			const commits = yield* ReleaseCommits;
 			const sets = yield* ReleaseSets;
 			const planner = yield* AlarmPlanner;
 
@@ -251,6 +257,48 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				yield* executions.put(next);
 				return next;
 			});
+			const approve = Effect.fnUntraced(function*(
+				execution: Execution,
+				actor: string,
+				force: boolean,
+				waitForChecks: boolean,
+			) {
+				const token = yield* gateway.token(execution.repository, execution.repositoryId);
+				const head = yield* commits.head(execution, token);
+				if (
+					head
+					&& (head.tag
+						? head.sha !== execution.sourceSha
+						: !(yield* commits.contains(execution, head.sha, token)))
+				) {
+					return yield* precondition(
+						`${head.ref} is at ${head.sha.slice(0, 12)}. Publish the release for that commit.`,
+					);
+				}
+				const conflict = yield* refs.tagProblem(execution, true);
+				if (conflict) return yield* precondition(conflict);
+				const incomplete = yield* metadataBlocks(execution);
+				if (incomplete.length) return yield* precondition(incomplete.join('; '));
+				const { pending, failed, skipped } = yield* commitChecks(execution);
+				const problems = [...failed, ...pending];
+				if (!force && problems.length) {
+					const reason = problems.join('; ');
+					if (failed.length || !waitForChecks) return yield* precondition(reason);
+					const prior = execution.pendingApproval;
+					const approval = prior?.sourceSha === execution.sourceSha ? prior : { actor, sourceSha: execution.sourceSha };
+					if (prior === approval && reason === execution.reason) return execution;
+					const queued = { ...execution, pendingApproval: approval, reason };
+					yield* executions.put(queued);
+					return queued;
+				}
+				return yield* admit(
+					execution,
+					actor,
+					`${execution.id}:${execution.sourceSha}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}${
+						skipped.length ? ` skipping: ${skipped.join('; ')}` : ''
+					}`,
+				);
+			});
 			const ungranted = Effect.fnUntraced(function*(execution: Execution) {
 				const stream = execution.configuration.streams[execution.stream];
 				if (!stream?.credentials.length) return undefined;
@@ -348,7 +396,6 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 			});
 
 			return ApprovalGate.of({
-				checks: commitChecks,
 				problems: execution =>
 					commitChecks(execution).pipe(Effect.map(({ pending, failed }) => [...failed, ...pending])),
 				metadataBlocks,
@@ -358,8 +405,29 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 						|| (yield* gateSkips(execution)).some(skip => skip.gate.kind === 'metadata');
 					return metadata ? { ...pkg, force: true } : pkg;
 				}),
-				admit,
+				approve,
 				review: Effect.fnUntraced(function*(execution: Execution, all: Execution[]) {
+					const pending = execution.pendingApproval;
+					if (pending) {
+						const attempt = pending.sourceSha === execution.sourceSha
+							? approve(execution, pending.actor, false, true)
+							: Effect.fail(precondition('The approved source commit changed'));
+						return yield* attempt.pipe(
+							Effect.flatMap(next =>
+								next.state === 'awaiting-approval'
+									? Effect.succeed('continue' as const)
+									: Clock.currentTimeMillis.pipe(
+										Effect.flatMap(now => planner.requestReconcile(now)),
+										Effect.as('stop' as const),
+									)
+							),
+							Effect.catchIf(error => error.problem.code === 'precondition', error => {
+								const rejected = { ...execution, reason: error.message };
+								delete rejected.pendingApproval;
+								return executions.put(rejected).pipe(Effect.as('continue' as const));
+							}),
+						);
+					}
 					const incomplete = execution.started?.force ? [] : yield* metadataBlocks(execution);
 					const blocked = incomplete.length ? `${metadataReason}${incomplete.join('; ')}` : undefined;
 					let current = execution;
