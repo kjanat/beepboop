@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test';
 import { Effect, Exit } from 'effect';
-import type { Package } from '@/domain/inventory.ts';
+import { discover } from '@/discovery/discover.ts';
+import type { Package, Snapshot } from '@/domain/inventory.ts';
+import { planRelease } from '@/release/domain/planning/managers.ts';
 import { resolvePackageVersion, unreleasedManifestVersion } from '@/release/domain/version.ts';
 
 function manifest(version = '1.2.0'): Package {
@@ -72,4 +74,73 @@ test('a package without a registry answer still lets a partial release complete'
 test('answered packages already at the target still refuse it', () => {
 	expect(Exit.isFailure(resolved([{ ...manifest('1.1.0'), published: '1.1.0' }], '1.1.0'))).toBe(true);
 	expect(Exit.isFailure(resolved([manifest(), unanswered('1.0.0')], '1.0.0'))).toBe(true);
+});
+
+test.each([
+	['table header', '[workspace.package] # shared fields\n  version = "0.1.1"  # current', '"0.1.1"', '"0.1.2"'],
+	['dotted key', "  package . version    = '0.1.1'  # current", "'0.1.1'", "'0.1.2'"],
+])('plans a Cargo workspace version using a %s without rewriting neighboring fields', async (_, assignment, prior, next) => {
+	const before = [
+		'[package]',
+		'name = "tool"',
+		'version = { workspace = true }',
+		'[workspace]',
+		'members = []',
+		...assignment.split('\n'),
+		'[workspace.metadata]',
+		'version = "0.1.1" # unrelated',
+		'',
+	].join('\r\n');
+	const snapshot: Snapshot = {
+		repository: { id: 1, name: 'example/tool', defaultBranch: 'main' },
+		sha: 'a'.repeat(40),
+		files: { 'Cargo.toml': before },
+		paths: ['Cargo.toml'],
+	};
+	const inventory = discover(snapshot);
+	expect(inventory.diagnostics.some(diagnostic => diagnostic.code === 'invalid-manifest')).toBe(false);
+	expect(inventory.packages.map(pkg => pkg.versionSource)).toEqual(['Cargo.toml#workspace.package.version']);
+	const [pkg] = inventory.packages;
+	if (!pkg) throw new Error('missing Cargo package');
+
+	const prepared = await Effect.runPromise(planRelease(snapshot, {
+		...inventory,
+		packages: [{ ...pkg, publicationStatus: 'missing' }],
+	}, { version: '0.1.1' }));
+	expect(prepared.edits).toEqual([]);
+
+	const bumped = await Effect.runPromise(planRelease(snapshot, {
+		...inventory,
+		packages: [{ ...pkg, publicationStatus: 'published', published: '0.1.1' }],
+	}, { bump: 'patch' }));
+	expect(bumped.version).toBe('0.1.2');
+	expect(bumped.edits).toEqual([{ path: 'Cargo.toml', before, after: before.replace(prior, next) }]);
+});
+
+
+test('a version-like line inside TOML text cannot stand in for the workspace field', async () => {
+	const before = [
+		'[package]',
+		'name = "tool"',
+		'version.workspace = true',
+		'[workspace]',
+		'members = []',
+		'package = { version = "0.1.1" }',
+		'[workspace.metadata]',
+		"example = '''",
+		'[workspace]',
+		'package.version = "0.1.1"',
+		"'''",
+		'',
+	].join('\n');
+	const snapshot: Snapshot = {
+		repository: { id: 1, name: 'example/tool', defaultBranch: 'main' },
+		sha: 'a'.repeat(40),
+		files: { 'Cargo.toml': before },
+		paths: ['Cargo.toml'],
+	};
+	const inventory = discover(snapshot);
+	expect(inventory.packages.map(pkg => pkg.version)).toEqual(['0.1.1']);
+	await expect(Effect.runPromise(planRelease(snapshot, inventory, { version: '0.1.2' })))
+		.rejects.toThrow('Cannot safely edit Cargo.toml#workspace.package.version');
 });
