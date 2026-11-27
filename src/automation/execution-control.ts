@@ -12,8 +12,9 @@ import { wakeUp } from '@/automation/wake-up.ts';
 import type { BinaryProgress } from '@/contract/views';
 import { releaseSchema, workflowRunSchema } from '@/github/resources.ts';
 import { classifyJob, jobProgressState } from '@/github/run-state.ts';
+import { legacyDiagnostic } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { precondition } from '@/kernel/errors/domain-error.ts';
+import { domainError, precondition } from '@/kernel/errors/domain-error.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { matches, sha } from '@/kernel/schema/result.ts';
@@ -311,7 +312,15 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					if (incomplete.length) return yield* precondition(incomplete.join('; '));
 					const checks = yield* gate.checks(execution);
 					const problems = [...checks.failed, ...checks.pending];
-					if (problems.length && !force) return yield* precondition(problems.join('; '));
+					if (problems.length && !force) {
+						const message = problems.join('; ');
+						if (checks.failed.length) return yield* precondition(message);
+						return yield* domainError({
+							code: 'precondition',
+							diagnostics: [legacyDiagnostic(message)],
+							retry: 'checks',
+						});
+					}
 					return yield* gate.admit(
 						execution,
 						actor,

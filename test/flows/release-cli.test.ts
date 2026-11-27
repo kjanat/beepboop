@@ -476,6 +476,29 @@ test.each([7, 12])('approve accepts table values with a %i-character prompted co
 	]);
 });
 
+test.each(['success', 'failure'] as const)('approval waits for a running check and handles %s', async conclusion => {
+	const { repository, merged, promotion } = await awaitingPromotion();
+	repository.checks.set(merged.sha, [{ name: 'test', status: 'in_progress', conclusion: null, runId: 1 }]);
+	const pause = spyOn(client, 'pause').mockImplementation(() =>
+		Effect.promise(async () => {
+			expect((await promotions())[0]?.state).toBe('awaiting-approval');
+			expect(world.github.dispatches).toHaveLength(0);
+			repository.checks.set(merged.sha, [{ name: 'test', status: 'completed', conclusion, runId: 1 }]);
+		})
+	);
+	const approved = await run(['runs', 'approve', promotion.id.slice(0, 12), '--sourceSha', merged.sha.slice(0, 12)]);
+	expect(pause).toHaveBeenCalledTimes(1);
+	expect(approved.stderr.join('')).toContain('Waiting for checks: test running');
+	if (conclusion === 'success') {
+		expect(approved.exitCode).toBe(0);
+		expect((await promotions())[0]?.state).toBe('ready');
+	} else {
+		expect(approved.exitCode).toBe(1);
+		expect((await promotions())[0]?.state).toBe('awaiting-approval');
+		expect(world.github.dispatches).toHaveLength(0);
+	}
+});
+
 test('approval refuses wrong or malformed commit references without changing the operation', async () => {
 	const { merged, promotion } = await awaitingPromotion();
 	const other = merged.sha[0] === 'a' ? 'b' : 'a';

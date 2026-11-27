@@ -1,16 +1,17 @@
 import type { CLIError } from '@kjanat/dreamcli';
 import { arg, flag, group } from '@kjanat/dreamcli';
-import { Effect } from 'effect';
+import { Clock, Duration, Effect, Result, Schema } from 'effect';
 import type { Client } from '@/cli/client/api';
 import { base, connected } from '@/cli/command';
 import { checkoutRepository } from '@/cli/git-checkout';
-import { followRelease } from '@/cli/render/follow';
+import { followInterval, followLimit, followRelease } from '@/cli/render/follow';
 import { lookOf, step } from '@/cli/render/look';
 import { executionTable, executionView } from '@/cli/render/views';
 import { routes } from '@/contract/routes';
 import type { ExecutionStateView, ExecutionView } from '@/contract/views';
 import { executionStates } from '@/contract/views';
 import { checkChoices } from '@/domain/release-gates.ts';
+import { apiError } from '@/kernel/errors/domain-error.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 
 const recoveryVerb = { reconcile: 'Reconciling', retry: 'Retrying', redispatch: 'Dispatching' } as const;
@@ -31,6 +32,7 @@ interface RunFilters {
 }
 
 const ownerName = /^[\w.-]+\/[\w.-]+$/;
+const isApiError = Schema.is(apiError);
 
 function listedRepository(
 	client: Client,
@@ -135,15 +137,40 @@ export const runs = group('runs').description('Follow, publish, cancel and recov
 			.action(connected((client, { flags, args, out }) =>
 				Effect.gen(function*() {
 					const look = lookOf(out);
+					const approve = client.call(routes.executionsApprove, {
+						id: args.id,
+						sourceSha: flags.sourceSha,
+						force: flags.force,
+					});
 					yield* executionView(
 						out,
 						yield* step(
 							out,
 							`Publishing ${look.id(args.id)} at ${look.sha(flags.sourceSha)}`,
-							client.call(routes.executionsApprove, {
-								id: args.id,
-								sourceSha: flags.sourceSha,
-								force: flags.force,
+							Effect.gen(function*() {
+								const start = yield* Clock.monotonicTimeNanos;
+								let waiting: string | undefined;
+								while (true) {
+									const result = yield* Effect.result(approve);
+									if (Result.isSuccess(result)) return result.success;
+									const problem = result.failure.details?.problem;
+									if (!isApiError(problem) || problem.code !== 'precondition' || problem.retry !== 'checks') {
+										return yield* Effect.fail(result.failure);
+									}
+									if (waiting !== result.failure.message) {
+										waiting = result.failure.message;
+										out.status(`Waiting for checks: ${waiting}`);
+									}
+									yield* client.pause(followInterval);
+									if (
+										Duration.isGreaterThanOrEqualTo(
+											Duration.nanos((yield* Clock.monotonicTimeNanos) - start),
+											followLimit,
+										)
+									) {
+										return yield* Effect.fail(result.failure);
+									}
+								}
 							}),
 							published => `Publishing ${look.id(published.id)} started`,
 						),

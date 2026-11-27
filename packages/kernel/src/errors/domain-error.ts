@@ -47,7 +47,11 @@ export const apiError = Schema.Union([
 		expected: Schema.optional(Schema.String),
 		actual: Schema.optional(Schema.String),
 	}),
-	mutableStruct({ code: Schema.Literal('precondition'), diagnostics: mutableArray(diagnostic) }),
+	mutableStruct({
+		code: Schema.Literal('precondition'),
+		diagnostics: mutableArray(diagnostic),
+		retry: Schema.optional(Schema.Literal('checks')),
+	}),
 	mutableStruct({
 		code: Schema.Literal('upstream'),
 		service: Schema.Literals(services),
