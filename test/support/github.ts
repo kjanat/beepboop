@@ -1074,6 +1074,7 @@ export class FakeGitHub {
 			title: pull.title,
 			body: pull.body,
 			user: { id: botId },
+			labels: pull.labels.map(name => ({ name })),
 			assignees: pull.assignees.map(login => ({ login })),
 			requested_reviewers: pull.reviewers.map(login => ({ login })),
 			head: { ref: pull.head.ref, sha: pull.head.sha, repo: { id: repository.id } },

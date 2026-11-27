@@ -13,6 +13,12 @@ inputs:
   body:
     description: Pull request body
     default: ""
+  labels:
+    description: Existing labels to add, one per line.
+    default: ""
+  assignees:
+    description: GitHub usernames to assign, one per line.
+    default: ""
   commit-message:
     description: Commit message, reconciled on every run. Defaults to the title; an ownership trailer is appended.
     default: ""
@@ -57,6 +63,8 @@ runs:
       env:
         PR_ALLOW_EXISTING_BRANCH: ${{ inputs.allow-existing-branch }}
         PR_ADD_PATHS: ${{ inputs.add-paths }}
+        PR_LABELS: ${{ inputs.labels }}
+        PR_ASSIGNEES: ${{ inputs.assignees }}
         PR_BASE: ${{ inputs.base }}
         PR_BODY: ${{ inputs.body }}
         PR_BRANCH: ${{ inputs.branch }}
