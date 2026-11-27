@@ -140,3 +140,52 @@ test('a shared prerequisite is planned once and unrelated workflows stay out of 
 		expect(run.dependencies).toContain(build.id);
 	}
 });
+
+test('a held release uses workflow metadata from its frozen configuration commit', async () => {
+	const { execution, repository, coordinator } = await promotion(false);
+	const stream = execution.configuration.streams.main;
+	const npm = stream?.workflows.npm;
+	if (!npm) throw new Error('Expected npm workflow');
+	npm.file = 'new-publish.yml';
+	execution.configurationSha = world.github.push(repository, {
+		'.github/workflows/new-publish.yml': publishWorkflow,
+	}, 'Add npm dispatch workflow').sha;
+	await coordinator.enqueue(execution);
+	const member = (await executions(repository)).find(run => run.operation === 'npm');
+	expect(member?.sourceSha).toBe(execution.sourceSha);
+	expect(member?.configurationSha).toBe(execution.configurationSha);
+	expect(member?.workflow?.file).toBe(npm.file);
+});
+
+test('a new promotion supersedes pending members but recovering an older plan preserves newer members', async () => {
+	const { execution, repository, coordinator, storage, app } = await promotion(false);
+	const stream = execution.configuration.streams.main;
+	if (!stream) throw new Error('Expected main stream');
+	stream.concurrency = 'supersede-pending';
+	await coordinator.enqueue(execution);
+	const first = await executions(repository);
+	const stored = await world.run(app.catalog.discover(repository.name, repository.id));
+	const ready = await world.run(requireReady(stored));
+	const next = await world.run(createExecution(ready, {
+		stream: 'main',
+		operation: 'promote',
+		sourceSha: execution.sourceSha,
+		version: '1.0.1',
+		eventId: `release:1.0.1:${execution.sourceSha}`,
+	}));
+	next.configuration = execution.configuration;
+	await coordinator.enqueue(next);
+	const runs = await executions(repository);
+	for (const member of first.filter(run => run.operation !== 'promote')) {
+		expect(runs.find(run => run.id === member.id)?.state).toBe('cancelled');
+	}
+	const missing = first.find(run => run.operation === 'npm');
+	if (!missing) throw new Error('Expected older npm execution');
+	await storage.delete(`execution:${missing.id}`);
+	await storage.put(`execution:${execution.id}`, { ...execution, state: 'succeeded' });
+	await coordinator.recover(execution.id, 'reconcile', 'admin');
+	const recovered = await executions(repository);
+	expect(recovered.some(run => run.id === missing.id)).toBe(true);
+	expect(recovered.filter(run => run.eventId === next.eventId && run.operation !== 'promote').map(run => run.state))
+		.toEqual(['ready', 'ready']);
+});

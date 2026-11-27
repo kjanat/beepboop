@@ -102,6 +102,26 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 			const dispatcher = yield* Dispatcher;
 			const wake = wakeUp(sets, planner);
 
+			const supersededExecutions = Effect.fnUntraced(
+				function*(incoming: Execution, operations: ReadonlyMap<string, string>) {
+					if (incoming.configuration.streams[incoming.stream]?.concurrency !== 'supersede-pending') return [];
+					const now = yield* Clock.currentTimeMillis;
+					return (yield* executions.all).filter(old =>
+						old.stream === incoming.stream && operations.has(old.operation) && operations.get(old.operation) !== old.id
+						&& ['pending', 'ready'].includes(old.state)
+					).map((old): Execution => ({
+						...old,
+						state: 'cancelled',
+						reason: 'Superseded before dispatch',
+						updatedAt: now,
+					}));
+				},
+			);
+			const supersedePending = Effect.fnUntraced(function*(incoming: Execution) {
+				for (const cancelled of yield* supersededExecutions(incoming, new Map([[incoming.operation, incoming.id]]))) {
+					yield* executions.put(cancelled);
+				}
+			});
 			const storePromotionPlan = Effect.fnUntraced(function*(promotion: Execution, existing: boolean) {
 				if (promotion.operation !== 'promote' || promotion.releaseSet || !promotion.eventId.startsWith('release:')) {
 					return false;
@@ -112,11 +132,16 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 				if (!operations.length) return false;
 				const repository = yield* revisions.get(promotion.repositoryId);
 				if (!repository) return yield* precondition('Promotion repository unavailable');
+				const source = yield* revisions.inventoryAt(promotion);
+				const configuration = promotion.configurationSha === promotion.sourceSha
+					? source
+					: yield* revisions.inventoryAt({ ...promotion, sourceSha: promotion.configurationSha });
 				const revision = {
 					defaultBranch: repository.defaultBranch,
-					inventory: yield* revisions.inventoryAt(promotion),
+					inventory: { ...source, workflows: configuration.workflows },
 				};
 				const entries: Committed[] = [];
+				const incoming = new Map([[promotion.operation, promotion.id]]);
 				for (const operation of operations) {
 					const member = yield* deriveExecution(promotion, revision, {
 						operation,
@@ -126,6 +151,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						version: promotion.version,
 					});
 					if (!(yield* executions.stored(member.id))) {
+						incoming.set(operation, member.id);
 						entries.push({
 							entity: 'execution',
 							id: member.id,
@@ -135,6 +161,14 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					}
 				}
 				if (!existing) {
+					for (const cancelled of yield* supersededExecutions(promotion, incoming)) {
+						entries.push({
+							entity: 'execution',
+							id: cancelled.id,
+							repositoryId: cancelled.repositoryId,
+							value: cancelled,
+						});
+					}
 					entries.unshift({
 						entity: 'execution',
 						id: promotion.id,
@@ -149,17 +183,6 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 				return true;
 			});
 
-			const supersedePending = Effect.fnUntraced(function*(execution: Execution) {
-				if (execution.configuration.streams[execution.stream]?.concurrency !== 'supersede-pending') return;
-				for (const old of yield* executions.all) {
-					if (
-						old.id !== execution.id && old.stream === execution.stream && old.operation === execution.operation
-						&& ['pending', 'ready'].includes(old.state)
-					) {
-						yield* executions.put({ ...old, state: 'cancelled', reason: 'Superseded before dispatch' });
-					}
-				}
-			});
 			const restate = Effect.fnUntraced(function*(prior: Execution, upgraded: Execution) {
 				const previous = preparationBody(prior);
 				const next = preparationBody(upgraded);
@@ -333,8 +356,10 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						return upgraded;
 					}
 					if (prior) return prior;
-					yield* supersedePending(execution);
-					if (!(yield* storePromotionPlan(execution, false))) yield* executions.put(execution);
+					if (!(yield* storePromotionPlan(execution, false))) {
+						yield* supersedePending(execution);
+						yield* executions.put(execution);
+					}
 					return execution;
 				}),
 				approve: Effect.fnUntraced(function*(id: string, commitSha: string, actor: string, force: boolean) {
