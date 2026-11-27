@@ -54,7 +54,7 @@ export interface CoordinatorRpc {
 	publishNext(id: string, identity: RunIdentity): Promise<unknown>;
 	publishClaim(id: string, identity: RunIdentity, purl: string, digest: string): Promise<unknown>;
 	publishReport(id: string, identity: RunIdentity, report: PublishReport): Promise<unknown>;
-	approve(id: string, commitSha: string, actor: string, force?: boolean): Promise<unknown>;
+	approve(id: string, commitSha: string, actor: string, force?: boolean, queue?: boolean): Promise<unknown>;
 	binaryProgress(id: string): Promise<unknown>;
 	approvalReadiness(id: string): Promise<unknown>;
 	gates(repositoryId: number, stream: string): Promise<unknown>;
@@ -172,6 +172,7 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 		commitSha: string,
 		actor: string,
 		force: boolean,
+		queue: boolean,
 	) => Effect.Effect<Execution, DomainError>;
 	readonly binaryProgress: (repositoryId: number, id: string) => Effect.Effect<BinaryProgress, DomainError>;
 	readonly approvalReadiness: (
@@ -311,8 +312,8 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 				call(claimStep, repositoryId, rpc => rpc.publishClaim(id, identity, purl, digest)),
 			publishReport: (repositoryId, id, identity, report) =>
 				call(reportStep, repositoryId, rpc => rpc.publishReport(id, identity, report)),
-			approve: (repositoryId, id, commitSha, actor, force) =>
-				call(executionSchema, repositoryId, rpc => rpc.approve(id, commitSha, actor, force)),
+			approve: (repositoryId, id, commitSha, actor, force, queue) =>
+				call(executionSchema, repositoryId, rpc => rpc.approve(id, commitSha, actor, force, queue)),
 			binaryProgress: (repositoryId, id) => call(binaryProgress, repositoryId, rpc => rpc.binaryProgress(id)),
 			approvalReadiness: (repositoryId, id) => call(approvalReadiness, repositoryId, rpc => rpc.approvalReadiness(id)),
 			gates: (repositoryId, stream) => call(streamGates, repositoryId, rpc => rpc.gates(repositoryId, stream)),

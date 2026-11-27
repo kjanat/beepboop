@@ -105,6 +105,7 @@ test('the route table answers every path the old router answered, and nothing el
 		'POST /api/repositories/resolve',
 		'POST /api/repositories/gates',
 		'POST /api/repositories/gates/skip',
+		'POST /api/executions/get',
 		'POST /api/executions/backfill',
 		'POST /api/executions/checks',
 		'GET /api/v1/changes',

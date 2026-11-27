@@ -28,6 +28,8 @@ export const executionStates = [
 ] as const;
 export type ExecutionStateView = (typeof executionStates)[number];
 
+export const approvalRequest = mutableStruct({ actor: Schema.String, sourceSha: Schema.String });
+
 export const executionView = looseStruct({
 	id: Schema.String,
 	repositoryId: Schema.Finite,
@@ -38,6 +40,8 @@ export const executionView = looseStruct({
 	version: Schema.optional(Schema.String),
 	sourceSha: Schema.String,
 	updatedAt: Schema.Finite,
+	reason: Schema.optional(Schema.String),
+	approvalRequest: Schema.optional(approvalRequest),
 });
 export type ExecutionView = Decoded<typeof executionView>;
 

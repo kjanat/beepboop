@@ -1,5 +1,6 @@
-import { Clock, Context, Effect, Layer } from 'effect';
+import { Clock, Context, Effect, Layer, Result } from 'effect';
 import { RefPublication } from '@/automation/ref-publication.ts';
+import { ReleaseCommits } from '@/automation/release-commits.ts';
 import { ReleaseSets } from '@/automation/release-sets.ts';
 import { Automation } from '@/automation/service.ts';
 import { wakeUp } from '@/automation/wake-up.ts';
@@ -65,11 +66,14 @@ function skippedNote(gate: ReleaseGate, fact: string, skip: GateSkip): string {
 }
 
 export class ApprovalGate extends Context.Service<ApprovalGate, {
-	readonly checks: (execution: Execution) => Effect.Effect<CommitChecks, DomainError>;
 	readonly problems: (execution: Execution) => Effect.Effect<string[], DomainError>;
 	readonly metadataBlocks: (execution: Execution) => Effect.Effect<string[], DomainError>;
 	readonly forced: (id: string, pkg: LedgerPackage) => Effect.Effect<LedgerPackage, DomainError>;
-	readonly admit: (execution: Execution, actor: string, target: string) => Effect.Effect<Execution, DomainError>;
+	readonly approve: (
+		execution: Execution,
+		actor: string,
+		mode: 'immediate' | 'queue' | 'force',
+	) => Effect.Effect<Execution, DomainError>;
 	readonly review: (
 		execution: Execution,
 		executions: Execution[],
@@ -84,6 +88,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 			const { gateway, store } = automation;
 			const executions = yield* Executions;
 			const refs = yield* RefPublication;
+			const commits = yield* ReleaseCommits;
 			const sets = yield* ReleaseSets;
 			const planner = yield* AlarmPlanner;
 
@@ -251,6 +256,44 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				yield* executions.put(next);
 				return next;
 			});
+			const approve = Effect.fnUntraced(function*(
+				execution: Execution,
+				actor: string,
+				mode: 'immediate' | 'queue' | 'force',
+			) {
+				const token = yield* gateway.token(execution.repository, execution.repositoryId);
+				const head = yield* commits.head(execution, token);
+				if (
+					head
+					&& (head.tag
+						? head.sha !== execution.sourceSha
+						: !(yield* commits.contains(execution, head.sha, token)))
+				) {
+					return yield* precondition(
+						`${head.ref} is at ${head.sha.slice(0, 12)}. Publish the release for that commit.`,
+					);
+				}
+				const conflict = yield* refs.tagProblem(execution, true);
+				if (conflict) return yield* precondition(conflict);
+				const incomplete = yield* metadataBlocks(execution);
+				if (incomplete.length) return yield* precondition(incomplete.join('; '));
+				const { pending, failed, skipped } = yield* commitChecks(execution);
+				const problems = [...failed, ...pending];
+				if (mode !== 'force' && problems.length) {
+					const reason = problems.join('; ');
+					if (mode !== 'queue' || failed.length) return yield* precondition(reason);
+					const prior = execution.approvalRequest;
+					if (prior?.sourceSha === execution.sourceSha && execution.reason === reason) return execution;
+					const request = prior?.sourceSha === execution.sourceSha ? prior : { actor, sourceSha: execution.sourceSha };
+					const next = { ...execution, approvalRequest: request, reason };
+					yield* executions.put(next);
+					return next;
+				}
+				const target = `${execution.id}:${execution.sourceSha}`;
+				const override = problems.length ? ` overriding: ${problems.join('; ')}` : '';
+				const skips = skipped.length ? ` skipping: ${skipped.join('; ')}` : '';
+				return yield* admit(execution, actor, target + override + skips);
+			});
 			const ungranted = Effect.fnUntraced(function*(execution: Execution) {
 				const stream = execution.configuration.streams[execution.stream];
 				if (!stream?.credentials.length) return undefined;
@@ -348,7 +391,6 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 			});
 
 			return ApprovalGate.of({
-				checks: commitChecks,
 				problems: execution =>
 					commitChecks(execution).pipe(Effect.map(({ pending, failed }) => [...failed, ...pending])),
 				metadataBlocks,
@@ -358,8 +400,26 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 						|| (yield* gateSkips(execution)).some(skip => skip.gate.kind === 'metadata');
 					return metadata ? { ...pkg, force: true } : pkg;
 				}),
-				admit,
+				approve,
 				review: Effect.fnUntraced(function*(execution: Execution, all: Execution[]) {
+					const request = execution.approvalRequest;
+					if (request) {
+						const attempt = request.sourceSha === execution.sourceSha
+							? approve(execution, request.actor, 'queue')
+							: Effect.fail(precondition('The approved source commit changed'));
+						const result = yield* Effect.result(attempt);
+						if (Result.isFailure(result)) {
+							const { failure } = result;
+							if (failure.problem.code !== 'precondition') return yield* failure;
+							const next = { ...execution, reason: failure.message };
+							delete next.approvalRequest;
+							yield* executions.put(next);
+							return 'continue' as const;
+						}
+						if (result.success.state === 'awaiting-approval') return 'continue' as const;
+						yield* planner.requestReconcile(yield* Clock.currentTimeMillis);
+						return 'stop' as const;
+					}
 					const incomplete = execution.started?.force ? [] : yield* metadataBlocks(execution);
 					const blocked = incomplete.length ? `${metadataReason}${incomplete.join('; ')}` : undefined;
 					let current = execution;

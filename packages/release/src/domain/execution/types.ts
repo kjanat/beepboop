@@ -144,6 +144,7 @@ export interface Execution {
 	reruns?: { id: number; attempt: number }[];
 	versionPrMerge?: VersionPrMerge;
 	approvedAt?: number;
+	approvalRequest?: { actor: string; sourceSha: string };
 	publications: Publication[];
 	artifacts: Artifact[];
 	createdAt: number;
