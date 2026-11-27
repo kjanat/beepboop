@@ -244,6 +244,6 @@ test('only a succeeded observed run with a waiting operation has continuations, 
 		pending: ['publish'],
 		running: [],
 		manual: [],
-		refused: precondition('Repository unavailable while completing observed operation'),
+		refused: precondition('Repository unavailable while completing workflow operation'),
 	}));
 });

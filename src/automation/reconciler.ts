@@ -44,8 +44,7 @@ export class Reconciler extends Context.Service<Reconciler, {
 				) return true;
 				if (yield* ledger.owesReceipts(execution)) return true;
 				return execution.state === 'succeeded'
-					&& ((execution.eventId.startsWith('observed:')
-						&& (yield* executions.pendingContinuations(execution)).length > 0) || (yield* outbox.owed(execution)));
+					&& ((yield* executions.hasMissingObservedDependents(execution)) || (yield* outbox.owed(execution)));
 			});
 			const advance = Effect.fnUntraced(function*(
 				execution: Execution,
@@ -56,7 +55,7 @@ export class Reconciler extends Context.Service<Reconciler, {
 				if (yield* ledger.settleReceipts(execution)) return 'continue';
 				if (yield* recheck.recheck(execution)) return 'continue';
 				if (execution.state === 'succeeded') {
-					if (execution.eventId.startsWith('observed:') && (yield* executions.pendingContinuations(execution)).length) {
+					if (yield* executions.hasMissingObservedDependents(execution)) {
 						yield* executions.put(execution);
 					} else yield* outbox.capture(execution);
 				}

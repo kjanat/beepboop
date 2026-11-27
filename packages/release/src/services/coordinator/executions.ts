@@ -57,7 +57,8 @@ export class Executions extends Context.Service<Executions, {
 		extra?: readonly Write[],
 	) => Effect.Effect<void, DomainError>;
 	readonly pendingContinuations: (observed: Execution) => Effect.Effect<string[], DomainError>;
-	readonly continuations: (observed: Execution) => Effect.Effect<Execution[], DomainError>;
+	readonly continuations: (parent: Execution) => Effect.Effect<Execution[], DomainError>;
+	readonly hasMissingObservedDependents: (execution: Execution) => Effect.Effect<boolean, DomainError>;
 	readonly quarantine: (id: string, error: string) => Effect.Effect<void, DomainError>;
 	readonly isolate: (id: string, error: DomainError) => Effect.Effect<void, DomainError>;
 	readonly onCommitted: (
@@ -97,36 +98,36 @@ export class Executions extends Context.Service<Executions, {
 				);
 			const commit = (entries: readonly [Committed, ...Committed[]], extra?: readonly Write[]) =>
 				journal.commit(entries, extra).pipe(Effect.andThen(history.record(entries)));
-			const pendingContinuations = Effect.fnUntraced(function*(observed: Execution) {
-				if (observed.state !== 'succeeded') return [];
-				const promotion = observed.eventId.startsWith('release:') && !observed.releaseSet && !observed.package;
-				if (!promotion && !observed.eventId.startsWith('observed:')) return [];
-				const bindings = Object.entries(observed.configuration.streams[observed.stream]?.workflows ?? {}).filter((
+			const pendingContinuations = Effect.fnUntraced(function*(parent: Execution) {
+				if (parent.state !== 'succeeded') return [];
+				const promotion = parent.eventId.startsWith('release:') && !parent.releaseSet && !parent.package;
+				if (!promotion && !parent.eventId.startsWith('observed:')) return [];
+				const bindings = Object.entries(parent.configuration.streams[parent.stream]?.workflows ?? {}).filter((
 					[, binding],
 				) =>
 					binding.mode !== 'observe' && !binding.backfill && binding.each !== 'package'
-					&& binding.needs?.includes(observed.operation)
+					&& binding.needs?.includes(parent.operation)
 				);
 				const missing: string[] = [];
 				for (const [operation] of bindings) {
-					const id = yield* executionId(observed.repositoryId, observed.stream, operation, observed.eventId);
+					const id = yield* executionId(parent.repositoryId, parent.stream, operation, parent.eventId);
 					if (!(yield* stored(id))) missing.push(operation);
 				}
 				return missing;
 			});
-			const continuations = Effect.fnUntraced(function*(observed: Execution) {
-				const missing = yield* pendingContinuations(observed);
+			const continuations = Effect.fnUntraced(function*(parent: Execution) {
+				const missing = yield* pendingContinuations(parent);
 				if (!missing.length) return [];
-				const record = yield* revisions.get(observed.repositoryId);
-				if (!record) return yield* precondition('Repository unavailable while completing observed operation');
+				const record = yield* revisions.get(parent.repositoryId);
+				if (!record) return yield* precondition('Repository unavailable while completing workflow operation');
 				const next: Execution[] = [];
 				for (const operation of missing) {
-					const execution = yield* deriveExecution(observed, record, {
-						stream: observed.stream,
+					const execution = yield* deriveExecution(parent, record, {
+						stream: parent.stream,
 						operation,
-						eventId: observed.eventId,
-						sourceSha: observed.sourceSha,
-						...(observed.version ? { version: observed.version } : {}),
+						eventId: parent.eventId,
+						sourceSha: parent.sourceSha,
+						...(parent.version ? { version: parent.version } : {}),
 					});
 					next.push(identifyExecution(execution));
 				}
@@ -192,6 +193,10 @@ export class Executions extends Context.Service<Executions, {
 				commit,
 				pendingContinuations,
 				continuations,
+				hasMissingObservedDependents: execution =>
+					execution.eventId.startsWith('observed:')
+						? pendingContinuations(execution).pipe(Effect.map(missing => missing.length > 0))
+						: Effect.succeed(false),
 				quarantine,
 				isolate,
 				onCommitted: listener => Ref.update(listeners, registered => [...registered, listener]),

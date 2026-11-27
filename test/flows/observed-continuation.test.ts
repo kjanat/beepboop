@@ -14,14 +14,19 @@ eachWorld(created => {
 	world = created;
 });
 
-async function observed(count = 1, eventId = 'observed:9001') {
+async function runningWorkflow(count = 1, operation: 'check' | 'promote' = 'check') {
 	const config = editableConfiguration();
-	config.streams.main.workflows = {
-		check: { file: 'check.yml', mode: 'observe' },
-		...Object.fromEntries(
-			Array.from({ length: count }, (_, i) => [`follow${i}`, { file: 'follow.yml', needs: ['check'] }]),
-		),
-	};
+	config.streams.main.workflows = operation === 'promote'
+		? {
+			npm: { file: 'follow.yml', needs: ['promote'] },
+			'github-release': { file: 'follow.yml', needs: ['npm'] },
+		}
+		: {
+			check: { file: 'check.yml', mode: 'observe' },
+			...Object.fromEntries(
+				Array.from({ length: count }, (_, i) => [`follow${i}`, { file: 'follow.yml', needs: [operation] }]),
+			),
+		};
 	const repository = world.github.create('octo/continuations', {
 		'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
 		'.github/beepboop.json': JSON.stringify(config),
@@ -37,10 +42,11 @@ async function observed(count = 1, eventId = 'observed:9001') {
 	const execution = await world.run(
 		createExecution(ready, {
 			stream: 'main',
-			operation: 'check',
-			eventId,
+			operation,
+			eventId: operation === 'check' ? 'observed:9001' : `release:1.0.0:${stored.sha}`,
 			sourceSha: stored.sha,
-			observed: true,
+			observed: operation === 'check',
+			version: '1.0.0',
 		}),
 	);
 	execution.state = 'running';
@@ -48,8 +54,8 @@ async function observed(count = 1, eventId = 'observed:9001') {
 	execution.runAttempt = 1;
 	repository.runs.push({
 		id: 9001,
-		path: '.github/workflows/check.yml',
-		event: 'push',
+		path: operation === 'check' ? '.github/workflows/check.yml' : '.github/workflows/publish.yml',
+		event: operation === 'check' ? 'push' : 'workflow_dispatch',
 		headSha: stored.sha,
 		headBranch: 'main',
 		status: 'completed',
@@ -77,7 +83,7 @@ async function executions(repository: Repository) {
 
 for (const children of [1, 70]) {
 	test(`completion and ${children} continuations survive a failed atomic commit`, async () => {
-		const { repository, execution, coordinator, storage } = await observed(children);
+		const { repository, execution, coordinator, storage } = await runningWorkflow(children);
 		const put = storage.put.bind(storage);
 		let fail = true;
 		let failures = 0;
@@ -112,25 +118,38 @@ for (const children of [1, 70]) {
 }
 
 test('a completed release dispatches its dependent workflow', async () => {
-	const { repository, execution } = await observed(1, 'release:1.0.0:approved');
+	const { repository, execution } = await runningWorkflow(1, 'promote');
 	await world.wait(20_000);
-	const child = (await executions(repository)).find(run => run.operation === 'follow0');
+	const child = (await executions(repository)).find(run => run.operation === 'npm');
+	if (!child) throw new Error('Expected npm execution');
 	expect(child?.eventId).toBe(execution.eventId);
 	expect(child?.sourceSha).toBe(execution.sourceSha);
+	expect(child?.version).toBe(execution.version);
+	expect((await executions(repository)).some(run => run.operation === 'github-release')).toBe(false);
+	await world.wait(20_000);
+	const npmRun = repository.runs.find(run => run.path.endsWith('follow.yml'));
+	if (!npmRun) throw new Error('Expected npm dispatch');
+	npmRun.status = 'completed';
+	npmRun.conclusion = 'success';
+	await world.wait(60_000);
+	const release = (await executions(repository)).find(run => run.operation === 'github-release');
+	expect(release?.dependencies).toEqual([child?.id]);
+	expect(release?.sourceSha).toBe(execution.sourceSha);
+	expect(release?.version).toBe(execution.version);
 });
 
 test('an old release creates its missing continuation only on targeted recovery', async () => {
-	const { repository, execution, coordinator, storage } = await observed(1, 'release:1.0.0:approved');
+	const { repository, execution, coordinator, storage } = await runningWorkflow(1, 'promote');
 	await storage.put(`execution:${execution.id}`, { ...execution, state: 'succeeded' });
 	await world.wait(20_000);
 	expect(await executions(repository)).toHaveLength(1);
 	await coordinator.recover(execution.id, 'reconcile', 'admin');
 	await coordinator.recover(execution.id, 'reconcile', 'admin');
-	expect((await executions(repository)).filter(run => run.operation === 'follow0')).toHaveLength(1);
+	expect((await executions(repository)).filter(run => run.operation === 'npm')).toHaveLength(1);
 });
 
 test('reconciliation repairs a legacy success with missing continuations', async () => {
-	const { repository, execution, coordinator, storage } = await observed();
+	const { repository, execution, coordinator, storage } = await runningWorkflow();
 	await storage.put(`execution:${execution.id}`, { ...execution, state: 'succeeded' });
 	await coordinator.recover(execution.id, 'reconcile', 'admin');
 	await world.wait(2_000);
@@ -141,7 +160,7 @@ test('reconciliation repairs a legacy success with missing continuations', async
 });
 
 test('reconciliation restores a missing sibling while preserving a completed child', async () => {
-	const { repository, execution, coordinator, storage } = await observed(2);
+	const { repository, execution, coordinator, storage } = await runningWorkflow(2);
 	await world.wait(20_000);
 	const children = await executions(repository);
 	const progressed = children.find(child => child.operation === 'follow0');
@@ -162,7 +181,7 @@ test('reconciliation restores a missing sibling while preserving a completed chi
 });
 
 test('stale coordinator access cannot resume work while the repository is suspended', async () => {
-	const { repository, app, execution, storage } = await observed();
+	const { repository, app, execution, storage } = await runningWorkflow();
 	await storage.put('access', { suspended: false });
 	await world.run(app.catalog.setAccess(repository.id, { kind: 'suspended', since: Date.now() }));
 	await world.wait(120_000);
@@ -174,7 +193,7 @@ test('stale coordinator access cannot resume work while the repository is suspen
 });
 
 test('an access read failure leaves work retryable and fails closed', async () => {
-	const { repository, execution } = await observed();
+	const { repository, execution } = await runningWorkflow();
 	const execute = world.db.execute.bind(world.db);
 	let unavailable = true;
 	spyOn(world.db, 'execute').mockImplementation((query, values) => {
@@ -190,7 +209,7 @@ test('an access read failure leaves work retryable and fails closed', async () =
 });
 
 test('suspension during reconciliation prevents subsequent executions from advancing', async () => {
-	const { repository, app, execution, coordinator } = await observed();
+	const { repository, app, execution, coordinator } = await runningWorkflow();
 	const stored = await world.run(app.store.repositories.get(repository.id));
 	if (!stored) throw new Error('Expected repository');
 	const ready = await world.run(requireReady(stored));
@@ -233,7 +252,7 @@ test('suspension during reconciliation prevents subsequent executions from advan
 });
 
 test('legacy continuation repair requires current inventory and can recover after discovery is restored', async () => {
-	const { repository, app, execution, coordinator, storage } = await observed();
+	const { repository, app, execution, coordinator, storage } = await runningWorkflow();
 	await storage.put(`execution:${execution.id}`, { ...execution, state: 'succeeded' });
 	const record = await world.run(app.store.repositories.get(repository.id));
 	if (!record) throw new Error('Expected repository');
@@ -264,7 +283,7 @@ test('legacy continuation repair requires current inventory and can recover afte
 });
 
 test('settled history uses no per-execution D1 access budget before newer active work', async () => {
-	const { repository, execution, storage } = await observed();
+	const { repository, execution, storage } = await runningWorkflow();
 	const { runId: _runId, runAttempt: _runAttempt, workflowSha: _workflowSha, ...unstarted } = execution;
 	for (let i = 0; i < 1200; i++) {
 		await storage.put(`execution:history-${i}`, {
@@ -299,7 +318,7 @@ test('settled history uses no per-execution D1 access budget before newer active
 });
 
 test('reconciliation updates its completion index after successful same-pass execution commits', async () => {
-	const { repository, execution, storage } = await observed(0);
+	const { repository, execution, storage } = await runningWorkflow(0);
 	const updates: string[] = [];
 	const update = ReleaseHistory.prototype.update;
 	spyOn(ReleaseHistory.prototype, 'update').mockImplementation(function(this: ReleaseHistory, entry) {
