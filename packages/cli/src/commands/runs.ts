@@ -1,4 +1,4 @@
-import type { CLIError, Out } from '@kjanat/dreamcli';
+import type { CLIError } from '@kjanat/dreamcli';
 import { arg, flag, group } from '@kjanat/dreamcli';
 import { Deferred, Effect } from 'effect';
 import type { Client } from '@/cli/client/api';
@@ -78,79 +78,6 @@ function serverFilter(repository: string | undefined, filters: RunFilters) {
 	};
 }
 
-function watchApproval(client: Client, out: Out, queued: ExecutionView) {
-	return Effect.gen(function*() {
-		const input = process.stdin;
-		const id = { id: queued.id, repositoryId: queued.repositoryId };
-		const key = yield* Deferred.make<'detach' | 'cancel' | 'force'>();
-		yield* Effect.acquireRelease(
-			Effect.sync(() => {
-				const raw = input.isRaw;
-				const paused = input.isPaused();
-				const receive = (data: Buffer) => {
-					const pressed = data.toString();
-					const action = pressed === '\x03'
-						? 'cancel'
-						: pressed === 'q'
-						? 'detach'
-						: pressed === 'f'
-						? 'force'
-						: undefined;
-					if (action) Deferred.doneUnsafe(key, Effect.succeed(action));
-				};
-				input.setRawMode(true);
-				input.on('data', receive);
-				input.resume();
-				return () => {
-					input.off('data', receive);
-					input.setRawMode(raw);
-					if (paused || !input.listenerCount('data')) input.pause();
-				};
-			}),
-			restore => Effect.sync(restore),
-		);
-		out.status('q detach · Ctrl+C cancel release · f force publish');
-		let current = queued;
-		const poll = Effect.gen(function*() {
-			while (true) {
-				yield* client.pause(followInterval);
-				const next = yield* client.call(routes.executionsGet, id);
-				if (!next.pendingApproval) return next;
-				if (next.reason && next.reason !== current.reason) out.status(next.reason);
-				current = next;
-			}
-		});
-		const result = yield* Effect.raceFirst(Deferred.await(key), poll);
-		if (result === 'cancel') {
-			const cancelled = yield* step(
-				out,
-				'Cancelling the release',
-				client.call(routes.executionsCancel, id),
-				() => 'Release cancelled',
-			);
-			out.setExitCode(130);
-			return cancelled;
-		}
-		if (result === 'force') {
-			return yield* step(
-				out,
-				'Forcing publication',
-				client.call(routes.executionsApprove, {
-					...id,
-					sourceSha: queued.sourceSha,
-					force: true,
-				}),
-				() => 'Forced publication started',
-			);
-		}
-		if (result === 'detach') return current;
-		if (result.state === 'awaiting-approval' || result.state === 'failed' || result.state === 'cancelled') {
-			out.setExitCode(1);
-		}
-		return result;
-	}).pipe(Effect.scoped);
-}
-
 export const runs = group('runs').description('Follow, publish, cancel and recover release operations')
 	.command(
 		base('list', 'List release operations; in a Git checkout only that repository, unless --all')
@@ -215,32 +142,99 @@ export const runs = group('runs').description('Follow, publish, cancel and recov
 				'detach',
 				flag.boolean().default(false).describe('Queue publication if checks are running and return immediately'),
 			)
-			.action(connected((client, { flags, args, out }) =>
-				Effect.gen(function*() {
-					const look = lookOf(out);
-					const approved = yield* step(
+			.action(connected(Effect.fnUntraced(function*(client, { flags, args, out }) {
+				const look = lookOf(out);
+				const approved = yield* step(
+					out,
+					`Approving ${look.id(args.id)} at ${look.sha(flags.sourceSha)}`,
+					client.call(routes.executionsApprove, {
+						id: args.id,
+						sourceSha: flags.sourceSha,
+						force: flags.force,
+						waitForChecks: true,
+					}),
+					run => run.pendingApproval ? 'Approval queued' : `Publishing ${look.id(run.id)} started`,
+				);
+				if (!approved.pendingApproval) return yield* executionView(out, approved);
+				if (out.jsonMode || flags.detach || !process.stdin.isTTY || !process.stderr.isTTY) {
+					if (!out.jsonMode) out.status('Beepboop will publish after the checks pass.');
+					return yield* executionView(out, approved);
+				}
+				if (approved.reason) out.status(approved.reason);
+
+				const input = process.stdin;
+				const id = { id: approved.id, repositoryId: approved.repositoryId };
+				const key = yield* Deferred.make<'detach' | 'cancel' | 'force'>();
+				yield* Effect.acquireRelease(
+					Effect.sync(() => {
+						const raw = input.isRaw;
+						const paused = input.isPaused();
+						const receive = (data: Buffer) => {
+							const pressed = data.toString();
+							const action = pressed === '\x03'
+								? 'cancel'
+								: pressed === 'q'
+								? 'detach'
+								: pressed === 'f'
+								? 'force'
+								: undefined;
+							if (action) Deferred.doneUnsafe(key, Effect.succeed(action));
+						};
+						input.setRawMode(true);
+						input.on('data', receive);
+						input.resume();
+						return () => {
+							input.off('data', receive);
+							input.setRawMode(raw);
+							if (paused || !input.listenerCount('data')) input.pause();
+						};
+					}),
+					restore => Effect.sync(restore),
+				);
+				out.status('q detach · Ctrl+C cancel release · f force publish');
+				let current = approved;
+				const poll = Effect.gen(function*() {
+					while (true) {
+						yield* client.pause(followInterval);
+						const next = yield* client.call(routes.executionsGet, id);
+						if (!next.pendingApproval) return next;
+						if (next.reason && next.reason !== current.reason) out.status(next.reason);
+						current = next;
+					}
+				});
+				const result = yield* Effect.raceFirst(Deferred.await(key), poll);
+				if (result === 'detach') {
+					out.status('Beepboop will publish after the checks pass.');
+					return yield* executionView(out, current);
+				}
+				if (result === 'cancel') {
+					const cancelled = yield* step(
 						out,
-						`Approving ${look.id(args.id)} at ${look.sha(flags.sourceSha)}`,
-						client.call(routes.executionsApprove, {
-							id: args.id,
-							sourceSha: flags.sourceSha,
-							force: flags.force,
-							waitForChecks: true,
-						}),
-						run => run.pendingApproval ? 'Approval queued' : `Publishing ${look.id(run.id)} started`,
+						'Cancelling the release',
+						client.call(routes.executionsCancel, id),
+						() => 'Release cancelled',
 					);
-					const interactive = !out.jsonMode && process.stdin.isTTY && process.stderr.isTTY;
-					let run = approved;
-					if (approved.pendingApproval && interactive && !flags.detach) {
-						if (approved.reason) out.status(approved.reason);
-						run = yield* watchApproval(client, out, approved);
-					}
-					if (run.pendingApproval && !out.jsonMode) {
-						out.status('Beepboop will publish after the checks pass.');
-					}
-					yield* executionView(out, run);
-				})
-			)),
+					out.setExitCode(130);
+					return yield* executionView(out, cancelled);
+				}
+				if (result === 'force') {
+					const forced = yield* step(
+						out,
+						'Forcing publication',
+						client.call(routes.executionsApprove, {
+							...id,
+							sourceSha: approved.sourceSha,
+							force: true,
+						}),
+						() => 'Forced publication started',
+					);
+					return yield* executionView(out, forced);
+				}
+				if (result.state === 'awaiting-approval' || result.state === 'failed' || result.state === 'cancelled') {
+					out.setExitCode(1);
+				}
+				yield* executionView(out, result);
+			}, Effect.scoped))),
 	)
 	.command(
 		base('checks', 'Rerun the checks that stop a release, or release without them')
