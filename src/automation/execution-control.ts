@@ -17,15 +17,18 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { matches, sha } from '@/kernel/schema/result.ts';
+import type { Committed } from '@/persistence/durable/journal.ts';
 import { Journal } from '@/persistence/durable/journal.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
 import { Keys } from '@/release/adapters/do/keys.ts';
-import { recoverable, reopened } from '@/release/domain/execution/execution.ts';
+import { identifyExecution } from '@/release/domain/execution/codec-v1.ts';
+import { deriveExecution, recoverable, reopened } from '@/release/domain/execution/execution.ts';
 import type { Execution, PreparedRelease, ReleaseStarted } from '@/release/domain/execution/types.ts';
 import { preparationBody } from '@/release/domain/managed.ts';
+import { promotionOperations } from '@/release/domain/planning/promotion-operations.ts';
 import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
 import { Background } from '@/release/services/coordinator/background.ts';
-import { Executions } from '@/release/services/coordinator/executions.ts';
+import { Executions, RepositoryRevisions } from '@/release/services/coordinator/executions.ts';
 import { binaryLegs } from '@/setup/workflows/binaries.ts';
 
 export type RecoveryAction = 'reconcile' | 'retry' | 'redispatch';
@@ -88,6 +91,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 			const storage = yield* DurableStorage;
 			const journal = yield* Journal;
 			const executions = yield* Executions;
+			const revisions = yield* RepositoryRevisions;
 			const planner = yield* AlarmPlanner;
 			const background = yield* Background;
 			const sets = yield* ReleaseSets;
@@ -98,17 +102,87 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 			const dispatcher = yield* Dispatcher;
 			const wake = wakeUp(sets, planner);
 
-			const supersedePending = Effect.fnUntraced(function*(execution: Execution) {
-				if (execution.configuration.streams[execution.stream]?.concurrency !== 'supersede-pending') return;
-				for (const old of yield* executions.all) {
-					if (
-						old.id !== execution.id && old.stream === execution.stream && old.operation === execution.operation
+			const supersededExecutions = Effect.fnUntraced(
+				function*(incoming: Execution, operations: ReadonlyMap<string, string>) {
+					if (incoming.configuration.streams[incoming.stream]?.concurrency !== 'supersede-pending') return [];
+					const now = yield* Clock.currentTimeMillis;
+					return (yield* executions.all).filter(old =>
+						old.stream === incoming.stream && operations.has(old.operation) && operations.get(old.operation) !== old.id
 						&& ['pending', 'ready'].includes(old.state)
-					) {
-						yield* executions.put({ ...old, state: 'cancelled', reason: 'Superseded before dispatch' });
-					}
+					).map((old): Execution => ({
+						...old,
+						state: 'cancelled',
+						reason: 'Superseded before dispatch',
+						updatedAt: now,
+					}));
+				},
+			);
+			const supersedePending = Effect.fnUntraced(function*(incoming: Execution) {
+				for (const cancelled of yield* supersededExecutions(incoming, new Map([[incoming.operation, incoming.id]]))) {
+					yield* executions.put(cancelled);
 				}
 			});
+			const storePromotionPlan = Effect.fnUntraced(function*(promotion: Execution, existing: boolean) {
+				if (promotion.operation !== 'promote' || promotion.releaseSet || !promotion.eventId.startsWith('release:')) {
+					return false;
+				}
+				const stream = promotion.configuration.streams[promotion.stream];
+				if (!stream) return yield* precondition('Unknown promotion stream');
+				const operations = yield* Effect.fromResult(promotionOperations(stream));
+				if (!operations.length) return false;
+				const repository = yield* revisions.get(promotion.repositoryId);
+				if (!repository) return yield* precondition('Promotion repository unavailable');
+				const source = yield* revisions.inventoryAt(promotion);
+				const configuration = promotion.configurationSha === promotion.sourceSha
+					? source
+					: yield* revisions.inventoryAt({ ...promotion, sourceSha: promotion.configurationSha });
+				const revision = {
+					defaultBranch: repository.defaultBranch,
+					inventory: { ...source, workflows: configuration.workflows },
+				};
+				const entries: Committed[] = [];
+				const incoming = new Map([[promotion.operation, promotion.id]]);
+				for (const operation of operations) {
+					const member = yield* deriveExecution(promotion, revision, {
+						operation,
+						stream: promotion.stream,
+						eventId: promotion.eventId,
+						sourceSha: promotion.sourceSha,
+						version: promotion.version,
+					});
+					if (!(yield* executions.stored(member.id))) {
+						incoming.set(operation, member.id);
+						entries.push({
+							entity: 'execution',
+							id: member.id,
+							repositoryId: member.repositoryId,
+							value: identifyExecution(member),
+						});
+					}
+				}
+				if (!existing) {
+					for (const cancelled of yield* supersededExecutions(promotion, incoming)) {
+						entries.push({
+							entity: 'execution',
+							id: cancelled.id,
+							repositoryId: cancelled.repositoryId,
+							value: cancelled,
+						});
+					}
+					entries.unshift({
+						entity: 'execution',
+						id: promotion.id,
+						repositoryId: promotion.repositoryId,
+						value: identifyExecution(promotion),
+					});
+				}
+				const [first, ...rest] = entries;
+				if (first) {
+					yield* executions.commit([first, ...rest], [yield* planner.reconcileWrite(yield* Clock.currentTimeMillis)]);
+				}
+				return true;
+			});
+
 			const restate = Effect.fnUntraced(function*(prior: Execution, upgraded: Execution) {
 				const previous = preparationBody(prior);
 				const next = preparationBody(upgraded);
@@ -282,8 +356,10 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						return upgraded;
 					}
 					if (prior) return prior;
-					yield* supersedePending(execution);
-					yield* executions.put(execution);
+					if (!(yield* storePromotionPlan(execution, false))) {
+						yield* supersedePending(execution);
+						yield* executions.put(execution);
+					}
 					return execution;
 				}),
 				approve: Effect.fnUntraced(function*(id: string, commitSha: string, actor: string, force: boolean) {
@@ -417,6 +493,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						} else yield* dispatcher.redispatch(execution, publications, 'Retry requested');
 					} else {
 						const published = yield* releases.published(execution);
+						if (published.state === 'succeeded') yield* storePromotionPlan(published, true);
 						if (published !== execution) yield* executions.put(published);
 						yield* wake;
 					}
