@@ -108,7 +108,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 				}
 				const stream = promotion.configuration.streams[promotion.stream];
 				if (!stream) return yield* precondition('Unknown promotion stream');
-				const operations = promotionOperations(stream);
+				const operations = yield* Effect.fromResult(promotionOperations(stream));
 				if (!operations.length) return false;
 				const repository = yield* revisions.get(promotion.repositoryId);
 				if (!repository) return yield* precondition('Promotion repository unavailable');

@@ -13,16 +13,19 @@ eachWorld(created => {
 	world = created;
 });
 
-async function promotion(enqueue = true) {
+async function promotion(enqueue = true, sharedPrerequisite = false) {
 	const config = editableConfiguration();
 	config.streams.main.workflows = {
-		npm: { file: 'npm.yml', needs: ['promote'] },
-		'github-release': { file: 'release.yml', needs: ['npm'] },
+		npm: { file: 'npm.yml', needs: sharedPrerequisite ? ['promote', 'build'] : ['promote'] },
+		...(sharedPrerequisite ? { build: { file: 'build.yml' }, unrelated: { file: 'lint.yml' } } : {}),
+		'github-release': { file: 'release.yml', needs: sharedPrerequisite ? ['npm', 'build'] : ['npm'] },
 	};
 	const repository = world.github.create('octo/continuations', {
 		'package.json': JSON.stringify({ name: 'widget', version: '1.0.0' }),
 		'.github/beepboop.json': JSON.stringify(config),
 		'.github/workflows/publish.yml': publishWorkflow,
+		'.github/workflows/build.yml': publishWorkflow,
+		'.github/workflows/lint.yml': publishWorkflow,
 		'.github/workflows/npm.yml': publishWorkflow,
 		'.github/workflows/release.yml': publishWorkflow,
 	});
@@ -125,4 +128,15 @@ test('an interrupted plan leaves no runnable operations and can be retried', asy
 	expect(await executions(repository)).toHaveLength(0);
 	await coordinator.enqueue(execution);
 	expect((await executions(repository)).map(run => run.operation).sort()).toEqual(['github-release', 'npm', 'promote']);
+});
+
+test('a shared prerequisite is planned once and unrelated workflows stay out of the release', async () => {
+	const { repository } = await promotion(true, true);
+	const planned = await executions(repository);
+	expect(planned.map(run => run.operation).sort()).toEqual(['build', 'github-release', 'npm', 'promote']);
+	const build = planned.find(run => run.operation === 'build');
+	if (!build) throw new Error('Expected shared build');
+	for (const run of planned.filter(run => ['npm', 'github-release'].includes(run.operation))) {
+		expect(run.dependencies).toContain(build.id);
+	}
 });

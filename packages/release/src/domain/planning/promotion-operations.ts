@@ -1,32 +1,24 @@
+import { Result } from 'effect';
 import type { Stream } from '@/domain/configuration/schema.ts';
+import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
+import { invalid } from '@/kernel/schema/result.ts';
 
-/** Operations owned by a single promotion, including prerequisites shared by its downstream workflows. */
-export function promotionOperations(stream: Stream): string[] {
-	const bindings = new Map(
+/** Select downstream workflows and the prerequisites they share. */
+export function promotionOperations(stream: Stream) {
+	const workflows = new Map(
 		Object.entries(stream.workflows).filter(([, binding]) =>
 			binding.mode !== 'observe' && binding.each !== 'package' && !binding.backfill
 		),
 	);
-	const dependents = new Map<string, string[]>();
-	for (const [name, binding] of bindings) {
-		for (const dependency of binding.needs ?? []) {
-			const siblings = dependents.get(dependency);
-			if (siblings) siblings.push(name);
-			else dependents.set(dependency, [name]);
+	const needs = (name: string) => workflows.get(name)?.needs ?? [];
+	const cycle = (name: string) => invalid(`Operation dependency cycle: ${name}`);
+	return Result.gen(function*() {
+		const order = yield* dependencyOrder(workflows.keys(), name => Result.succeed(needs(name)), cycle);
+		const downstream = new Set(['promote']);
+		for (const name of order) {
+			if (needs(name).some(dependency => downstream.has(dependency))) downstream.add(name);
 		}
-	}
-	const downstream = new Set(['promote']);
-	for (const name of downstream) {
-		for (const dependent of dependents.get(name) ?? []) downstream.add(dependent);
-	}
-
-	const planned = new Set<string>();
-	function include(name: string) {
-		const binding = bindings.get(name);
-		if (!binding || planned.has(name)) return;
-		for (const dependency of binding.needs ?? []) include(dependency);
-		planned.add(name);
-	}
-	for (const name of downstream) include(name);
-	return [...planned];
+		const required = yield* dependencyOrder(downstream, name => Result.succeed(needs(name)), cycle);
+		return required.filter(name => workflows.has(name));
+	});
 }
