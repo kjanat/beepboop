@@ -57,7 +57,7 @@ Keep Beepboop actions on the rolling `@v1` tag. Add this preset to the
 
 ```json
 {
-  "extends": ["github>kjanat/beepboop//.github/renovate/beepboop-actions"]
+  "extends": ["github>kjanat/beepboop:actions"]
 }
 ```
 
