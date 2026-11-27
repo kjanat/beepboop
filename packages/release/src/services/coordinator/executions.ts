@@ -51,7 +51,7 @@ export class Executions extends Context.Service<Executions, {
 	readonly all: Effect.Effect<Execution[], DomainError>;
 	readonly stored: (id: string) => Effect.Effect<Execution | undefined, DomainError>;
 	readonly get: (id: string) => Effect.Effect<Execution, DomainError>;
-	readonly put: (execution: Execution) => Effect.Effect<void, DomainError>;
+	readonly put: (execution: Execution, options?: { repairContinuations: true }) => Effect.Effect<void, DomainError>;
 	readonly commit: (
 		entries: readonly [Committed, ...Committed[]],
 		extra?: readonly Write[],
@@ -98,10 +98,15 @@ export class Executions extends Context.Service<Executions, {
 			const commit = (entries: readonly [Committed, ...Committed[]], extra?: readonly Write[]) =>
 				journal.commit(entries, extra).pipe(Effect.andThen(history.record(entries)));
 			const pendingContinuations = Effect.fnUntraced(function*(observed: Execution) {
-				if (observed.state !== 'succeeded' || !observed.eventId.startsWith('observed:')) return [];
+				if (observed.state !== 'succeeded') return [];
+				const promotion = observed.eventId.startsWith('release:') && !observed.releaseSet && !observed.package;
+				if (!promotion && !observed.eventId.startsWith('observed:')) return [];
 				const bindings = Object.entries(observed.configuration.streams[observed.stream]?.workflows ?? {}).filter((
 					[, binding],
-				) => binding.mode !== 'observe' && binding.needs?.includes(observed.operation));
+				) =>
+					binding.mode !== 'observe' && !binding.backfill && binding.each !== 'package'
+					&& binding.needs?.includes(observed.operation)
+				);
 				const missing: string[] = [];
 				for (const [operation] of bindings) {
 					const id = yield* executionId(observed.repositoryId, observed.stream, operation, observed.eventId);
@@ -127,10 +132,12 @@ export class Executions extends Context.Service<Executions, {
 				}
 				return next;
 			});
-			const put = Effect.fnUntraced(function*(execution: Execution) {
+			const put = Effect.fnUntraced(function*(execution: Execution, options?: { repairContinuations: true }) {
 				Object.assign(execution, identifyExecution(execution));
 				const previous = yield* stored(execution.id);
-				const following = yield* continuations(execution);
+				const follow = previous?.state !== 'succeeded' || execution.eventId.startsWith('observed:')
+					|| options?.repairContinuations;
+				const following = follow ? yield* continuations(execution) : [];
 				if (
 					previous && previous.state !== execution.state && ['running', 'succeeded'].includes(execution.state)
 					&& execution.reason === previous.reason

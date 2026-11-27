@@ -417,7 +417,13 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						} else yield* dispatcher.redispatch(execution, publications, 'Retry requested');
 					} else {
 						const published = yield* releases.published(execution);
-						if (published !== execution) yield* executions.put(published);
+						if (
+							published !== execution
+							|| (published.eventId.startsWith('release:')
+								&& (yield* executions.pendingContinuations(published)).length)
+						) {
+							yield* executions.put(published, { repairContinuations: true });
+						}
 						yield* wake;
 					}
 					yield* sets.resume(execution);

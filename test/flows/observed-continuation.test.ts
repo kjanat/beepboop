@@ -14,7 +14,7 @@ eachWorld(created => {
 	world = created;
 });
 
-async function observed(count = 1) {
+async function observed(count = 1, eventId = 'observed:9001') {
 	const config = editableConfiguration();
 	config.streams.main.workflows = {
 		check: { file: 'check.yml', mode: 'observe' },
@@ -38,7 +38,7 @@ async function observed(count = 1) {
 		createExecution(ready, {
 			stream: 'main',
 			operation: 'check',
-			eventId: 'observed:9001',
+			eventId,
 			sourceSha: stored.sha,
 			observed: true,
 		}),
@@ -110,6 +110,24 @@ for (const children of [1, 70]) {
 		expect(await executions(repository)).toHaveLength(children + 1);
 	});
 }
+
+test('a completed release dispatches its dependent workflow', async () => {
+	const { repository, execution } = await observed(1, 'release:1.0.0:approved');
+	await world.wait(20_000);
+	const child = (await executions(repository)).find(run => run.operation === 'follow0');
+	expect(child?.eventId).toBe(execution.eventId);
+	expect(child?.sourceSha).toBe(execution.sourceSha);
+});
+
+test('an old release creates its missing continuation only on targeted recovery', async () => {
+	const { repository, execution, coordinator, storage } = await observed(1, 'release:1.0.0:approved');
+	await storage.put(`execution:${execution.id}`, { ...execution, state: 'succeeded' });
+	await world.wait(20_000);
+	expect(await executions(repository)).toHaveLength(1);
+	await coordinator.recover(execution.id, 'reconcile', 'admin');
+	await coordinator.recover(execution.id, 'reconcile', 'admin');
+	expect((await executions(repository)).filter(run => run.operation === 'follow0')).toHaveLength(1);
+});
 
 test('reconciliation repairs a legacy success with missing continuations', async () => {
 	const { repository, execution, coordinator, storage } = await observed();
