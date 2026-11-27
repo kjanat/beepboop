@@ -23,6 +23,7 @@ import { eachWorld, origin } from '@root/test/support/world.ts';
 import { strip } from 'ansispeck';
 import { Effect, Schema, Struct } from 'effect';
 import type { Client } from '@/cli/client/api';
+import { saveSession } from '@/cli/client/session-store';
 import { checkoutRepository } from '@/cli/git-checkout';
 import { app } from '@/cli/main';
 import { routes } from '@/contract/routes';
@@ -474,6 +475,108 @@ test.each([7, 12])('approve accepts table values with a %i-character prompted co
 	expect(await promotions()).toEqual([
 		expect.objectContaining({ id: promotion.id, state: 'ready', sourceSha: merged.sha }),
 	]);
+});
+
+test.each([
+	{ key: 'q', action: 'detach', status: 0, state: 'awaiting-approval' },
+	{ key: '\x03', action: 'cancel', status: 130, state: 'cancelled' },
+	{ key: 'f', action: 'force', status: 0, state: 'ready' },
+])('approval can $action from its terminal', async ({ key, action, status, state }) => {
+	const { repository, merged, promotion } = await awaitingPromotion();
+	repository.checks.set(merged.sha, [{ name: 'test', status: 'in_progress', conclusion: null, runId: 1 }]);
+	using server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: request => world.handle(request) });
+	await Effect.runPromise(
+		saveSession({ directory: join(directory, 'beepboop'), origin: server.url.origin }, { token }),
+	);
+
+	let output = '';
+	let inputSent = false;
+	const decoder = new TextDecoder();
+	await using terminal = new Bun.Terminal({
+		data(tty, bytes) {
+			output += decoder.decode(bytes, { stream: true });
+			if (!inputSent && output.includes('q detach · Ctrl+C cancel release · f force publish')) {
+				inputSent = true;
+				tty.write(key);
+			}
+		},
+	});
+	const cli = Bun.spawn([
+		process.execPath,
+		'packages/cli/src/main.ts',
+		'runs',
+		'approve',
+		promotion.id.slice(0, 12),
+		'--sourceSha',
+		merged.sha.slice(0, 12),
+		'--server',
+		server.url.origin,
+	], { terminal, env: { XDG_STATE_HOME: directory }, timeout: 8_000 });
+	expect([await cli.exited, inputSent, strip(output)]).toEqual([
+		status,
+		true,
+		expect.stringContaining('Approval queued'),
+	]);
+	const ref = { id: promotion.id };
+	const saved = await Effect.runPromise(client.call(routes.executionsGet, ref));
+	expect(saved.state).toBe(state);
+	if (action === 'detach') expect(saved.approvalRequest?.sourceSha).toBe(merged.sha);
+	else expect(saved.approvalRequest).toBeUndefined();
+	expect(world.github.dispatches).toHaveLength(0);
+
+	if (action !== 'force') passChecks(repository, merged.sha);
+	await world.wait(65_000);
+	expect(world.github.dispatches).toHaveLength(action === 'cancel' ? 0 : 1);
+	const audit = await world.db.prepare("SELECT target FROM audit WHERE action = 'promotion.approve'").all();
+	expect(audit.results).toEqual(
+		action === 'cancel'
+			? []
+			: [
+				{
+					target: action === 'force'
+						? `${promotion.id}:${merged.sha} overriding: test running`
+						: `${promotion.id}:${merged.sha}`,
+				},
+			],
+	);
+}, 12_000);
+
+test('force acknowledges publication that started while the CLI waited', async () => {
+	const { repository, merged, promotion } = await awaitingPromotion();
+	const ref = { id: promotion.id, sourceSha: merged.sha };
+	repository.checks.set(merged.sha, [{ name: 'test', status: 'in_progress', conclusion: null, runId: 1 }]);
+	const queued = await Effect.runPromise(client.call(routes.executionsApprove, { ...ref, queue: true }));
+	expect(queued.approvalRequest?.sourceSha).toBe(merged.sha);
+	passChecks(repository, merged.sha);
+	await world.wait(65_000);
+	const started = await Effect.runPromise(client.call(routes.executionsGet, { id: promotion.id }));
+	expect(started.state).toBe('running');
+	expect(await Effect.runPromise(client.call(routes.executionsApprove, { ...ref, force: true }))).toEqual(started);
+	expect(world.github.dispatches).toHaveLength(1);
+});
+
+test.each(['failed check', 'new version'] as const)('queued approval stops on %s', async blocker => {
+	const { repository, merged, promotion } = await awaitingPromotion();
+	repository.checks.set(merged.sha, [{ name: 'test', status: 'in_progress', conclusion: null, runId: 1 }]);
+	const cli = await run(['runs', 'approve', promotion.id, '--sourceSha', merged.sha, '--detach', '--json']);
+	expect([cli.exitCode, cli.stderr.join('')]).toEqual([0, '']);
+	expect(JSON.parse(cli.stdout.join(''))).toMatchObject({
+		state: 'awaiting-approval',
+		approvalRequest: { sourceSha: merged.sha },
+	});
+	if (blocker === 'failed check') {
+		repository.checks.set(merged.sha, [{ name: 'test', status: 'completed', conclusion: 'failure', runId: 1 }]);
+	} else {
+		world.github.push(repository, { 'package.json': npmManifest('widget', '1.2.5') }, 'Raise the version again');
+		passChecks(repository, merged.sha);
+	}
+	await world.wait(65_000);
+	const saved = await Effect.runPromise(client.call(routes.executionsGet, { id: promotion.id }));
+	expect(saved.approvalRequest).toBeUndefined();
+	expect(saved.reason).toContain(blocker === 'failed check' ? 'test' : 'Publish the release for that commit');
+	passChecks(repository, merged.sha);
+	await world.wait(65_000);
+	expect(world.github.dispatches).toHaveLength(0);
 });
 
 test('approval refuses wrong or malformed commit references without changing the operation', async () => {

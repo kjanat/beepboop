@@ -414,9 +414,9 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{ executionId: id },
 		);
 	}
-	approve(id: string, commitSha: string, actor: string, force = false): Promise<Execution> {
+	approve(id: string, commitSha: string, actor: string, force = false, queue = false): Promise<Execution> {
 		return this.serial(
-			ExecutionControl.use(control => control.approve(id, commitSha, actor, force)),
+			ExecutionControl.use(control => control.approve(id, commitSha, actor, force, queue)),
 			'coordinator.approve',
 			{
 				executionId: id,

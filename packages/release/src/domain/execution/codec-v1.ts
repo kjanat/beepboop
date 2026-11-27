@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { executionStates } from '@/contract/views';
+import { approvalRequest, executionStates } from '@/contract/views';
 import { githubRunState } from '@/domain/github-run-state.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
@@ -230,6 +230,7 @@ export const executionSchema: Schema.Codec<Execution, unknown> = mutableStruct({
 	reruns: Schema.optional(mutableArray(mutableStruct({ id: Schema.Finite, attempt: Schema.Finite }))),
 	versionPrMerge: Schema.optional(versionPrMerge),
 	approvedAt: Schema.optional(Schema.Finite),
+	approvalRequest: Schema.optional(approvalRequest),
 	publications: mutableArray(packagePublication),
 	artifacts: mutableArray(artifact),
 	createdAt: Schema.Finite,

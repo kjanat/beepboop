@@ -288,6 +288,14 @@ export const routes = {
 		}),
 		response: executionView,
 	}),
+	executionsGet: route({
+		method: 'POST',
+		path: '/api/executions/get',
+		auth: 'admin',
+		idempotent: true,
+		request: executionRef,
+		response: executionView,
+	}),
 	executionsBinaries: route({
 		method: 'POST',
 		path: '/api/executions/binaries',
@@ -325,6 +333,7 @@ export const routes = {
 				'Expected a lowercase commit SHA with 7 to 40 hexadecimal characters',
 			),
 			force: Schema.optional(Schema.Boolean),
+			queue: Schema.optional(Schema.Boolean),
 		}),
 		response: executionView,
 	}),

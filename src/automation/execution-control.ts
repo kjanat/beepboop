@@ -4,7 +4,6 @@ import { Dispatcher } from '@/automation/dispatcher.ts';
 import { GitHubReleases } from '@/automation/github-releases.ts';
 import { restatePreparation } from '@/automation/preparation-pull-requests';
 import { RefPublication } from '@/automation/ref-publication.ts';
-import { ReleaseCommits } from '@/automation/release-commits.ts';
 import { ReleaseSets } from '@/automation/release-sets.ts';
 import { runJobs } from '@/automation/run-jobs.ts';
 import { Automation } from '@/automation/service.ts';
@@ -77,6 +76,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 		commitSha: string,
 		actor: string,
 		force: boolean,
+		queue: boolean,
 	) => Effect.Effect<Execution, DomainError>;
 	readonly approvalReadiness: (id: string) => Effect.Effect<{ problems: string[]; blocked: string[] }, DomainError>;
 	readonly binaryProgress: (id: string) => Effect.Effect<BinaryProgress, DomainError>;
@@ -96,7 +96,6 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 			const background = yield* Background;
 			const sets = yield* ReleaseSets;
 			const gate = yield* ApprovalGate;
-			const commits = yield* ReleaseCommits;
 			const refs = yield* RefPublication;
 			const releases = yield* GitHubReleases;
 			const dispatcher = yield* Dispatcher;
@@ -216,6 +215,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					...(request.started ? { started: request.started } : {}),
 					...(request.initiatedBy ? { initiatedBy: request.initiatedBy } : {}),
 				};
+				delete started.approvalRequest;
 				if (prior.state !== 'awaiting-approval' && (prior.attempts > 0 || prior.approvedAt !== undefined)) {
 					if (!force) return prior;
 					if (!prior.workflow) {
@@ -337,6 +337,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 							...(execution.started ? { started: execution.started } : {}),
 							...(execution.initiatedBy ? { initiatedBy: execution.initiatedBy } : {}),
 						};
+						delete started.approvalRequest;
 						yield* executions.put(started);
 						return started;
 					}
@@ -362,40 +363,21 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					}
 					return execution;
 				}),
-				approve: Effect.fnUntraced(function*(id: string, commitSha: string, actor: string, force: boolean) {
-					const execution = yield* executions.get(id);
-					const reference = yield* Effect.fromResult(matches(commitSha, approvalShaPattern));
-					const commit = yield* Effect.fromResult(sha(execution.sourceSha));
-					if (execution.state !== 'awaiting-approval' || !commit.startsWith(reference)) {
-						return yield* precondition('This release is not waiting for you to publish that commit');
-					}
-					const token = yield* gateway.token(execution.repository, execution.repositoryId);
-					const head = yield* commits.head(execution, token);
-					if (
-						head
-						&& (head.tag
-							? head.sha !== execution.sourceSha
-							: !(yield* commits.contains(execution, head.sha, token)))
-					) {
-						return yield* precondition(
-							`${head.ref} is at ${head.sha.slice(0, 12)}. Publish the release for that commit.`,
-						);
-					}
-					const conflict = yield* refs.tagProblem(execution, true);
-					if (conflict) return yield* precondition(conflict);
-					const incomplete = yield* gate.metadataBlocks(execution);
-					if (incomplete.length) return yield* precondition(incomplete.join('; '));
-					const checks = yield* gate.checks(execution);
-					const problems = [...checks.failed, ...checks.pending];
-					if (problems.length && !force) return yield* precondition(problems.join('; '));
-					return yield* gate.admit(
-						execution,
-						actor,
-						`${id}:${commit}${problems.length ? ` overriding: ${problems.join('; ')}` : ''}${
-							checks.skipped.length ? ` skipping: ${checks.skipped.join('; ')}` : ''
-						}`,
-					);
-				}),
+				approve: Effect.fnUntraced(
+					function*(id: string, commitSha: string, actor: string, force: boolean, queue: boolean) {
+						const execution = yield* executions.get(id);
+						const reference = yield* Effect.fromResult(matches(commitSha, approvalShaPattern));
+						const commit = yield* Effect.fromResult(sha(execution.sourceSha));
+						if (
+							force && commit === reference && execution.approvedAt !== undefined
+							&& ['ready', 'dispatching', 'running', 'verifying', 'succeeded'].includes(execution.state)
+						) return execution;
+						if (execution.state !== 'awaiting-approval' || !commit.startsWith(reference)) {
+							return yield* precondition('This release is not waiting for you to publish that commit');
+						}
+						return yield* gate.approve(execution, actor, force ? 'force' : queue ? 'queue' : 'immediate');
+					},
+				),
 				approvalReadiness: Effect.fnUntraced(function*(id: string) {
 					const execution = yield* executions.get(id);
 					if (execution.state !== 'awaiting-approval') {
