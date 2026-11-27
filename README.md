@@ -50,6 +50,21 @@ workflows run the builds and package generation.
 - [Architecture](docs/adr-001-repository-automation.md) covers execution
   storage, authentication and recovery.
 
+### Renovate
+
+Keep Beepboop actions on the rolling `@v1` tag. Add this preset to the
+`extends` list in `renovate.json`:
+
+```json
+{
+  "extends": ["github>kjanat/beepboop//.github/renovate/beepboop-actions"]
+}
+```
+
+Use `kjanat/beepboop/actions/token@v1` (and `@v1` for other Beepboop actions) in
+workflows. The preset stops Renovate from updating or SHA-pinning these refs;
+replace any existing pins with `@v1` once. Other actions are unaffected.
+
 ## Development
 
 ```sh
