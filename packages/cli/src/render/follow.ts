@@ -9,13 +9,12 @@ import { routes } from '@/contract/routes';
 import type { BinaryProgress } from '@/contract/views';
 import type { CheckChoice } from '@/domain/release-gates.ts';
 import { rerunnable, stoppedByGates } from '@/domain/release-gates.ts';
+import { preparationResultFields } from '@/domain/setup-terms.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, looseStruct, mutableArray, mutableRecord } from '@/kernel/schema/structs.ts';
 
 const result = looseStruct({
-	url: Schema.String,
-	head: Schema.String,
-	kind: Schema.optional(Schema.Literal('commit')),
+	...preparationResultFields,
 });
 const tracked = looseStruct({
 	id: Schema.String,

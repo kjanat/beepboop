@@ -2,6 +2,7 @@ import { Effect, Schema } from 'effect';
 import { onboardingBranch, updateBranch } from '@/domain/setup-branches.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { shaPattern } from '@/kernel/schema/ids.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { matchesPattern, mutableStruct } from '@/kernel/schema/structs.ts';
 
@@ -33,7 +34,7 @@ export const setupPullEdit = mutableStruct({
 		user: mutableStruct({ id: Schema.Finite }),
 		head: mutableStruct({
 			ref: Schema.Literals([onboardingBranch, updateBranch]),
-			sha: Schema.String.check(matchesPattern(/^[a-f0-9]{40}$/)),
+			sha: Schema.String.check(matchesPattern(shaPattern)),
 			repo: mutableStruct({ id: Schema.Finite }),
 		}),
 		base: mutableStruct({ repo: mutableStruct({ id: Schema.Finite }) }),
@@ -46,7 +47,7 @@ export const setupPullMerge = mutableStruct({
 	pull_request: mutableStruct({
 		number: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
 		merged: Schema.Literal(true),
-		merge_commit_sha: Schema.String.check(matchesPattern(/^[a-f0-9]{40}$/)),
+		merge_commit_sha: Schema.String.check(matchesPattern(shaPattern)),
 		user: mutableStruct({ id: Schema.Finite }),
 		merged_by: mutableStruct({ id: Schema.Finite, login: Schema.String }),
 		head: mutableStruct({

@@ -98,6 +98,17 @@ export class WinGetService {
 			return { token, fork };
 		});
 	}
+	private submissionPull(head: string, token: string) {
+		return this.gateway.read(
+			mutableArray(winGetPull),
+			`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(head)}&per_page=100`,
+			token,
+		).pipe(Effect.flatMap(pulls =>
+			pulls.length > 1
+				? Effect.fail(precondition('Multiple matching WinGet pull requests'))
+				: Effect.succeed(pulls[0])
+		));
+	}
 	private policy(repo: RepositoryRecord) {
 		const state = readiness(repo);
 		if (state.kind !== 'ready' || !state.repository.configuration.winget) {
@@ -286,13 +297,7 @@ export class WinGetService {
 				const baseBranch = (yield* self.gateway.read(upstreamRepository, `/repos/${upstream}`, token)).default_branch;
 				const branch = submissionBranch(plan);
 				const head = `${fork.split('/')[0]}:${branch}`;
-				const pulls = yield* self.gateway.read(
-					mutableArray(winGetPull),
-					`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(head)}&per_page=100`,
-					token,
-				);
-				if (pulls.length > 1) return yield* precondition('Multiple matching WinGet pull requests');
-				let pull = pulls[0];
+				let pull = yield* self.submissionPull(head, token);
 				if (!pull) {
 					let ref = yield* self.gateway.read(
 						Schema.NullOr(gitRefSchema),
@@ -414,14 +419,7 @@ export class WinGetService {
 				const fork = yield* Effect.fromResult(text(self.env.WINGET_FORK));
 				const plan = saved.plan;
 				const branch = submissionBranch(plan);
-				const head = `${fork.split('/')[0]}:${branch}`;
-				const pulls = yield* self.gateway.read(
-					mutableArray(winGetPull),
-					`/repos/${upstream}/pulls?state=all&head=${encodeURIComponent(head)}&per_page=100`,
-					token,
-				);
-				if (pulls.length > 1) return yield* precondition('Multiple matching WinGet pull requests');
-				const recovered = pulls[0];
+				const recovered = yield* self.submissionPull(`${fork.split('/')[0]}:${branch}`, token);
 				if (!recovered) return;
 				yield* self.submissions.settle(
 					self.pullState(plan, recovered, clock.currentTimeMillisUnsafe()),

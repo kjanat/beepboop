@@ -268,6 +268,9 @@ test('secrets set reads the value from stdin, shows its read spinner and keeps n
 	const padded = await app.execute(['secrets', 'set', 'npm-token'], { ...terminal, stdinData: '  padded \t\n' });
 	expect(padded.stdout.join('')).toBe('✔ Saved npm-token as version 5.\n');
 	expect([...new Set(stored)]).toEqual(['secret', 'rotated', 'value', 'typed', 'retyped', '  padded \t']);
+	const colonAlias = await runCli(['secrets', 'set', 'github:user:beepboop-by-kjanat'], ['typed']);
+	expect(colonAlias.exitCode).toBe(0);
+	expect(colonAlias.stdout.join('')).toContain('Saved github:user:beepboop-by-kjanat');
 	const untyped = await app.execute(['secrets', 'set', 'empty-token'], terminal);
 	expect(untyped.exitCode).not.toBe(0);
 	expect(untyped.stderr.join('')).toContain('Secret value is empty');

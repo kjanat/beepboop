@@ -1,16 +1,10 @@
 import { Effect, Schema } from 'effect';
-import {
-	jobKeyPattern,
-	refPattern,
-	tagPrefixPattern,
-	validRef,
-	validTagPrefix,
-	workflowFilePattern,
-} from '@/domain/catalog.ts';
+import { jobKeyPattern, workflowFilePattern } from '@/domain/catalog.ts';
+import { distributionPathProblem } from '@/domain/distribution-validation.ts';
 import { approvalPolicies, startChannel, versionBump } from '@/domain/release-start.ts';
-import { versionPrMerge } from '@/domain/setup-terms.ts';
+import { reservedOperations, versionPrMerge } from '@/domain/setup-terms.ts';
 import { versionFileSchema } from '@/domain/version-files.ts';
-import { actionsRevisionPattern, setupWorkflow } from '@/domain/workflow-setup.ts';
+import { actionsRevisionPattern, setupWorkflow, tagPrefixSchema, workflowRefSchema } from '@/domain/workflow-setup.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
 import { textSchema as text } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
@@ -30,7 +24,7 @@ const observed = strictStruct(
 	mutableStruct({
 		name: identifier,
 		file: Schema.String.check(matchesPattern(workflowFilePattern)),
-		ref: Schema.optional(refined(Schema.String.check(matchesPattern(refPattern)), validRef, 'Invalid workflow ref')),
+		ref: Schema.optional(workflowRefSchema),
 		publications: mutableArray(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 		needs: Schema.optional(mutableArray(identifier)),
 	}).fields,
@@ -41,7 +35,7 @@ const operation = strictStruct(
 		...{
 			name: refined(
 				identifier,
-				name => name !== 'prepare' && name !== 'promote',
+				name => !reservedOperations.some(reserved => reserved === name),
 				'prepare and promote are reserved operation names',
 			),
 			backfill: Schema.optional(Schema.Literal(true)),
@@ -67,13 +61,11 @@ export const actionRelease = Schema.Union([
 	strictStruct({ kind: Schema.Literal('source') }),
 	strictStruct({
 		kind: Schema.Literal('distribution'),
-		files: mutableArray(refined(
-			Schema.String,
-			value =>
-				/^(?:[\w.-]+\/)*[\w.-]+$/.test(value)
-				&& !value.split('/').some(part => part === '.' || part === '..' || part === '.git'),
-			'Use exact repository-relative distribution file paths',
-		)).check(Schema.isMinLength(1)),
+		files: refined(
+			mutableArray(Schema.String.check(matchesPattern(/^(?:[\w.-]+\/)*[\w.-]+$/))).check(Schema.isMinLength(1)),
+			files => distributionPathProblem(files) === undefined,
+			'Use distinct, non-overlapping repository-relative distribution file paths outside Git and workflows',
+		),
 	}),
 ]);
 export const setupStream = strictStruct(
@@ -90,7 +82,7 @@ export const setupStream = strictStruct(
 		versionSource: Schema.optional(strictStruct(
 			mutableStruct({
 				kind: Schema.Literal('tags'),
-				prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix'),
+				prefix: tagPrefixSchema,
 			}).fields,
 		)),
 		versionFiles: Schema.optional(mutableArray(versionFileSchema)),

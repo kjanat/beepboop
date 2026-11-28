@@ -24,3 +24,7 @@ export function verified(
 		}
 	}));
 }
+
+export function boundedToken(token: string | undefined): token is string {
+	return !!token && token.length <= 20_000;
+}

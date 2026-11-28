@@ -3,6 +3,7 @@ import type { InputDeclaration, OutputDeclaration, Platform } from '@/domain/out
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { sha256DigestPattern } from '@/kernel/schema/ids.ts';
+import { expiresAfter } from '@/kernel/schema/timestamp.ts';
 import type { Artifact, Execution } from '@/release/domain/execution/types.ts';
 
 export interface ResolvedInput extends InputDeclaration {
@@ -46,7 +47,7 @@ export function resolveInputs(
 			if (
 				!declaration || artifacts.length !== 1 || !artifact || artifact.runId !== producer.runId
 				|| !sha256DigestPattern.test(artifact.digest)
-				|| !(Date.parse(artifact.expiresAt) > (now ?? clock.currentTimeMillisUnsafe()))
+				|| !expiresAfter(artifact.expiresAt, now ?? clock.currentTimeMillisUnsafe())
 			) {
 				return Effect.fail(precondition(`Output is unavailable: ${input.operation}/${input.output}`));
 			}

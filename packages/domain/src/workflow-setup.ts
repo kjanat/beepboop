@@ -1,6 +1,6 @@
 import { Effect, Schema, Struct } from 'effect';
 import { binaries } from '@/domain/binary-platforms.ts';
-import { tagPrefixPattern, validTagPrefix, workflowFilePattern } from '@/domain/catalog.ts';
+import { refPattern, tagPrefixPattern, validRef, validTagPrefix, workflowFilePattern } from '@/domain/catalog.ts';
 import { existingTriggers, existingTriggersDescription, triggersOfExistingTriggers } from '@/domain/setup-terms.ts';
 import { credentialAliasPattern, githubSecretNamePattern } from '@/kernel/schema/ids.ts';
 import type { Decoded, Encoded } from '@/kernel/schema/structs.ts';
@@ -12,6 +12,17 @@ import {
 	refined,
 	strictStruct,
 } from '@/kernel/schema/structs.ts';
+
+export const tagPrefixSchema = refined(
+	Schema.String.check(matchesPattern(tagPrefixPattern)),
+	validTagPrefix,
+	'Invalid tag prefix',
+);
+export const workflowRefSchema = refined(
+	Schema.String.check(matchesPattern(refPattern, { message: 'Invalid workflow ref' })),
+	validRef,
+	'Invalid workflow ref',
+);
 
 export const workflowTriggers = ['review', 'dispatchOnly', 'preserve'] as const;
 const workflow = strictStruct(
@@ -31,7 +42,7 @@ const workflow = strictStruct(
 		),
 		/** Prefix of the version tag the publication workflow pushes, such as `v` or `cli-v`. */
 		tagPrefix: Schema.optional(
-			refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix'),
+			tagPrefixSchema,
 		),
 		binaries: Schema.optional(binaries),
 	}).fields,

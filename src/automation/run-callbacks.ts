@@ -13,6 +13,7 @@ import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { sha256DigestPattern } from '@/kernel/schema/ids.ts';
+import { expiresAfter } from '@/kernel/schema/timestamp.ts';
 import type { Publication } from '@/publication/publication.ts';
 import {
 	dependenciesReady,
@@ -168,7 +169,7 @@ export class RunCallbacks extends Context.Service<RunCallbacks, {
 					const now = yield* Clock.currentTimeMillis;
 					for (const artifact of artifacts) {
 						if (artifact.runId !== identity.runId) return yield* precondition('Artifact producer mismatch');
-						if (!sha256DigestPattern.test(artifact.digest) || !(Date.parse(artifact.expiresAt) > now)) {
+						if (!sha256DigestPattern.test(artifact.digest) || !expiresAfter(artifact.expiresAt, now)) {
 							return yield* precondition('Artifact has no usable digest or has expired');
 						}
 					}

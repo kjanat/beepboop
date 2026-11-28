@@ -6,13 +6,13 @@ import { repositoryNamePattern } from '@/domain/repository-name.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { decodeRequest } from '@/kernel/errors/domain-error.ts';
-import { githubSecretNamePattern } from '@/kernel/schema/ids.ts';
+import { credentialAliasPattern, githubSecretNamePattern } from '@/kernel/schema/ids.ts';
 import { textSchema } from '@/kernel/schema/result.ts';
 import { decodeSync, encodeSync, matchesPattern, mutableStruct } from '@/kernel/schema/structs.ts';
 
 const grantFields = {
 	id: textSchema,
-	alias: Schema.String.check(matchesPattern(/^[\w-]+$/)),
+	alias: Schema.String.check(matchesPattern(credentialAliasPattern)),
 	repositoryId: Schema.Finite.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
 	repository: Schema.String.check(matchesPattern(repositoryNamePattern)),
 	operation: textSchema,

@@ -1,7 +1,7 @@
 import { Clock, Effect } from 'effect';
 import { cliSubject } from '@/auth/cli-sessions.ts';
 import { accessCookie, cookie } from '@/auth/cookies.ts';
-import { verified } from '@/auth/jwt.ts';
+import { boundedToken, verified } from '@/auth/jwt.ts';
 import type { AuthBindings, AuthenticationDependencies } from '@/auth/service.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { forbidden, unauthenticated } from '@/kernel/errors/domain-error.ts';
@@ -16,7 +16,7 @@ export function administrator(
 	return Effect.gen(function*() {
 		if (request.headers.has('authorization')) return yield* cliSubject(request, env, dependencies.cliSessions);
 		const token = cookie(request, accessCookie);
-		if (!token || token.length > 20000) return yield* unauthenticated('Administrator login required');
+		if (!boundedToken(token)) return yield* unauthenticated('Administrator login required');
 		const now = yield* Clock.currentTimeMillis;
 		const { claims: payload } = yield* verified(token, {
 			key: dependencies.administratorKeys,

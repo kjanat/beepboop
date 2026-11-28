@@ -7,9 +7,10 @@ import { identityOf, packageId } from '@/domain/package-identity.ts';
 import type { RefPlan, RefState } from '@/domain/refs.ts';
 import { gateSkip } from '@/domain/release-gates.ts';
 import { startChannel } from '@/domain/release-start.ts';
-import { autoMergeMethods, versionPrMerge } from '@/domain/setup-terms.ts';
+import { autoMergeMethods, preparationResultFields, versionPrMerge } from '@/domain/setup-terms.ts';
 import { stringsSchema as strings } from '@/kernel/schema/result.ts';
 import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import { timestamp } from '@/kernel/schema/timestamp.ts';
 import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
 import { identity, managerName, pkg, shas } from '@/persistence/codecs/v1';
 import type { Publication } from '@/publication/publication.ts';
@@ -76,7 +77,7 @@ const packagePublication: Schema.Codec<Publication, unknown> = Schema.Union([
 		...publicationFields.fields,
 		...{
 			outcome: Schema.Literal('rate-limited'),
-			retryAfter: Schema.String.check(Schema.makeFilter(value => Number.isFinite(Date.parse(value)))),
+			retryAfter: timestamp,
 		},
 	}),
 ]);
@@ -133,9 +134,7 @@ export const refPlanSchema: Schema.Codec<RefPlan, unknown> = mutableStruct({
 });
 const autoMergeMethod = Schema.Literals(autoMergeMethods);
 export const preparationResultSchema = mutableStruct({
-	url: Schema.String,
-	head: Schema.String,
-	kind: Schema.optional(Schema.Literal('commit')),
+	...preparationResultFields,
 	autoMerge: Schema.optional(Schema.Union([
 		mutableStruct({ method: autoMergeMethod, state: Schema.Literal('enabled') }),
 		mutableStruct({ method: autoMergeMethod, state: Schema.Literal('refused'), note: Schema.String }),

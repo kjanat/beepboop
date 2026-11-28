@@ -1,5 +1,6 @@
 import { Clock, Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
+import { distributionPathProblem } from '@/domain/distribution-validation.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import type { DistributionEvidence } from '@/domain/refs.ts';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
@@ -106,22 +107,11 @@ export function readDistributionFile(
 	});
 }
 
-function safePath(path: string): boolean {
-	return path.length > 0 && !path.startsWith('/') && !path.includes('\\')
-		&& !path.split('/').some(part => !part || part === '.' || part === '..' || part.toLowerCase() === '.git')
-		&& path.toLowerCase() !== '.github' && path.toLowerCase() !== '.github/workflows'
-		&& !path.toLowerCase().startsWith('.github/workflows/');
-}
-
 function validateFiles(paths: readonly string[], files: readonly DistributionFile[]): Effect.Effect<void, DomainError> {
 	return Effect.gen(function*() {
 		const permitted = new Set(paths);
-		if (permitted.size === 0 || permitted.size !== paths.length || paths.some(path => !safePath(path))) {
-			return yield* precondition('Distribution paths must be unique exact file paths outside Git and workflows');
-		}
-		if (paths.some(path => paths.some(other => other !== path && path.startsWith(`${other}/`)))) {
-			return yield* precondition('Distribution paths must name files rather than overlapping directories');
-		}
+		const problem = distributionPathProblem(paths);
+		if (problem) return yield* precondition(problem);
 		const incoming = new Set(files.map(file => file.path));
 		if (
 			incoming.size !== files.length || incoming.size !== permitted.size

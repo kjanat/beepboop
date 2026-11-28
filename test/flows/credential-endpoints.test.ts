@@ -1,6 +1,5 @@
 import { expect, test } from 'bun:test';
 import { runAction } from '@root/test/support/actions.ts';
-import { discoveredWidget } from '@root/test/support/client.ts';
 import type { Reply } from '@root/test/support/http.ts';
 import { bearer } from '@root/test/support/http.ts';
 import { editableConfiguration, widget } from '@root/test/support/repositories.ts';
@@ -20,16 +19,25 @@ function refusal(response: Reply): [number, string] {
 	return [response.status, decodeSync(errorEnvelope, response.body).error];
 }
 
-test('credential endpoints refuse unknown names and grants and serve a stored value', async () => {
-	const repository = await discoveredWidget(world, await world.cliSession());
+test('credential endpoints refuse unknown names and grants and serve a namespaced alias', async () => {
+	const repository = widget(world.github);
+	const configuration = editableConfiguration();
+	world.npm.publish('widget', '1.0.0');
+	world.github.push(repository, {
+		'.github/beepboop.json': JSON.stringify({
+			...configuration,
+			streams: { main: { ...configuration.streams.main, credentials: ['github:user:beepboop-by-kjanat'] } },
+		}),
+	}, 'Configure namespaced credential');
 	const api = bearer(world, await world.cliSession());
+	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	const elevated = async (path: string, body: Record<string, unknown>) => {
 		await world.db.prepare('DELETE FROM sessions WHERE id=?').bind('proof').run();
 		await world.elevate();
 		return api(path, { ...body, proof: 'proof' });
 	};
 	const selection = {
-		alias: 'npm-token',
+		alias: 'github:user:beepboop-by-kjanat',
 		repositoryId: repository.id,
 		stream: 'main',
 		operation: 'promote',
@@ -37,8 +45,12 @@ test('credential endpoints refuse unknown names and grants and serve a stored va
 	};
 	const missing: [number, string] = [404, 'No stored value under this name'];
 
-	expect(refusal(await elevated('/api/credentials/reveal', { alias: 'npm-token' }))).toEqual(missing);
-	expect(refusal(await elevated('/api/credentials/sync', { alias: 'npm-token' }))).toEqual(missing);
+	expect(refusal(await elevated('/api/credentials/reveal', { alias: 'github:user:beepboop-by-kjanat' }))).toEqual(
+		missing,
+	);
+	expect(refusal(await elevated('/api/credentials/sync', { alias: 'github:user:beepboop-by-kjanat' }))).toEqual(
+		missing,
+	);
 	expect(refusal(await elevated('/api/credentials/grant', { selection }))).toEqual([
 		422,
 		'Store a value under this name before granting access',
@@ -48,26 +60,28 @@ test('credential endpoints refuse unknown names and grants and serve a stored va
 		.toEqual([404, 'Repository is not enrolled']);
 	expect(await world.db.prepare('SELECT id FROM sessions WHERE id=?').bind('proof').first()).toEqual({ id: 'proof' });
 
-	expect((await elevated('/api/credentials/replace', { alias: 'npm-token', value: 'secret' })).body).toEqual({
+	expect(
+		(await elevated('/api/credentials/replace', { alias: 'github:user:beepboop-by-kjanat', value: 'secret' })).body,
+	).toEqual({
 		version: 1,
 	});
 	expect(refusal(
 		await elevated('/api/credentials/replace', {
-			alias: 'npm-token',
+			alias: 'github:user:beepboop-by-kjanat',
 			value: 'newer',
 			expectedVersion: null,
 		}),
-	)).toEqual([409, 'npm-token changed since you checked it; review it again']);
-	expect((await elevated('/api/credentials/reveal', { alias: 'npm-token' })).body).toEqual({
+	)).toEqual([409, 'github:user:beepboop-by-kjanat changed since you checked it; review it again']);
+	expect((await elevated('/api/credentials/reveal', { alias: 'github:user:beepboop-by-kjanat' })).body).toEqual({
 		value: 'secret',
 		version: 1,
 	});
 	expect((await elevated('/api/credentials/grant', { selection })).body).toEqual({ granted: true });
-	expect((await elevated('/api/credentials/sync', { alias: 'npm-token' })).body).toEqual([]);
+	expect((await elevated('/api/credentials/sync', { alias: 'github:user:beepboop-by-kjanat' })).body).toEqual([]);
 	const listed = await api('/api/credentials');
 	expect(listed.body).toMatchObject({
-		credentials: [{ alias: 'npm-token', version: 1, active: 1 }],
-		grants: [{ alias: 'npm-token', repositoryId: repository.id, delivery: 'runtime' }],
+		credentials: [{ alias: 'github:user:beepboop-by-kjanat', version: 1, active: 1 }],
+		grants: [{ alias: 'github:user:beepboop-by-kjanat', repositoryId: repository.id, delivery: 'runtime' }],
 		deliveries: [],
 	});
 });

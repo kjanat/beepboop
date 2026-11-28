@@ -1,10 +1,9 @@
 import { Effect, Result, Schema } from 'effect';
 import { applyVersionFiles } from '@/discovery/editing/version-files.ts';
 import { isLockfile } from '@/domain/catalog.ts';
-import type { Edit, Inventory, Snapshot } from '@/domain/inventory.ts';
+import type { Edit, Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { inputSchema, nameSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { matchesPackage, selectorKey } from '@/domain/package-identity.ts';
-import { publishable } from '@/domain/package-publication.ts';
 import type { VersionFile } from '@/domain/version-files.ts';
 import { parseVersionRequest } from '@/domain/version-request.ts';
 import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
@@ -14,7 +13,8 @@ import { invalid } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, strictStruct } from '@/kernel/schema/structs.ts';
 import { fileEdits } from '@/release/domain/planning/editors.ts';
-import { planRelease, publicationOrder } from '@/release/domain/planning/managers.ts';
+import { planReleaseFiles, publicationOrder, selectedReleasePackages } from '@/release/domain/planning/managers.ts';
+import { resolvePackageVersion } from '@/release/domain/version.ts';
 
 const operation = strictStruct({
 	id: nameSchema,
@@ -82,6 +82,7 @@ export function planReleaseSet(
 		const request = yield* decodeRequest(releaseSetRequest, input);
 		const groups = new Map<string, { id: string; packages: string[]; version: string }>();
 		const selected = new Set<string>();
+		const groupPackages = new Map<string, Package[]>();
 		for (const group of request.groups) {
 			group.packages = group.packages.map(reference => selectorKey(reference, inventory.packages));
 			if (groups.has(group.id)) return yield* precondition(`Duplicate release group: ${group.id}`);
@@ -90,13 +91,12 @@ export function planReleaseSet(
 				if (allowed && !allowed.some(reference => selectorKey(reference, inventory.packages) === name)) {
 					return yield* precondition(`Package is outside this release stream: ${name}`);
 				}
-				if (!inventory.packages.some(p => publishable(p) && matchesPackage(name, p))) {
-					return yield* precondition(`Unknown publishable package: ${name}`);
-				}
 				selected.add(name);
 			}
-			const plan = yield* planRelease(snapshot, inventory, yield* parseVersionRequest(group.version), group.packages);
-			groups.set(group.id, { ...group, version: plan.version });
+			const packages = yield* selectedReleasePackages(inventory, group.packages);
+			const version = yield* resolvePackageVersion(packages, yield* parseVersionRequest(group.version));
+			groupPackages.set(group.id, packages);
+			groups.set(group.id, { ...group, version });
 		}
 		const operations = new Map<string, PlannedOperation>();
 		for (const op of request.operations) {
@@ -113,7 +113,9 @@ export function planReleaseSet(
 		const diagnostics = new Set<string>();
 		let requiresPreparation = false;
 		for (const group of [...groups.values()].sort((a, b) => a.id.localeCompare(b.id))) {
-			const plan = yield* planRelease({ ...snapshot, files }, inventory, group.version, group.packages);
+			const packages = groupPackages.get(group.id);
+			if (!packages) return yield* precondition(`Unknown release group: ${group.id}`);
+			const plan = yield* planReleaseFiles({ ...snapshot, files }, inventory, packages, group.version, true);
 			for (const edit of plan.edits) files[edit.path] = edit.after;
 			for (const diagnostic of plan.diagnostics) diagnostics.add(diagnostic);
 			requiresPreparation ||= plan.requiresPreparation;

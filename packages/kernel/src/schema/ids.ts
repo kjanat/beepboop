@@ -1,7 +1,10 @@
 export const shaPattern = /^[0-9a-f]{40}$/;
 export const approvalShaPattern = /^[0-9a-f]{7,40}$/;
 export const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/;
-export const credentialAliasPattern = /^[\w-]{1,64}$/;
+export const credentialAliasPattern = /^[\w:\x2d]{1,64}$/;
+export const credentialAliasDescription = 'Use 1\u201364 letters, digits, underscores, hyphens, or colons.';
+export const notificationDestinationIdPattern = /^[\w-]{1,64}$/;
+export const sha256HexPattern = /^[a-f0-9]{64}$/;
 export const githubSecretNamePattern = /^[A-Z_][A-Z0-9_]*$/;
 export const identifierPattern = /^[a-z][a-z0-9-]{0,63}$/;
 export const loginSecretPattern = /^[a-f0-9]{64}$/;

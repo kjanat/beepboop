@@ -762,7 +762,7 @@ test('distribution refs require signed immutable version publication in every co
 	const document = { streams: { main: { promote: { workflow: { file: 'publish.yml', refs: repeated } } } } };
 	const decoded = safeDecode(configurationSchema, document);
 	expect(decoded.success ? [] : schemaIssues(decoded.error).map(issueMessage)).toContain(
-		'streams.main.promote.workflow.refs.distribution.files: Distribution files must be a nonempty unique list',
+		'streams.main.promote.workflow.refs.distribution.files: Use distinct, non-overlapping repository-relative distribution file paths outside Git and workflows',
 	);
 });
 

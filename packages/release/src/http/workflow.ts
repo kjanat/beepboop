@@ -13,6 +13,7 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, decodeRequest, forbidden, precondition } from '@/kernel/errors/domain-error.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { mutableStruct } from '@/kernel/schema/structs.ts';
+import { timestamp } from '@/kernel/schema/timestamp.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { createExecution, dispatchedExecution } from '@/release/domain/execution/execution.ts';
 import type { Artifact, Execution } from '@/release/domain/execution/types.ts';
@@ -43,7 +44,7 @@ function publication(raw: unknown): Effect.Effect<Publication, DomainError> {
 			...common,
 			outcome,
 			retryAfter: yield* decodeRequest(
-				Schema.String.check(Schema.makeFilter(value => Number.isFinite(Date.parse(value)))),
+				timestamp,
 				retryAfter,
 			),
 		};
