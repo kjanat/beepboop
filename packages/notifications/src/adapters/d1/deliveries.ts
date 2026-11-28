@@ -1,8 +1,14 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
-import type { DeliveryOutcome, VersionChangedPayload } from '@/notifications/notification.ts';
+import type {
+	DeliveryFields,
+	DeliveryOutcome,
+	NotificationDelivery,
+	VersionChangedPayload,
+} from '@/notifications/notification.ts';
+import { versionChangedPayload } from '@/notifications/notification.ts';
 import type { Sql } from '@/persistence/d1/database';
 import { optionalColumn, parse } from '@/persistence/d1/database';
 
@@ -32,15 +38,34 @@ const delivery = Schema.Union([
 	mutableStruct({ ...fields, ...unclaimed, state: Schema.Literal('delivered'), error: Schema.Null }),
 	mutableStruct({ ...fields, ...unclaimed, state: Schema.Literal('failed'), error: Schema.String }),
 ]);
-export type DeliveryRow = Decoded<typeof delivery>;
+type DeliveryRow = Decoded<typeof delivery>;
 export type ClaimedDelivery = Decoded<typeof claimed>;
+
+function notificationDelivery(row: DeliveryRow): NotificationDelivery {
+	const decoded = Result.try((): unknown => JSON.parse(row.document)).pipe(
+		Result.flatMap(Schema.decodeUnknownResult(versionChangedPayload)),
+	);
+	const fields: DeliveryFields = {
+		id: row.id,
+		eventId: row.event_id,
+		destinationId: row.destination_id,
+		payload: Result.getOrNull(decoded),
+		...(Result.isFailure(decoded) ? { payloadError: 'Invalid notification payload' } : {}),
+		attempts: row.attempts,
+		updatedAt: row.updated_at,
+	};
+	if (row.state === 'delivered') return { ...fields, state: row.state };
+	if (row.state === 'failed') return { ...fields, state: row.state, error: row.error };
+	return { ...fields, state: row.state, ...(row.error === null ? {} : { error: row.error }) };
+}
 
 export class NotificationDeliveries {
 	constructor(private readonly sql: Sql) {}
 
-	recent(): Effect.Effect<DeliveryRow[], DomainError> {
+	recent(): Effect.Effect<NotificationDelivery[], DomainError> {
 		return this.sql.all('SELECT * FROM notification_deliveries ORDER BY updated_at DESC LIMIT 50').pipe(
 			Effect.flatMap(rows => parse(mutableArray(delivery), rows)),
+			Effect.map(rows => rows.map(notificationDelivery)),
 		);
 	}
 

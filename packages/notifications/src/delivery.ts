@@ -1,23 +1,19 @@
-import { Clock, Effect, Result } from 'effect';
+import { Clock, Effect } from 'effect';
 import type { Vault } from '@/credentials/vault.ts';
 import type { WatchedRegistry } from '@/domain/catalog.ts';
-import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
 import { platformFetch } from '@/kernel/http/fetcher.ts';
-import { decodeSync } from '@/kernel/schema/structs.ts';
 import { NotificationDeliveries } from '@/notifications/adapters/d1/deliveries.ts';
 import { NotificationDestinations } from '@/notifications/adapters/d1/destinations.ts';
 import type { DestinationInput } from '@/notifications/contract.ts';
 import type {
-	DeliveryFields,
 	NotificationDelivery,
 	NotificationDestination,
 	NotificationSubscription,
 	VersionChangedPayload,
 } from '@/notifications/notification.ts';
-import { versionChangedPayload } from '@/notifications/notification.ts';
 import type { Sender } from '@/notifications/send.ts';
 import { send } from '@/notifications/send.ts';
 import { AuditStore } from '@/persistence/d1/audit';
@@ -43,27 +39,7 @@ export class Notifications {
 		return this.destinationStore.subscriptions();
 	}
 	recent(): Effect.Effect<NotificationDelivery[], DomainError> {
-		return this.deliveries.recent().pipe(
-			Effect.flatMap(rows =>
-				fromSync(() =>
-					rows.map((row): NotificationDelivery => {
-						const decoded = Result.try(() => decodeSync(versionChangedPayload, JSON.parse(row.document)));
-						const fields: DeliveryFields = {
-							id: row.id,
-							eventId: row.event_id,
-							destinationId: row.destination_id,
-							payload: Result.isSuccess(decoded) ? decoded.success : null,
-							...(Result.isFailure(decoded) ? { payloadError: 'Invalid notification payload' } : {}),
-							attempts: row.attempts,
-							updatedAt: row.updated_at,
-						};
-						if (row.state === 'delivered') return { ...fields, state: row.state };
-						if (row.state === 'failed') return { ...fields, state: row.state, error: row.error };
-						return { ...fields, state: row.state, ...(row.error === null ? {} : { error: row.error }) };
-					})
-				)
-			),
-		);
+		return this.deliveries.recent();
 	}
 	saveDestination(input: DestinationInput, actor: string): Effect.Effect<string, DomainError> {
 		return Effect.gen({ self: this }, function*() {

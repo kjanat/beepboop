@@ -4,6 +4,7 @@ import { watchedRegistries } from '@/domain/catalog.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import type { WatchState } from '@/notifications/package-watch.ts';
 import type { Sql } from '@/persistence/d1/database';
 import { parse } from '@/persistence/d1/database';
 
@@ -17,14 +18,27 @@ const watchedRow = mutableStruct({
 	error: Schema.NullOr(Schema.String),
 	awaiting_release: Schema.Finite,
 });
-export type WatchedRow = Decoded<typeof watchedRow>;
+
+function watchState(row: Decoded<typeof watchedRow>): WatchState {
+	return {
+		registry: row.registry,
+		name: row.name,
+		manual: row.manual === 1,
+		...(row.version === null ? {} : { version: row.version }),
+		...(row.checked_at === null ? {} : { checkedAt: row.checked_at }),
+		...(row.changed_at === null ? {} : { changedAt: row.changed_at }),
+		...(row.error === null ? {} : { error: row.error }),
+		awaitingRelease: row.awaiting_release === 1,
+	};
+}
 
 export class WatchedPackages {
 	constructor(private readonly sql: Sql) {}
 
-	list(): Effect.Effect<WatchedRow[], DomainError> {
+	list(): Effect.Effect<WatchState[], DomainError> {
 		return this.sql.all('SELECT * FROM watched_packages ORDER BY registry, name').pipe(
 			Effect.flatMap(rows => parse(mutableArray(watchedRow), rows)),
+			Effect.map(rows => rows.map(watchState)),
 		);
 	}
 

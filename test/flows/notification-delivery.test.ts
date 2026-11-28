@@ -48,6 +48,10 @@ async function staged(
 	return { notifications, destination, id: delivery.id, deliveries: new NotificationDeliveries(sql(world.db)) };
 }
 
+function lease(id: string) {
+	return world.db.execute('SELECT lease, lease_until FROM notification_deliveries WHERE id=?', [id]).rows[0];
+}
+
 test('overlapping delivery passes send an item only once while its owner is sending', async () => {
 	const entered = Promise.withResolvers<void>();
 	const resume = Promise.withResolvers<void>();
@@ -79,16 +83,14 @@ test('an abandoned claim expires, and the old owner cannot settle the new attemp
 	expect(second.lease).not.toBe(first.lease);
 	expect(second.attempts).toBe(2);
 	await world.run(deliveries.settle(first, { state: 'failed', error: 'Late failure' }));
-	expect((await world.run(deliveries.recent()))[0]).toEqual(second);
+	expect((await world.run(deliveries.recent()))[0]).toMatchObject({ id, state: 'sending', attempts: 2 });
+	expect(lease(id)).toEqual({ lease: second.lease, lease_until: second.lease_until });
 	await world.run(deliveries.settle(second, { state: 'delivered' }));
 	await world.run(deliveries.settle(first, { state: 'pending', error: 'Late retry' }));
-	expect((await world.run(deliveries.recent()))[0]).toMatchObject({
-		state: 'delivered',
-		attempts: 2,
-		error: null,
-		lease: null,
-		lease_until: null,
-	});
+	const [settled] = await world.run(deliveries.recent());
+	expect(settled).toMatchObject({ state: 'delivered', attempts: 2 });
+	expect(settled).not.toHaveProperty('error');
+	expect(lease(id)).toEqual({ lease: null, lease_until: null });
 });
 
 test('five abandoned attempts exhaust the delivery without a sixth send', async () => {
@@ -103,7 +105,8 @@ test('five abandoned attempts exhaust the delivery without a sixth send', async 
 	}
 	await world.run(notifications.deliver());
 	expect(sends).toBe(0);
-	expect((await world.run(deliveries.recent()))[0]).toMatchObject({ state: 'failed', attempts: 5, lease: null });
+	expect((await world.run(deliveries.recent()))[0]).toMatchObject({ state: 'failed', attempts: 5 });
+	expect(lease(id)).toEqual({ lease: null, lease_until: null });
 });
 
 test('destination removal invalidates an in-flight claim', async () => {
@@ -112,18 +115,15 @@ test('destination removal invalidates an in-flight claim', async () => {
 	if (!claim) throw new Error('Expected claim');
 	await world.run(notifications.removeDestination(destination, 'admin'));
 	await world.run(deliveries.settle(claim, { state: 'delivered' }));
-	expect((await world.run(deliveries.recent()))[0]).toMatchObject({
-		state: 'failed',
-		error: 'Destination removed',
-		lease: null,
-	});
+	expect((await world.run(deliveries.recent()))[0]).toMatchObject({ state: 'failed', error: 'Destination removed' });
+	expect(lease(id)).toEqual({ lease: null, lease_until: null });
 });
 
 test('destination removal during secret retrieval prevents a request from starting', async () => {
 	const entered = Promise.withResolvers<void>();
 	const resume = Promise.withResolvers<void>();
 	let sends = 0;
-	const { notifications, destination, deliveries } = await staged(
+	const { notifications, destination, deliveries, id } = await staged(
 		async () => {
 			sends++;
 			return new Response(null, { status: 204 });
@@ -144,8 +144,8 @@ test('destination removal during secret retrieval prevents a request from starti
 		state: 'failed',
 		error: 'Destination removed',
 		attempts: 1,
-		lease: null,
 	});
+	expect(lease(id)).toEqual({ lease: null, lease_until: null });
 });
 
 test('retryable responses exhaust their budget and malformed payloads fail without sending', async () => {

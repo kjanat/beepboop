@@ -18,7 +18,9 @@ import type { LookupOutcome } from '@/publication/registries/outcome.ts';
 import { VerificationOutcome } from '@/publication/registries/outcome.ts';
 import type { AutomationEvent } from '@/release/domain/execution/types.ts';
 
-export interface PackageWatch extends WatchedPackage {
+export interface WatchState {
+	registry: WatchedRegistry;
+	name: string;
 	manual: boolean;
 	version?: string;
 	checkedAt?: number;
@@ -26,6 +28,7 @@ export interface PackageWatch extends WatchedPackage {
 	error?: string;
 	awaitingRelease: boolean;
 }
+export type PackageWatch = WatchedPackage & WatchState;
 
 const lookups: Record<WatchedRegistry, (name: string, request: Fetcher) => Effect.Effect<LookupOutcome>> = {
 	npm: npmLatest,
@@ -42,22 +45,15 @@ export function packageWatches(
 ): Effect.Effect<PackageWatch[], DomainError> {
 	return Effect.gen(function*() {
 		const listed = new Map(watchlist(repositories).map(entry => [key(entry.registry, entry.name), entry]));
-		const rows = yield* new WatchedPackages(sql(db)).list();
+		const states = yield* new WatchedPackages(sql(db)).list();
 		const watches = new Map<string, PackageWatch>();
-		for (const row of rows) {
-			const entry = listed.get(key(row.registry, row.name));
-			if (!entry && row.manual !== 1) continue;
-			watches.set(key(row.registry, row.name), {
-				registry: row.registry,
-				name: row.name,
+		for (const state of states) {
+			const entry = listed.get(key(state.registry, state.name));
+			if (!entry && !state.manual) continue;
+			watches.set(key(state.registry, state.name), {
+				...state,
 				publishers: entry?.publishers ?? [],
 				dependents: entry?.dependents ?? [],
-				manual: row.manual === 1,
-				...(row.version === null ? {} : { version: row.version }),
-				...(row.checked_at === null ? {} : { checkedAt: row.checked_at }),
-				...(row.changed_at === null ? {} : { changedAt: row.changed_at }),
-				...(row.error === null ? {} : { error: row.error }),
-				awaitingRelease: row.awaiting_release === 1,
 			});
 		}
 		for (const [id, entry] of listed) {
