@@ -37,9 +37,7 @@ interface GateOutcome {
 	state: 'passed' | 'waiting' | 'failed';
 	fact: string;
 	detail?: string;
-	runId?: number;
-	runDone?: boolean;
-	runAttempt?: number;
+	run?: { id: number; done: boolean; attempt?: number };
 }
 interface CommitGates {
 	manifest: string[];
@@ -178,8 +176,15 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 					const rerunning = failed && requested !== undefined
 						&& (!runDone || (workflowRun?.run_attempt ?? requested.attempt) < requested.attempt);
 					outcomes.push({
-						...(runId ? { runId: Number(runId), runDone } : {}),
-						...(workflowRun ? { runAttempt: workflowRun.run_attempt } : {}),
+						...(runId
+							? {
+								run: {
+									id: Number(runId),
+									done: runDone,
+									...(workflowRun ? { attempt: workflowRun.run_attempt } : {}),
+								},
+							}
+							: {}),
 						gate: { kind: 'check', name: String(run.name) },
 						state: run.status !== 'completed' || rerunning ? 'waiting' : failed ? 'failed' : 'passed',
 						fact: rerunning ? 'rerunning' : run.status === 'completed' ? conclusion : 'running',
@@ -481,7 +486,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 					const skipOf = (gate: ReleaseGate) => skips.find(skip => sameGate(skip.gate, gate));
 					const gates: GateView[] = merged.map(outcome => {
 						const skip = skipOf(outcome.gate);
-						const { runId: _runId, runDone: _runDone, ...shown } = outcome;
+						const { run: _run, ...shown } = outcome;
 						return { ...shown, ...(skip ? { skipped: { actor: skip.actor, at: skip.at } } : {}) };
 					});
 					for (const skip of skips) {
@@ -534,9 +539,9 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 					if (choice === 'rerun') {
 						const runs = new Map(
 							outcomes.flatMap(outcome =>
-								outcome.state === 'failed' && outcome.runId !== undefined && outcome.runDone === true
+								outcome.state === 'failed' && outcome.run?.done === true
 									&& stopping.some(entry => sameGate(entry.gate, outcome.gate))
-									? [[outcome.runId, (outcome.runAttempt ?? 1) + 1] as const]
+									? [[outcome.run.id, (outcome.run.attempt ?? 1) + 1] as const]
 									: []
 							),
 						);
