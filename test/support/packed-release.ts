@@ -16,7 +16,7 @@ import { filesAt } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
 import type { Exchange } from '@root/test/support/network.ts';
-import { approvePromotion, prepareRelease } from '@root/test/support/releases.ts';
+import { approveRelease, prepareRelease } from '@root/test/support/releases.ts';
 import { jsonFile, passChecks, widget, widgetConfiguration } from '@root/test/support/repositories.ts';
 import type { SigningKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -70,7 +70,7 @@ export interface PackedSigning {
 
 export interface PackedRelease {
 	repository: Repository;
-	promotionId: string;
+	releaseExecutionId: string;
 	plan: PackedRefPlan;
 	tags: Record<string, string>;
 	refsCompletion: Exchange[];
@@ -78,7 +78,7 @@ export interface PackedRelease {
 
 export async function packedRelease(
 	world: World,
-	beforeRefs?: (promotionId: string) => Promise<void>,
+	beforeRefs?: (releaseExecutionId: string) => Promise<void>,
 	signing?: PackedSigning,
 	githubRelease = false,
 	companionModule?: string,
@@ -93,15 +93,15 @@ export async function packedRelease(
 			streams: looseStruct({
 				main: looseStruct({
 					prepare: looseStruct({}),
-					promote: looseStruct({ workflow: looseStruct({ publications: mutableArray(Schema.String) }) }),
+					release: looseStruct({ workflow: looseStruct({ publications: mutableArray(Schema.String) }) }),
 				}),
 			}),
 		}),
 		JSON.parse(widgetConfiguration()),
 	);
 	configuration.streams.main.prepare = { workflow: { file: 'prepare.yml' } };
-	if (githubRelease) configuration.streams.main.promote.workflow.publications.push('github-release:octo/widget');
-	configuration.streams.main.promote.workflow.refs = {
+	if (githubRelease) configuration.streams.main.release.workflow.publications.push('github-release:octo/widget');
+	configuration.streams.main.release.workflow.refs = {
 		phase: 'version',
 		prefix: 'v',
 		aliases: [],
@@ -119,10 +119,10 @@ export async function packedRelease(
 				mustPublish: [`pkg:golang/${companionModule}`],
 				companionModules: [],
 				versionSource: { kind: 'tags', prefix: 'go/v' },
-				promote: {
-					...configuration.streams.main.promote,
+				release: {
+					...configuration.streams.main.release,
 					workflow: {
-						...configuration.streams.main.promote.workflow,
+						...configuration.streams.main.release.workflow,
 						publications: [],
 						refs: { phase: 'version', prefix: 'go/v', aliases: [], signed: false },
 					},
@@ -193,20 +193,20 @@ export async function packedRelease(
 		passChecks(repository, released);
 		if ((await world.push(repository)).status !== 202) throw new Error('Push was refused');
 		await world.wait(1_000);
-		const { promotion, approved } = await approvePromotion(api, released);
-		const promotionId = promotion.id;
-		if (promotion.sourceSha !== released) throw new Error('Promotion source is not the packed checkout');
-		if (text(approved.body, 'state') !== 'ready') throw new Error('Promotion stayed blocked');
+		const { releaseExecution, approved } = await approveRelease(api, released);
+		const releaseExecutionId = releaseExecution.id;
+		if (releaseExecution.sourceSha !== released) throw new Error('Release source is not the packed checkout');
+		if (text(approved.body, 'state') !== 'ready') throw new Error('Release stayed blocked');
 		await world.wait(16_000);
-		const promoteRun = one(
+		const releaseWorkflowRun = one(
 			repository.runs.filter(run => run.path === '.github/workflows/publish.yml'),
-			'promote run',
+			'release run',
 		);
-		promoteRun.status = 'in_progress';
-		const promoteIdentity = runIdentity(repository, promoteRun, 'publish.yml');
-		await begin(world, promoteIdentity, promotionId, 'main', 'promote');
-		if (beforeRefs) await beforeRefs(promotionId);
-		const planned = await runAction(world, 'refs-plan', promoteIdentity, { EXECUTION_ID: promotionId });
+		releaseWorkflowRun.status = 'in_progress';
+		const releaseRunIdentity = runIdentity(repository, releaseWorkflowRun, 'publish.yml');
+		await begin(world, releaseRunIdentity, releaseExecutionId, 'main', 'release');
+		if (beforeRefs) await beforeRefs(releaseExecutionId);
+		const planned = await runAction(world, 'refs-plan', releaseRunIdentity, { EXECUTION_ID: releaseExecutionId });
 		const planBody = decodeSync(refPlan, JSON.parse(planned.outputs.result ?? ''));
 		const local = signing && !signing.signer ? signing.key : undefined;
 		writeFileSync(
@@ -241,24 +241,24 @@ export async function packedRelease(
 		}
 		if (readdirSync(refsTemp).length) throw new Error('The refs runtime left files in RUNNER_TEMP');
 		const refsCompletionStart = world.network.mark();
-		await runAction(world, 'refs-complete', promoteIdentity, {
-			EXECUTION_ID: promotionId,
+		await runAction(world, 'refs-complete', releaseRunIdentity, {
+			EXECUTION_ID: releaseExecutionId,
 			VERSION_TAG: actionOutputs(output)['version-tag'] ?? '',
 		});
 		const refsCompletion = world.network.since(refsCompletionStart);
-		if (githubRelease) await runAction(world, 'release', promoteIdentity, { EXECUTION_ID: promotionId });
+		if (githubRelease) await runAction(world, 'release', releaseRunIdentity, { EXECUTION_ID: releaseExecutionId });
 		world.npm.publish('widget', '1.1.0');
-		await runAction(world, 'report', promoteIdentity, {
-			EXECUTION_ID: promotionId,
+		await runAction(world, 'report', releaseRunIdentity, {
+			EXECUTION_ID: releaseExecutionId,
 			PUBLICATIONS: JSON.stringify([
 				{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome: 'succeeded' },
 			]),
 		});
-		promoteRun.status = 'completed';
-		promoteRun.conclusion = 'success';
-		await world.workflowRun(repository, promoteRun, 'success', 'workflow_dispatch');
+		releaseWorkflowRun.status = 'completed';
+		releaseWorkflowRun.conclusion = 'success';
+		await world.workflowRun(repository, releaseWorkflowRun, 'success', 'workflow_dispatch');
 		await world.wait(2_000);
-		return { repository, promotionId, plan: planBody, tags, refsCompletion };
+		return { repository, releaseExecutionId, plan: planBody, tags, refsCompletion };
 	} finally {
 		rmSync(checkout.dir, { recursive: true, force: true });
 		rmSync(scratch, { recursive: true, force: true });

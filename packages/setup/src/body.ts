@@ -61,7 +61,7 @@ function noteMarkdown(plan: SetupPlan, note: string): string {
 		: mentionFree(note);
 }
 function fixedStream(stream: SetupChoices['streams'][number]): string | undefined {
-	if (!stream.promote) {
+	if (!stream.release) {
 		if (stream.observe?.some(entry => entry.publications.length)) {
 			return `Beepboop observes the existing publishing workflows for \`${stream.name}\`. Their own triggers start releases.`;
 		}
@@ -131,7 +131,7 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 				: []
 		);
 		if (!builds.length) return [];
-		const release = plan.choices.streams.find(entry => entry.name === stream)?.promote?.binaries;
+		const release = plan.choices.streams.find(entry => entry.name === stream)?.release?.binaries;
 		const failing = (target: BinaryTarget) =>
 			(release?.builds ?? []).flatMap(build => failsOn(plan.binaryCandidates, build, target) ? [build.name] : []);
 		const targets = own.flatMap(option => {
@@ -158,7 +158,7 @@ export function setupBody(plan: SetupPlan, context: SetupBodyContext): string {
 			`  - \`versionScope: ${versionScopeNames[stream.versioning]}\`: ${versionScopeSentences[stream.versioning]}`,
 			`  - Preparation: ${workflow(stream.prepare)}`,
 			`  - Publication: ${
-				stream.promote ? workflow(stream.promote) : stream.observe?.some(entry => entry.publications.length)
+				stream.release ? workflow(stream.release) : stream.observe?.some(entry => entry.publications.length)
 					? [...new Set(stream.observe.filter(entry => entry.publications.length).map(entry => entry.file))].map(file =>
 						`observes \`${file}\``
 					).join(

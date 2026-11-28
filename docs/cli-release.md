@@ -15,7 +15,7 @@ release:
   environment. Until npm trusts the workflow, the `cli` stream's granted
   `npm-token` credential authenticates the publication.
 - Store a JSR access token as `jsr-token`. Beepboop creates `@kjanat/beepboop`
-  on JSR and links it to `kjanat/beepboop` when a promotion starts. GitHub OIDC
+  on JSR and links it to `kjanat/beepboop` when a release starts. GitHub OIDC
   supplies publishing credentials.
 - Deploy this revision through the existing Cloudflare Builds path, then refresh
   the enrolled repository's inspection so it reads the `cli` stream and JSR
@@ -51,9 +51,9 @@ files. The dashboard flow below remains available.
    both manifest edits, installs dependencies, runs checks and package smoke
    tests, and submits the resulting files through `actions/prepare` for a PR.
 3. Review and merge the PR. Beepboop detects the prepared package versions on
-   the default-branch push and creates the promotion. Inspect it with
+   the default-branch push and creates the release. Inspect it with
    `beepboop runs list` (or `bun run beepboop runs list` without linking), then
-   publish that promotion in Beepboop. Publishing checks the exact merged
+   publish that release in Beepboop. Publishing checks the exact merged
    commit's signature and CI results.
 4. Beepboop dispatches `publish-cli.yml`. `actions/begin` authenticates the
    execution, then the workflow checks out its reviewed source SHA and checks

@@ -35,7 +35,7 @@ async function managed(): Promise<{ repository: Repository; canonical: string }>
 			packages: ['pkg:cargo/tool'],
 			required: ['pkg:cargo/tool'],
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file: 'release.yml',
 				job: 'publish',
 				triggers: 'review',
@@ -139,7 +139,7 @@ test('a repository without the configuration file releases when its workflows ru
 				credentials: Schema.Unknown,
 				packageTags: Schema.Unknown,
 				versioning: Schema.String,
-				promote: mutableStruct({
+				release: mutableStruct({
 					approval: Schema.String,
 					workflow: mutableStruct({ file: Schema.String, publications: Schema.Unknown, refs: Schema.Unknown }),
 				}),
@@ -547,7 +547,7 @@ test('canonical configuration rewrites manager:name references of discovered pac
 				packageTags: ['cargo:tool'],
 				companionModules: ['cargo:lib'],
 				needs: { 'cargo:tool': ['cargo:lib'] },
-				promote: { workflow: binding(['cargo:tool', 'github-release:octo/tool']) },
+				release: { workflow: binding(['cargo:tool', 'github-release:octo/tool']) },
 				workflows: { docs: binding(['cargo:lib']) },
 			},
 		},
@@ -561,7 +561,7 @@ test('canonical configuration rewrites manager:name references of discovered pac
 				packageTags: ['pkg:cargo/tool'],
 				companionModules: ['pkg:cargo/lib'],
 				needs: { 'pkg:cargo/tool': ['pkg:cargo/lib'] },
-				promote: { workflow: binding(['pkg:cargo/tool', 'github-release:octo/tool']) },
+				release: { workflow: binding(['pkg:cargo/tool', 'github-release:octo/tool']) },
 				workflows: { docs: binding(['pkg:cargo/lib']) },
 			},
 		},

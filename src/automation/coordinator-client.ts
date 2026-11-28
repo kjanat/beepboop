@@ -74,7 +74,7 @@ export interface CoordinatorRpc {
 	): Promise<unknown>;
 	preparationVersions(stream: string): Promise<unknown>;
 	preparationResults(stream: string, version: string): Promise<unknown>;
-	promotions(stream: string, version: string): Promise<unknown>;
+	releaseExecutions(stream: string, version: string): Promise<unknown>;
 	reclaimable(
 		repositoryId: number,
 		stream: string,
@@ -214,7 +214,7 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 		stream: string,
 		version: string,
 	) => Effect.Effect<PreparedRelease[], DomainError>;
-	readonly promotions: (
+	readonly releaseExecutions: (
 		repositoryId: number,
 		stream: string,
 		version: string,
@@ -332,8 +332,8 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 				call(strings, repositoryId, rpc => rpc.preparationVersions(stream)),
 			preparationResults: (repositoryId, stream, version) =>
 				call(mutableArray(preparedReleaseSchema), repositoryId, rpc => rpc.preparationResults(stream, version)),
-			promotions: (repositoryId, stream, version) =>
-				call(executions, repositoryId, rpc => rpc.promotions(stream, version)),
+			releaseExecutions: (repositoryId, stream, version) =>
+				call(executions, repositoryId, rpc => rpc.releaseExecutions(stream, version)),
 			reclaimable: (repositoryId, stream, version, primary, conflicts, restartId) =>
 				call(
 					refStatesSchema,

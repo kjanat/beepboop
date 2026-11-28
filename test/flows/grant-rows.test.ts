@@ -11,7 +11,7 @@ const fields = {
 	alias: 'npm-token',
 	repositoryId: 42,
 	repository: 'octo/widget',
-	operation: 'promote',
+	operation: 'release',
 	workflow: 'release.yml',
 	ref: 'refs/heads/main',
 };
@@ -78,7 +78,7 @@ test('an encoded grant lists its keys in the stored order whatever order the req
 		delivery: 'environment',
 		ref: 'refs/heads/main',
 		workflow: 'release.yml',
-		operation: 'promote',
+		operation: 'release',
 		repository: 'octo/widget',
 		repositoryId: 42,
 		alias: 'npm-token',

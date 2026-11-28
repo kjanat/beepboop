@@ -121,7 +121,7 @@ export function suggested(
 			const { file: _file, ...input } = before;
 			return input;
 		};
-		const choose = (operation: 'prepare' | 'promote'): SetupWorkflow | undefined => {
+		const choose = (operation: 'prepare' | 'release'): SetupWorkflow | undefined => {
 			const binding = object(object(current[operation]).workflow);
 			const input = typeof binding.file === 'string' ? generator(binding, previous?.[operation]) : undefined;
 			if (typeof binding.file === 'string' && input) {
@@ -178,7 +178,7 @@ export function suggested(
 		const companionModules = Array.isArray(current.companionModules)
 			? current.companionModules.map(value => selectorKey(String(value), inventory.packages))
 			: [];
-		const policy = object(object(object(current.promote).workflow).refs);
+		const policy = object(object(object(current.release).workflow).refs);
 		const distribution = object(policy.distribution);
 		const aliasPolicy = object(object(object(current.workflows).aliases).refs);
 		const actionRelease = actionReleaseOffer(snapshot) && policy.immutable === true && policy.signed === true
@@ -211,9 +211,9 @@ export function suggested(
 				? current.required.map(value => selectorKey(String(value), inventory.packages))
 				: selected.filter(id => requirablePackage(inventory.packages.find(pkg => packageId(pkg) === id))),
 			prepare: choose('prepare'),
-			promote: proposeBinaries(
-				choose('promote'),
-				safeDecode(workflowSetup, object(object(current.promote).workflow).setup).success
+			release: proposeBinaries(
+				choose('release'),
+				safeDecode(workflowSetup, object(object(current.release).workflow).setup).success
 					|| observe.some(entry =>
 						entry.publications.includes(selectorKey(`pkg:github/${snapshot.repository.name}`, inventory.packages))
 					),
@@ -224,12 +224,12 @@ export function suggested(
 	return { streams, ...(revision ? { actionsRevision: revision } : {}) };
 }
 function proposeBinaries(
-	promote: SetupWorkflow | undefined,
+	releaseWorkflow: SetupWorkflow | undefined,
 	held: boolean,
 	candidates: readonly BinaryCandidate[],
 ): SetupWorkflow | undefined {
-	if (!promote || held || promote.binaries || !candidates.length) return promote;
-	return { ...promote, binaries: binaryRelease(candidates) };
+	if (!releaseWorkflow || held || releaseWorkflow.binaries || !candidates.length) return releaseWorkflow;
+	return { ...releaseWorkflow, binaries: binaryRelease(candidates) };
 }
 export function binaryRelease(candidates: readonly BinaryCandidate[]): BinaryRelease {
 	const proposed = unconfigured(candidates, []);

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import type { Repository } from '@root/test/support/github.ts';
 import type { Api } from '@root/test/support/http.ts';
 import { bearer } from '@root/test/support/http.ts';
-import { promotions } from '@root/test/support/releases.ts';
+import { releaseExecutions } from '@root/test/support/releases.ts';
 import { npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -27,7 +27,7 @@ function configuration(approval: 'push' | 'required') {
 				packages: ['pkg:npm/widget'],
 				required: ['pkg:npm/widget'],
 				prepare: { strategy: 'managed' },
-				promote: { approval, workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] } },
+				release: { approval, workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] } },
 			},
 		},
 	});
@@ -86,7 +86,7 @@ test.each(
 		if (kind === 'status') failStatus(raised.sha);
 		expect((await world.push(repository)).status).toBe(202);
 		await world.wait(16_000);
-		const [stopped] = await promotions(api);
+		const [stopped] = await releaseExecutions(api);
 		expect([stopped?.state, stopped?.reason]).toEqual(['awaiting-approval', reason]);
 		expect(world.github.dispatches).toEqual([]);
 
@@ -103,10 +103,10 @@ test.each(
 			at: expect.any(Number),
 		});
 		await world.wait(16_000);
-		const [released] = await promotions(api);
+		const [released] = await releaseExecutions(api);
 		expect(released?.reason).toBeUndefined();
 		expect(world.github.dispatches.map(dispatch => dispatch.inputs.beepboop_execution_id)).toEqual([released?.id]);
-		expect((await audit('promotion.approve')).map(row => row.target)).toEqual([
+		expect((await audit('release.approve')).map(row => row.target)).toEqual([
 			`${released?.id}:${raised.sha}:push skipping: ${note}, skipped by ${skip?.actor}`,
 		]);
 	},
@@ -126,8 +126,8 @@ test(
 		failStatus(raised.sha);
 		expect((await world.push(repository)).status).toBe(202);
 		await world.wait(16_000);
-		const [waiting] = await promotions(api);
-		if (!waiting) throw new Error('Expected a promotion');
+		const [waiting] = await releaseExecutions(api);
+		if (!waiting) throw new Error('Expected a releaseExecution');
 
 		const listed = await api('/api/repositories/gates', { repositoryId: repository.id, stream: 'main' });
 		expect(listed.status).toBe(200);
@@ -170,7 +170,7 @@ test(
 		const [skip] = await audit('stream.gate.skip');
 		const approved = await api('/api/executions/approve', { id: waiting.id, sourceSha: raised.sha });
 		expect(approved.status).toBe(200);
-		expect((await audit('promotion.approve')).map(row => row.target)).toEqual([
+		expect((await audit('release.approve')).map(row => row.target)).toEqual([
 			`${waiting.id}:${raised.sha} skipping: check lint cancelled, skipped by ${skip?.actor}; commit status failure, skipped by ${skip?.actor}`,
 		]);
 
@@ -234,14 +234,14 @@ test.each(
 )('the gate list follows %s', (_case, states, expected) => {
 	const executions = states.map((state, index) => ({
 		id: `r${index}`,
-		operation: 'promote',
+		operation: 'release',
 		stream: 'main',
 		state,
 		createdAt: index,
 	}));
 	expect(
 		gatedRelease(
-			[...executions, { id: 'other', operation: 'promote', stream: 'cli', state: 'blocked', createdAt: 9 }],
+			[...executions, { id: 'other', operation: 'release', stream: 'cli', state: 'blocked', createdAt: 9 }],
 			'main',
 		)?.id,
 	)

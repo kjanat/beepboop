@@ -5,7 +5,7 @@
 	],
 	"streams": {
 		"main": {
-			"promote": {
+			"release": {
 				"publishWhen": "approved-in-beepboop",
 				"workflow": {
 					"file": "release.yml",
@@ -23,7 +23,7 @@
 				"aliases": {
 					"file": "aliases.yml",
 					"needs": [
-						"promote"
+						"release"
 					],
 					"refs": {
 						"phase": "aliases",

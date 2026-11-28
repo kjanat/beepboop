@@ -3,26 +3,28 @@ import type { Inventory } from '@/domain/inventory.ts';
 import { publishablePackages } from '@/domain/package-identity.ts';
 import { versionsInFiles } from '@/domain/version-tags.ts';
 
-export function promotionTagPrefix(stream: Stream): string | undefined {
-	const workflow = stream.promote.workflow;
+export function releaseWorkflowTagPrefix(stream: Stream): string | undefined {
+	const workflow = stream.release.workflow;
 	return workflow !== undefined && workflow.mode !== 'observe' && !workflow.ref?.includes('*')
-		&& workflow.refs?.phase === 'version' ? workflow.refs.prefix : undefined;
+			&& workflow.refs?.phase === 'version'
+		? workflow.refs.prefix
+		: undefined;
 }
 
-/** Managed version files can carry a release to its merge when promotion publishes the corresponding tag. */
+/** Managed version files can carry a release to its merge when the release publishes the corresponding tag. */
 export function releaseTagPrefix(stream: Stream, inventory: Inventory): string | undefined {
 	if (stream.versionSource) return stream.versionSource.prefix;
 	if (stream.versioning !== 'workspace' || stream.prepare.strategy === 'workflow' || !stream.versionFiles?.length) {
 		return undefined;
 	}
 	const packages = publishablePackages(inventory.packages, stream.packages);
-	return versionsInFiles({ ...inventory, packages }) ? undefined : promotionTagPrefix(stream);
+	return versionsInFiles({ ...inventory, packages }) ? undefined : releaseWorkflowTagPrefix(stream);
 }
 
 export function streamStartRefusal(name: string, stream: Stream): string | undefined {
 	if (stream.versioning === 'independent') return `${name} cannot start releases: it needs one shared version`;
-	if (stream.versionSource?.kind === 'tags' && promotionTagPrefix(stream) !== stream.versionSource.prefix) {
-		return `${name} needs a dispatchable promotion that publishes a version tag with prefix "${stream.versionSource.prefix}"`;
+	if (stream.versionSource?.kind === 'tags' && releaseWorkflowTagPrefix(stream) !== stream.versionSource.prefix) {
+		return `${name} needs a dispatchable release workflow that publishes a version tag with prefix "${stream.versionSource.prefix}"`;
 	}
 	return undefined;
 }

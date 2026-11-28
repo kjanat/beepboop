@@ -113,7 +113,7 @@ test('a delivery for a missing repository stays pending', async () => {
 });
 
 test('an invalid repository configuration receives no delivery', async () => {
-	const { delivery } = await follower('promote');
+	const { delivery } = await follower('release');
 	await world.run(deliverEvent(delivery, release));
 	expect(await deliveryRows()).toEqual([]);
 	expect(await world.run(delivery.events.event(release.id))).toEqual(release);

@@ -94,7 +94,7 @@ export const runs = group('runs').description('Follow, publish, cancel and recov
 				flag.boolean().default(false).describe('List every repository, ignoring the checkout and --repository'),
 			)
 			.flag('stream', flag.string().describe('Only this release stream'))
-			.flag('operation', flag.string().describe('Only this operation, such as prepare or promote'))
+			.flag('operation', flag.string().describe('Only this operation, such as prepare or release'))
 			.flag('state', flag.array(flag.enum(executionStates)).describe('Only these states; repeat it'))
 			.flag('releaseVersion', flag.string().describe('Only this version'))
 			.flag('limit', flag.number().int().min(1).max(200).describe('Show at most this many runs, 1 to 200'))
@@ -286,7 +286,7 @@ export const runs = group('runs').description('Follow, publish, cancel and recov
 			.details(
 				[
 					'`reconcile` rereads the operation from GitHub. `retry` re-runs the failed jobs of its workflow run, or dispatches a new run.',
-					'`redispatch` runs the workflow at the head of the stream workflow ref for a failed or cancelled promotion whose version tags already target its release commit. The workflow must check out the `sourceSha` from `actions/begin`. Use it when the fix for the failure is in the workflow and the version tag cannot move. The command follows the release.',
+					'`redispatch` runs the workflow at the head of the stream workflow ref for a failed or cancelled release whose version tags already target its release commit. The workflow must check out the `sourceSha` from `actions/begin`. Use it when the fix for the failure is in the workflow and the version tag cannot move. The command follows the release.',
 				].join('\n\n'),
 			)
 			.example('beepboop runs recover EXECUTION_ID --action retry', 'Re-run the failed jobs')
@@ -319,7 +319,7 @@ export const runs = group('runs').description('Follow, publish, cancel and recov
 						version: recovered.version,
 						execution: recovered,
 						bumped: false,
-						promotion: recovered.id,
+						releaseExecution: recovered.id,
 					});
 				})
 			)),

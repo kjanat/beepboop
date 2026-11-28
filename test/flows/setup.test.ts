@@ -73,9 +73,9 @@ test('a discovered repository can preview, open and refresh its setup PR', async
 				commands: 'npm install',
 				publicationSteps: {},
 			},
-			promote: {
+			release: {
 				file: 'release.yml',
-				job: 'promote',
+				job: 'release',
 				triggers: 'review',
 				commands: 'npm publish',
 				publicationSteps: {},
@@ -245,20 +245,20 @@ test('a tag-versioned stream needs no preparation workflow once its publication 
 		'cmd/tool/main.go': 'package main\n\nfunc main() {}\n',
 	});
 	const api = bearer(world, await world.cliSession());
-	const stream = (promote: Partial<NonNullable<SetupChoices['streams'][number]['promote']>>): SetupChoices => ({
+	const stream = (release: Partial<NonNullable<SetupChoices['streams'][number]['release']>>): SetupChoices => ({
 		streams: [{
 			name: 'main',
 			packages: ['pkg:golang/github.com/octo/tagged'],
 			required: ['pkg:golang/github.com/octo/tagged'],
 			versioning: 'workspace',
 			versionSource: { kind: 'tags', prefix: 'v' },
-			promote: {
+			release: {
 				file: 'publish.yml',
 				job: 'publish',
 				triggers: 'dispatchOnly',
 				commands: 'beepboop publish',
 				publicationSteps: {},
-				...promote,
+				...release,
 			},
 		}],
 	});
@@ -268,7 +268,7 @@ test('a tag-versioned stream needs no preparation workflow once its publication 
 		);
 	const plain = await planned(stream({}));
 	expect(plain.blockers).toEqual([]);
-	expect(plain.choices.streams[0]?.promote?.tagPrefix).toBe('v');
+	expect(plain.choices.streams[0]?.release?.tagPrefix).toBe('v');
 	const plan = await planned(stream({
 		binaries: {
 			builds: [{
@@ -285,8 +285,8 @@ test('a tag-versioned stream needs no preparation workflow once its publication 
 	const config = JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}');
 	expect(config.streams.main.workflows).toBeUndefined();
 	expect(config.streams.main.prepare).toBeUndefined();
-	expect(config.streams.main.promote.workflow.refs).toEqual({ phase: 'version', prefix: 'v' });
-	expect(config.streams.main.promote.workflow.publications).toEqual(['github-release:octo/tagged']);
+	expect(config.streams.main.release.workflow.refs).toEqual({ phase: 'version', prefix: 'v' });
+	expect(config.streams.main.release.workflow.publications).toEqual(['github-release:octo/tagged']);
 	world.github.push(repository, {
 		'web/package.json': JSON.stringify({ name: 'tagged-web', version: '1.0.0' }),
 		'web/package-lock.json': '{}\n',
@@ -309,7 +309,7 @@ for (const versioning of ['workspace', 'independent', 'none'] as const) {
 				packages: ['pkg:golang/github.com/octo/tagged'],
 				required: [],
 				versioning,
-				promote: {
+				release: {
 					file: 'publish.yml',
 					job: 'publish',
 					triggers: 'review',
@@ -352,7 +352,7 @@ test('tag-only packages with a version file can use managed preparation', async 
 				packages: ['pkg:golang/github.com/octo/tagged'],
 				required: [],
 				versioning: 'workspace',
-				promote: {
+				release: {
 					file: 'publish.yml',
 					job: 'publish',
 					triggers: 'review',
@@ -413,7 +413,7 @@ test('a uv lockfile needs a preparation workflow that runs uv lock', async () =>
 	expect(suggestedCommands('prepare', { name: 'main', packages: [widgetPackage] }, plan)).toBe(
 		'npm install\nnpm run test --if-present\nuv lock',
 	);
-	expect(suggestedCommands('promote', { name: 'main', packages: [widgetPackage] }, plan)).toBe(ledgerCommand);
+	expect(suggestedCommands('release', { name: 'main', packages: [widgetPackage] }, plan)).toBe(ledgerCommand);
 });
 
 const binaryWorkflowSchema = mutableStruct({
@@ -450,7 +450,7 @@ function binaryRepository() {
 		'bun.lock': '{}\n',
 	});
 }
-function binaryChoices(promote: Partial<NonNullable<SetupChoices['streams'][number]['promote']>> = {}): SetupChoices {
+function binaryChoices(release: Partial<NonNullable<SetupChoices['streams'][number]['release']>> = {}): SetupChoices {
 	return {
 		streams: [{
 			name: 'main',
@@ -458,7 +458,7 @@ function binaryChoices(promote: Partial<NonNullable<SetupChoices['streams'][numb
 			required: [],
 			versioning: 'workspace',
 			versionSource: { kind: 'tags', prefix: 'v' },
-			promote: {
+			release: {
 				file: 'release.yml',
 				job: 'publish',
 				triggers: 'review',
@@ -477,7 +477,7 @@ function binaryChoices(promote: Partial<NonNullable<SetupChoices['streams'][numb
 					],
 					targets: ['linux-amd64', 'darwin-arm64', 'windows-amd64'],
 				},
-				...promote,
+				...release,
 			},
 		}],
 	};
@@ -592,13 +592,13 @@ test('a publication workflow builds each binary in a platform matrix and release
 			managers: mutableArray(Schema.String),
 			streams: mutableRecord(
 				Schema.String,
-				mutableStruct({ promote: mutableStruct({ workflow: mutableRecord(Schema.String, Schema.Unknown) }) }),
+				mutableStruct({ release: mutableStruct({ workflow: mutableRecord(Schema.String, Schema.Unknown) }) }),
 			),
 		}),
 		JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
 	);
 	expect(configuration.managers).toContain('github-release');
-	expect(configuration.streams.main?.promote.workflow).toMatchObject({
+	expect(configuration.streams.main?.release.workflow).toMatchObject({
 		file: 'release.yml',
 		publications: ['github-release:octo/signer'],
 		refs: { phase: 'version', prefix: 'v' },
@@ -694,7 +694,7 @@ test('a configured binary takes its problems only from the candidate that builds
 	expect([plan.blockers, plan.notes.filter(note => /signer|tool/.test(note))]).toEqual([[], []]);
 	const [stream] = plan.choices.streams;
 	if (!stream) throw new Error('Missing stream');
-	const tool = stream.promote?.binaries?.builds.find(build => build.name === 'tool');
+	const tool = stream.release?.binaries?.builds.find(build => build.name === 'tool');
 	if (!tool) throw new Error('Missing tool build');
 	const withCrate = { ...plan, choices: { streams: [{ ...stream, packages: ['pkg:cargo/a'] }] } };
 	expect([
@@ -704,7 +704,7 @@ test('a configured binary takes its problems only from the candidate that builds
 			option.kind === 'binary' && option.build.name === 'tool' ? option.targets : []
 		)
 			.includes('windows-amd64'),
-		offeredBinaries(withCrate, ['pkg:cargo/a'], stream.promote).find(entry => entry.build.name === 'tool')?.candidate,
+		offeredBinaries(withCrate, ['pkg:cargo/a'], stream.release).find(entry => entry.build.name === 'tool')?.candidate,
 	]).toEqual([false, false, true, undefined]);
 	const client = 'pkg:golang/github.com/octo/signer/client';
 	const withClient = { ...plan, choices: { streams: [{ ...stream, packages: [client] }] } };
@@ -712,7 +712,7 @@ test('a configured binary takes its problems only from the candidate that builds
 		builds.map(build => [build.name, 'package' in build && build.package]);
 	expect([
 		offered(setupOptions(withClient).flatMap(option => option.kind === 'binary' ? [option.build] : [])),
-		offered(offeredBinaries(withClient, [client], stream.promote).map(entry => entry.build)),
+		offered(offeredBinaries(withClient, [client], stream.release).map(entry => entry.build)),
 	]).toEqual([
 		[['signer', './cmd/good'], ['tool', false]],
 		[['signer', './cmd/good'], ['tool', false]],
@@ -840,7 +840,7 @@ function credentialChoices(file: string, commands: string): SetupChoices {
 			packages: ['pkg:npm/widget'],
 			required: ['pkg:npm/widget'],
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file,
 				job: 'publish',
 				triggers: 'review',
@@ -885,7 +885,7 @@ test('setup delivers selected credentials to the publishing commands', async () 
 	);
 	expect(configuration.streams.main?.credentials).toEqual(['npm-token']);
 	expect(plan.notes).toContain(
-		'release-widget.yml: when the repository owner merges this PR, Beepboop grants it the stored npm-token secret for the promote operation.',
+		'release-widget.yml: when the repository owner merges this PR, Beepboop grants it the stored npm-token secret for the release operation.',
 	);
 });
 
@@ -912,7 +912,7 @@ test('generated workflows keep every expression on one line', async () => {
 				commands: 'cargo update --workspace\ncargo test --workspace --locked',
 				publicationSteps: {},
 			},
-			promote: {
+			release: {
 				file: 'release-crates.yml',
 				job: 'publish',
 				triggers: 'review',
@@ -964,7 +964,7 @@ test('a crate script report keeps a failed publish step failed when the job is c
 		files: { 'Cargo.toml': '[package]\nname = "lint"\nversion = "1.0.0"\nedition = "2024"\n' },
 		paths: ['Cargo.toml'],
 	};
-	const integrated = integrateWorkflow(snapshot, 'main', 'promote', {
+	const integrated = integrateWorkflow(snapshot, 'main', 'release', {
 		file: 'publish.yml',
 		triggers: 'review',
 		commands: cratePublishCommands(['lint']),
@@ -972,7 +972,7 @@ test('a crate script report keeps a failed publish step failed when the job is c
 	}, discover(snapshot).packages);
 	if (Result.isFailure(integrated)) throw integrated.failure;
 	expect(integrated.success.blockers).toEqual([]);
-	const report = decodeSync(binaryWorkflowSchema, parse(integrated.success.content)).jobs.promote?.steps.find(step =>
+	const report = decodeSync(binaryWorkflowSchema, parse(integrated.success.content)).jobs.release?.steps.find(step =>
 		step.with?.publications
 	);
 	const publications = decodeSync(
@@ -1026,9 +1026,9 @@ test('a tag prefix makes the publication workflow push its version tag with the 
 	const repository = widget(world.github, { configured: false });
 	const api = bearer(world, await world.cliSession());
 	const choices = credentialChoices('release-widget.yml', 'npm publish');
-	const promote = choices.streams[0]?.promote;
-	if (!promote) throw new Error('promote expected');
-	promote.tagPrefix = 'widget-v';
+	const releaseWorkflow = choices.streams[0]?.release;
+	if (!releaseWorkflow) throw new Error('release workflow expected');
+	releaseWorkflow.tagPrefix = 'widget-v';
 	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 	expect(plan.blockers).toEqual([]);
@@ -1052,13 +1052,13 @@ test('a tag prefix makes the publication workflow push its version tag with the 
 		mutableStruct({
 			streams: mutableRecord(
 				Schema.String,
-				mutableStruct({ promote: mutableStruct({ workflow: mutableRecord(Schema.String, Schema.Unknown) }) }),
+				mutableStruct({ release: mutableStruct({ workflow: mutableRecord(Schema.String, Schema.Unknown) }) }),
 			),
 		}),
 		JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
 	);
-	expect(configuration.streams.main?.promote.workflow.refs).toEqual({ phase: 'version', prefix: 'widget-v' });
-	expect(configuration.streams.main?.promote.workflow.publications).toEqual([
+	expect(configuration.streams.main?.release.workflow.refs).toEqual({ phase: 'version', prefix: 'widget-v' });
+	expect(configuration.streams.main?.release.workflow.publications).toEqual([
 		'pkg:npm/widget',
 		'github-release:octo/widget',
 	]);
@@ -1068,11 +1068,11 @@ test('a tag prefix adds ref publication before the report of an existing workflo
 	const repository = widget(world.github, { configured: false });
 	const api = bearer(world, await world.cliSession());
 	const choices = credentialChoices('publish.yml', '');
-	const promote = choices.streams[0]?.promote;
-	if (!promote) throw new Error('promote expected');
-	promote.credentials = undefined;
-	promote.publicationSteps = { 'pkg:npm/widget': 'publish' };
-	promote.tagPrefix = 'v';
+	const releaseWorkflow = choices.streams[0]?.release;
+	if (!releaseWorkflow) throw new Error('release workflow expected');
+	releaseWorkflow.credentials = undefined;
+	releaseWorkflow.publicationSteps = { 'pkg:npm/widget': 'publish' };
+	releaseWorkflow.tagPrefix = 'v';
 	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
 	const plan = await Effect.runPromise(parseSetupPlan(preview.body));
 	const after = plan.edits.find(edit => edit.path === '.github/workflows/publish.yml')?.after ?? '';
@@ -1088,7 +1088,7 @@ test('a tag prefix adds ref publication before the report of an existing workflo
 	expect(replanned.edits.find(edit => edit.path === '.github/workflows/publish.yml')).toBeUndefined();
 });
 
-test('the promote report leaves out observed publications and reports Go modules from the tag push', async () => {
+test('the release report leaves out observed publications and reports Go modules from the tag push', async () => {
 	const repository = widget(world.github, { configured: false });
 	world.github.push(repository, { 'go/go.mod': 'module github.com/octo/widget/go\n\ngo 1.26\n' }, 'Add a Go module');
 	const api = bearer(world, await world.cliSession());
@@ -1104,7 +1104,7 @@ test('the promote report leaves out observed publications and reports Go modules
 			required: ['pkg:npm/widget', goModule],
 			versioning: 'workspace',
 			observe: [{ name: 'npm', file: 'publish.yml', ref: 'master', publications: ['pkg:npm/widget'] }],
-			promote: {
+			release: {
 				file: 'release-widget.yml',
 				job: 'publish',
 				triggers: 'review',
@@ -1180,7 +1180,7 @@ const unpinnedBuild = (name: string) => `  build-${name}:
         with:
           execution-id: \${{ inputs.beepboop_execution_id }}
           stream: main
-          operation: promote
+          operation: release
       - uses: actions/checkout@v7
         with:
           ref: \${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}
@@ -1207,7 +1207,7 @@ ${unpinnedBuild('signer')}${unpinnedBuild('tool')}  publish:
         with:
           execution-id: \${{ inputs.beepboop_execution_id }}
           stream: main
-          operation: promote
+          operation: release
       - uses: actions/checkout@v7
         with:
           ref: \${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}
@@ -1322,8 +1322,8 @@ test('binary builds belong to the publication job alone', async () => {
 	const repository = binaryRepository();
 	const api = bearer(world, await world.cliSession());
 	const choices = binaryChoices({ job: 'build-signer' });
-	const promote = choices.streams[0]?.promote;
-	if (!promote?.binaries) throw new Error('binary choices expected');
+	const releaseWorkflow = choices.streams[0]?.release;
+	if (!releaseWorkflow?.binaries) throw new Error('binary choices expected');
 	choices.streams[0] = {
 		...choices.streams[0],
 		name: 'main',
@@ -1336,7 +1336,7 @@ test('binary builds belong to the publication job alone', async () => {
 			triggers: 'review',
 			commands: 'go test ./...',
 			publicationSteps: {},
-			binaries: promote.binaries,
+			binaries: releaseWorkflow.binaries,
 		},
 	};
 	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
@@ -1368,7 +1368,7 @@ test('setup names existingTriggers when a workflow Beepboop dispatches also runs
 			packages: ['pkg:npm/widget'],
 			required: ['pkg:npm/widget'],
 			versioning: 'workspace',
-			promote: { file: 'publish.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
+			release: { file: 'publish.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
 		}],
 	};
 	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
@@ -1455,7 +1455,7 @@ for (const inherited of [false, true]) {
 							inputs: { beepboop_operation: 'prepare', channel: 'stable', dryRun: false },
 						},
 					},
-					promote: {
+					release: {
 						workflow: { file: 'release.yml', inputs: { beepboop_operation: 'publish', channel: 'stable', retries: 0 } },
 					},
 				},
@@ -1473,7 +1473,7 @@ for (const inherited of [false, true]) {
 				required: ['pkg:npm/widget'],
 				versioning: 'workspace',
 				prepare: { file: 'prepare-release.yml', job: 'prepare', commands: 'npm install' },
-				promote: { file: 'publish-release.yml', job: 'publish', commands: 'npm publish' },
+				release: { file: 'publish-release.yml', job: 'publish', commands: 'npm publish' },
 			}],
 		};
 		const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
@@ -1484,7 +1484,7 @@ for (const inherited of [false, true]) {
 			streams: mutableStruct({
 				main: mutableStruct({
 					prepare: mutableStruct({ workflow: binding }),
-					promote: mutableStruct({ workflow: binding }),
+					release: mutableStruct({ workflow: binding }),
 				}),
 			}),
 		});
@@ -1493,7 +1493,7 @@ for (const inherited of [false, true]) {
 			JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
 		);
 		expect(proposed.streams.main.prepare.workflow.inputs).toEqual({ channel: 'stable', dryRun: false });
-		expect(proposed.streams.main.promote.workflow.inputs).toEqual({ channel: 'stable', retries: 0 });
+		expect(proposed.streams.main.release.workflow.inputs).toEqual({ channel: 'stable', retries: 0 });
 		expect(
 			(await applySetup(api, repository.name, plan, plan.choices)).status,
 		).toBe(200);
@@ -1502,7 +1502,7 @@ for (const inherited of [false, true]) {
 		expect(discovered.status).toBe(200);
 		const resolved = decodeSync(configuration, field(discovered.body, 'configuration'));
 		expect(resolved.streams.main.prepare.workflow.inputs).toEqual({ channel: 'stable', dryRun: false });
-		expect(resolved.streams.main.promote.workflow.inputs).toEqual({ channel: 'stable', retries: 0 });
+		expect(resolved.streams.main.release.workflow.inputs).toEqual({ channel: 'stable', retries: 0 });
 	});
 }
 
@@ -1520,7 +1520,7 @@ test('workflow input merging keeps shared phase inputs until the target file cha
 	expect(base.inputs.beepboop_operation).toBe('prepare');
 });
 
-test('a merged binary workflow suggests its publication job for the promote role', async () => {
+test('a merged binary workflow suggests its publication job for the release role', async () => {
 	const repository = binaryRepository();
 	const api = bearer(world, await world.cliSession());
 	const preview = await api('/api/repositories/setup/preview', {
@@ -1538,12 +1538,12 @@ test('a merged binary workflow suggests its publication job for the promote role
 		(await api('/api/repositories/setup/preview', { repository: repository.name })).body,
 	));
 	expect(suggested.workflows.find(workflow => workflow.file === 'release.yml')?.roles).toEqual([
-		{ job: 'publish', stream: 'main', operation: 'promote' },
+		{ job: 'publish', stream: 'main', operation: 'release' },
 	]);
-	expect(suggested.choices.streams[0]?.promote?.job).toBe('publish');
+	expect(suggested.choices.streams[0]?.release?.job).toBe('publish');
 });
 
-test('adoption can add a standalone backfill without delegating promotion publications', async () => {
+test('adoption can add a standalone backfill without delegating release publications', async () => {
 	const repository = widget(world.github, { configured: false });
 	const api = bearer(world, await world.cliSession());
 	const packages = ['pkg:npm/widget'];
@@ -1553,7 +1553,7 @@ test('adoption can add a standalone backfill without delegating promotion public
 			packages,
 			required: packages,
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file: 'release.yml',
 				job: 'publish',
 				triggers: 'review',
@@ -1598,7 +1598,7 @@ test('adoption can add a standalone backfill without delegating promotion public
 		.toContain('pkg:npm/widget');
 	const configuration = plan.edits.find(edit => edit.path === '.github/beepboop.json');
 	expect(JSON.parse(configuration?.after ?? '{}').streams.main).toMatchObject({
-		promote: { workflow: { publications: [...packages, 'github-release:octo/widget'] } },
+		release: { workflow: { publications: [...packages, 'github-release:octo/widget'] } },
 		workflows: { 'npm-backfill': { mode: 'dispatch', backfill: true, publications: packages } },
 	});
 	world.github.push(repository, Object.fromEntries(plan.edits.map(edit => [edit.path, edit.after])), 'Merge setup');
@@ -1615,17 +1615,17 @@ test('adoption can add a standalone backfill without delegating promotion public
 	const revision = await Effect.runPromise(parseSetupPlan(
 		(await api('/api/repositories/setup/preview', {
 			repository: repository.name,
-			choices: { streams: [{ ...stream, operations: [{ ...operation, needs: ['promote'] }] }] },
+			choices: { streams: [{ ...stream, operations: [{ ...operation, needs: ['release'] }] }] },
 		})).body,
 	));
 	expect(revision.blockers).toEqual([]);
 	const revisedConfig = revision.edits.find(edit => edit.path === '.github/beepboop.json');
 	const revisedBinding = JSON.parse(revisedConfig?.after ?? '{}').streams.main.workflows['npm-backfill'];
-	expect(revisedBinding.needs).toEqual(['promote']);
+	expect(revisedBinding.needs).toEqual(['release']);
 	expect(revisedBinding.backfill).toBe(false);
 });
 
-test('an operation workflow holding plain crate lines is regenerated like the promote workflow', async () => {
+test('an operation workflow holding plain crate lines is regenerated like the release workflow', async () => {
 	const repository = world.github.create('octo/lint', {
 		'Cargo.toml': '[workspace]\nmembers = ["crates/*"]\n\n[workspace.package]\nversion = "0.1.0"\n',
 		'Cargo.lock': '# Lockfile\n',
@@ -1647,7 +1647,7 @@ test('an operation workflow holding plain crate lines is regenerated like the pr
 				commands: 'cargo check --workspace --all-targets\ncargo test --workspace',
 				publicationSteps: {},
 			},
-			promote: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
+			release: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
 			operations: [{
 				name: 'crates',
 				file: 'publish-crates.yml',
@@ -1655,7 +1655,7 @@ test('an operation workflow holding plain crate lines is regenerated like the pr
 				triggers: 'review',
 				commands: "cargo publish --locked --package 'lint-core'\ncargo publish --locked --package 'lint'",
 				publicationSteps: {},
-				needs: ['promote'],
+				needs: ['release'],
 				publications: crates,
 			}],
 		}],
@@ -1686,7 +1686,7 @@ const lintChoices = (commands: string): SetupChoices => ({
 			commands: 'cargo check --workspace --all-targets\ncargo test --workspace',
 			publicationSteps: {},
 		},
-		promote: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
+		release: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands: '', publicationSteps: {} },
 		operations: [{
 			name: 'crates',
 			file: 'publish-crates.yml',
@@ -1694,7 +1694,7 @@ const lintChoices = (commands: string): SetupChoices => ({
 			triggers: 'review',
 			commands,
 			publicationSteps: {},
-			needs: ['promote'],
+			needs: ['release'],
 			publications: lintCrates,
 		}],
 	}],
@@ -2036,7 +2036,7 @@ test("the adoption text states each stream's own publishWhen", async () => {
 		required: [`pkg:npm/${name}`],
 		credentials: ['npm-token'],
 		prepare: { strategy: 'managed' },
-		promote: { approval, workflow: { file: `publish-${name}.yml`, publications: [`pkg:npm/${name}`] } },
+		release: { approval, workflow: { file: `publish-${name}.yml`, publications: [`pkg:npm/${name}`] } },
 	});
 	const repository = world.github.create('octo/pair', {
 		'packages/alpha/package.json': npmManifest('alpha', '1.0.0'),
@@ -2082,7 +2082,7 @@ const widgetStream = (prepare: Record<string, unknown>, approval: string) => ({
 	packages: ['pkg:npm/widget'],
 	required: ['pkg:npm/widget'],
 	prepare: { strategy: 'managed', ...prepare },
-	promote: { publishWhen: approval, workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] } },
+	release: { publishWhen: approval, workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] } },
 });
 
 test('the adoption text uses the publishWhen a preset supplies', async () => {
@@ -2114,13 +2114,13 @@ test('the adoption text promises start publication once setup moves a delegated 
 test.each([
 	{ refs: { phase: 'version', prefix: 'v' }, starts: true },
 	{ refs: undefined, starts: false },
-])('a tag-based stream promises start publication only with a version-tag promotion: %o', async ({ refs, starts }) => {
+])('a tag-based stream promises start publication only with a version-tag release: %o', async ({ refs, starts }) => {
 	const stream = widgetStream({}, 'version-pr-merged');
 	const text = await releaseText({
 		stream: {
 			...stream,
 			versionSource: { kind: 'tags', prefix: 'v' },
-			promote: { ...stream.promote, workflow: { ...stream.promote.workflow, ...(refs ? { refs } : {}) } },
+			release: { ...stream.release, workflow: { ...stream.release.workflow, ...(refs ? { refs } : {}) } },
 		},
 	});
 	expect(text.includes('nothing asks again')).toBe(starts);
@@ -2129,7 +2129,7 @@ test.each([
 
 describe('a saved plain crate publish script', () => {
 	const crates = ['pkg:cargo/lint-core', 'pkg:cargo/lint'];
-	const promoteCommands = async (commands: string) => {
+	const releaseCommands = async (commands: string) => {
 		const repository = world.github.create('octo/lint', {
 			'Cargo.toml': '[workspace]\nmembers = ["crates/*"]\n\n[workspace.package]\nversion = "0.1.0"\n',
 			'Cargo.lock': '# Lockfile\n',
@@ -2150,14 +2150,14 @@ describe('a saved plain crate publish script', () => {
 					commands: 'cargo check --workspace --all-targets\ncargo test --workspace',
 					publicationSteps: {},
 				},
-				promote: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands, publicationSteps: {} },
+				release: { file: 'release-lint.yml', job: 'publish', triggers: 'review', commands, publicationSteps: {} },
 			}],
 		};
 		const plan = await Effect.runPromise(
 			parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
 		);
 		expect(plan.blockers).toEqual([]);
-		return plan.choices.streams[0]?.promote?.commands;
+		return plan.choices.streams[0]?.release?.commands;
 	};
 	for (
 		const commands of [
@@ -2166,7 +2166,7 @@ describe('a saved plain crate publish script', () => {
 		]
 	) {
 		test(`is regenerated as ${ledgerCommand}: ${commands.split('\n')[0]}`, async () => {
-			expect(await promoteCommands(commands)).toBe(ledgerCommand);
+			expect(await releaseCommands(commands)).toBe(ledgerCommand);
 		});
 	}
 	for (
@@ -2179,7 +2179,7 @@ describe('a saved plain crate publish script', () => {
 		]
 	) {
 		test(`stays as the owner wrote it: ${commands.replaceAll('\n', ' | ')}`, async () => {
-			expect(await promoteCommands(commands)).toBe(commands);
+			expect(await releaseCommands(commands)).toBe(commands);
 		});
 	}
 });
@@ -2215,7 +2215,7 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 				commands: 'cargo check --workspace --all-targets\ncargo test --workspace',
 				publicationSteps: {},
 			},
-			promote: { file: 'release-sql.yml', job: 'publish', triggers: 'review', commands: stale, publicationSteps: {} },
+			release: { file: 'release-sql.yml', job: 'publish', triggers: 'review', commands: stale, publicationSteps: {} },
 		}],
 	};
 	const plan = await Effect.runPromise(
@@ -2223,13 +2223,13 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 	);
 	expect(plan.blockers).toEqual([]);
 	expect(plan.choices.streams[0]?.approval).toBe('required');
-	expect(plan.choices.streams[0]?.promote?.credentials).toEqual({ CARGO_REGISTRY_TOKEN: 'crates-io' });
+	expect(plan.choices.streams[0]?.release?.credentials).toEqual({ CARGO_REGISTRY_TOKEN: 'crates-io' });
 	const configuration = decodeSync(
 		mutableStruct({
 			streams: mutableStruct({
 				main: mutableStruct({
 					credentials: mutableArray(Schema.String),
-					promote: mutableStruct({
+					release: mutableStruct({
 						publishWhen: Schema.String,
 						workflow: looseStruct({ publications: mutableArray(Schema.String) }),
 					}),
@@ -2239,8 +2239,8 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 		withDefaultPreset(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
 	);
 	expect(configuration.streams.main.credentials).toEqual(['crates-io']);
-	expect(configuration.streams.main.promote.publishWhen).toBe('approved-in-beepboop');
-	expect(configuration.streams.main.promote.workflow).toMatchObject({
+	expect(configuration.streams.main.release.publishWhen).toBe('approved-in-beepboop');
+	expect(configuration.streams.main.release.workflow).toMatchObject({
 		refs: { phase: 'version', prefix: 'v' },
 		publications: ['pkg:cargo/sql-cli', 'pkg:cargo/sql', 'pkg:cargo/sql-parser', 'github-release:octo/sql'],
 	});
@@ -2260,7 +2260,7 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 		parse(plan.edits.find(edit => edit.path === '.github/workflows/release-sql.yml')?.after ?? ''),
 	);
 	const steps = workflow.jobs.publish.steps;
-	expect(plan.choices.streams[0]?.promote?.commands).toBe(ledgerCommand);
+	expect(plan.choices.streams[0]?.release?.commands).toBe(ledgerCommand);
 	expect(steps.find(step => step.id === 'beepboop_publish')).toMatchObject({
 		uses: 'kjanat/beepboop/actions/publish@v1',
 		with: { credentials: JSON.stringify({ CARGO_REGISTRY_TOKEN: 'crates-io' }) },
@@ -2328,7 +2328,7 @@ test('a refreshed crate setup publishes every selected crate in order, with a to
 	expect(partial.notes).toContain(
 		'main: a selected package depends on `sql-parser` on crates.io, and its registry does not have this version. Publish it first.',
 	);
-	expect(partial.choices.streams[0]?.promote?.commands).toBe(ledgerCommand);
+	expect(partial.choices.streams[0]?.release?.commands).toBe(ledgerCommand);
 });
 
 test('an unticked dependency in the setup PR body stays unticked through edits and refreshes', async () => {
@@ -2357,7 +2357,7 @@ test('an unticked dependency in the setup PR body stays unticked through edits a
 				commands: 'cargo test --workspace',
 				publicationSteps: {},
 			},
-			promote: {
+			release: {
 				file: 'release-sql.yml',
 				job: 'publish',
 				triggers: 'review',
@@ -2427,13 +2427,13 @@ test('a saved crate script becomes beepboop publish', async () => {
 	});
 	const api = bearer(world, await world.cliSession());
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
-	const promote = (packages: string[]) => ({
+	const releaseChoices = (packages: string[]) => ({
 		streams: [{
 			name: 'main',
 			packages,
 			required: packages,
 			versioning: 'workspace' as const,
-			promote: {
+			release: {
 				file: 'release-mixed.yml',
 				triggers: 'review' as const,
 				commands: cratePublishCommands(['mixed-cli']),
@@ -2445,10 +2445,10 @@ test('a saved crate script becomes beepboop publish', async () => {
 		Effect.runPromise(
 			parseSetupPlan((await api('/api/repositories/setup/preview', { repository: repository.name, choices })).body),
 		);
-	const crates = await preview(promote(['pkg:cargo/mixed-cli']));
-	expect(crates.choices.streams[0]?.promote?.commands).toBe(ledgerCommand);
-	const mixed = await preview(promote(['pkg:cargo/mixed-cli', 'pkg:npm/mixed-js']));
-	expect(mixed.choices.streams[0]?.promote?.commands).toBe(ledgerCommand);
+	const crates = await preview(releaseChoices(['pkg:cargo/mixed-cli']));
+	expect(crates.choices.streams[0]?.release?.commands).toBe(ledgerCommand);
+	const mixed = await preview(releaseChoices(['pkg:cargo/mixed-cli', 'pkg:npm/mixed-js']));
+	expect(mixed.choices.streams[0]?.release?.commands).toBe(ledgerCommand);
 });
 
 async function gadgetSetup() {
@@ -2466,9 +2466,9 @@ async function gadgetSetup() {
 			packages: ['pkg:npm/widget'],
 			required: ['pkg:npm/widget'],
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file: 'release.yml',
-				job: 'promote',
+				job: 'release',
 				triggers: 'review',
 				commands: 'npm publish',
 				publicationSteps: {},
@@ -2628,7 +2628,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 				rshellcheck: { packages: ['pkg:npm/%40kjanat/rshellcheck'], ...rshellcheck },
 				go: {
 					packages: ['pkg:golang/example.com/go'],
-					promote: { workflow: { file: 'release-go.yml', publications: ['pkg:golang/example.com/go'] } },
+					release: { workflow: { file: 'release-go.yml', publications: ['pkg:golang/example.com/go'] } },
 				},
 			},
 			managers,
@@ -2636,33 +2636,33 @@ test('a setup update body leads with old and new values, then held packages, cho
 	const before = configuration({
 		credentials: ['npm-token'],
 		workflows: {
-			release: {
+			'observe-release': {
 				file: 'release.yml',
 				publications: ['pkg:npm/%40kjanat/rshellcheck', 'pkg:github/octo/shellcheck'],
-				needs: ['promote'],
+				needs: ['release'],
 			},
 		},
-		promote: { approval: 'required', workflow: { file: 'release-rshellcheck.yml', publications: [] } },
+		release: { approval: 'required', workflow: { file: 'release-rshellcheck.yml', publications: [] } },
 	}, ['npm']);
 	const after = configuration({
 		credentials: ['npm-token', 'crates-io'],
-		workflows: { release: { file: 'release.yml', publications: ['pkg:npm/%40kjanat/rshellcheck'] } },
-		promote: {
+		workflows: { 'observe-release': { file: 'release.yml', publications: ['pkg:npm/%40kjanat/rshellcheck'] } },
+		release: {
 			publishWhen: 'version-pr-merged',
 			workflow: {
 				file: 'release-rshellcheck.yml',
 				publications: ['github-release:octo/shellcheck'],
-				setup: { job: 'promote' },
+				setup: { job: 'release' },
 			},
 		},
 		prepare: { versionLands: 'via-version-pr' },
 		startFrom: [{ via: 'action', workflow: 'start-release.yml' }],
 	}, ['github-release', 'npm']);
-	const promoteOnly = 'jobs:\n  promote:\n    steps: []\n';
+	const releaseOnly = 'jobs:\n  release:\n    steps: []\n';
 	const binaries = {
 		path: '.github/workflows/release-rshellcheck.yml',
-		before: promoteOnly,
-		after: `jobs:\n  build-rshellcheck:\n    steps: []\n${promoteOnly.slice('jobs:\n'.length)}`,
+		before: releaseOnly,
+		after: `jobs:\n  build-rshellcheck:\n    steps: []\n${releaseOnly.slice('jobs:\n'.length)}`,
 	};
 	const edits = [
 		{ path: '.github/beepboop.json', before, after },
@@ -2672,10 +2672,10 @@ test('a setup update body leads with old and new values, then held packages, cho
 	const changes = [
 		'- `rshellcheck`',
 		'  - `credentials` changes.',
-		'  - `workflows.release.publications`: removes `pkg:github/octo/shellcheck`.',
-		'  - `workflows.release.needs`: `promote` → none.',
-		'  - `promote.publishWhen`: `approved-in-beepboop` → `version-pr-merged`. Merging the version PR publishes it once the checks pass. Nobody publishes it in Beepboop.',
-		'  - `promote.workflow.publications`: adds `github-release:octo/shellcheck`. This workflow now publishes the GitHub release.',
+		'  - `workflows.observe-release.publications`: removes `pkg:github/octo/shellcheck`.',
+		'  - `workflows.observe-release.needs`: `release` → none.',
+		'  - `release.publishWhen`: `approved-in-beepboop` → `version-pr-merged`. Merging the version PR publishes it once the checks pass. Nobody publishes it in Beepboop.',
+		'  - `release.workflow.publications`: adds `github-release:octo/shellcheck`. This workflow now publishes the GitHub release.',
 		'  - `prepare.versionLands`: none → `via-version-pr`. Beepboop opens a version PR, and merging it puts the new version on the default branch.',
 		'  - `startFrom`: none → `action` (`start-release.yml`). Starting a release also publishes it, and nothing asks again.',
 		'- Repository',
@@ -2694,14 +2694,14 @@ test('a setup update body leads with old and new values, then held packages, cho
 	expect(setupTitle(updateBranch, [{ path: '.github/beepboop.json', before: flipped, after }, binaries])).toBe(
 		'chore: update release setup (release binaries, publishWhen)',
 	);
-	const unrecorded = after.replace(',"setup":{"job":"promote"}', '');
+	const unrecorded = after.replace(',"setup":{"job":"release"}', '');
 	expect(unrecorded).not.toBe(after);
 	expect(setupTitle(updateBranch, [{ path: '.github/beepboop.json', before: unrecorded, after }, binaries])).toBe(
 		'chore: build rshellcheck release binaries',
 	);
 	const evidence = (file: string) => ({
 		file,
-		jobs: ['promote'],
+		jobs: ['release'],
 		steps: [],
 		events: ['workflow_dispatch'],
 		roles: [],
@@ -2728,7 +2728,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 					approval: 'merge',
 					bump: 'pr',
 					start: ['action'],
-					promote: { file: 'release-rshellcheck.yml', job: 'promote' },
+					release: { file: 'release-rshellcheck.yml', job: 'release' },
 				},
 				{
 					name: 'go',
@@ -2736,7 +2736,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 					required: ['pkg:golang/example.com/go'],
 					versioning: 'workspace',
 					versionSource: { kind: 'tags', prefix: 'go/v' },
-					promote: { file: 'release-go.yml', job: 'promote' },
+					release: { file: 'release-go.yml', job: 'release' },
 				},
 			],
 		}),
@@ -2757,7 +2757,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 	for (const tagPatterns of [[], ['v*']]) {
 		const observedStream = {
 			...plan.choices.streams[0]!,
-			promote: undefined,
+			release: undefined,
 			observe: [{ name: 'publish', file: 'release.yml', ref: 'refs/heads/main', publications: ['pkg:npm/widget'] }],
 		};
 		const summary = streamSummary(observedStream, {
@@ -2775,7 +2775,7 @@ test('a setup update body leads with old and new values, then held packages, cho
 			...plan.choices,
 			streams: [{
 				...plan.choices.streams[0]!,
-				promote: undefined,
+				release: undefined,
 				observe: [
 					{ name: 'npm', file: 'release.yml', ref: 'refs/tags/v*', publications: ['pkg:npm/widget'] },
 					{ name: 'github', file: 'release.yml', ref: 'refs/tags/v*', publications: ['pkg:github/octo/widget'] },
@@ -2830,8 +2830,8 @@ test('a setup update gets its own branch, a title naming its changes and a chang
 	expect((await api('/api/repositories/discover', { repository: repository.name })).status).toBe(200);
 	const file = '.github/workflows/release.yml';
 	const workflow = parseDocument(world.github.file(repository, file, merged.sha) ?? '');
-	expect(workflow.getIn(['jobs', 'promote', 'timeout-minutes'])).toBe(publishMinutes(1));
-	workflow.deleteIn(['jobs', 'promote', 'timeout-minutes']);
+	expect(workflow.getIn(['jobs', 'release', 'timeout-minutes'])).toBe(publishMinutes(1));
+	workflow.deleteIn(['jobs', 'release', 'timeout-minutes']);
 	world.github.push(repository, { [file]: workflow.toString() }, 'Drop the job timeout');
 	const plan = await discoverSetup(api, repository.name);
 	expect([plan.blockers, plan.edits.map(edit => edit.path)]).toEqual([[], [file]]);
@@ -2847,7 +2847,7 @@ test('a setup update gets its own branch, a title naming its changes and a chang
 			}\`](https://github.com/${repository.name}/commit/${sha}), the head of \`main\`.\n\n`
 			+ '### What changes\n\n- Workflows\n  - Jobs get timeouts that stop a hung run.\n\n### Choices\n\n';
 		const details =
-			`<details>\n<summary>Every changed file and path</summary>\n\n- \`${file}\`\n  - job \`promote\`: sets \`timeout-minutes\` to ${
+			`<details>\n<summary>Every changed file and path</summary>\n\n- \`${file}\`\n  - job \`release\`: sets \`timeout-minutes\` to ${
 				publishMinutes(1)
 			}, which stops a hung run\n\n</details>\n`;
 		expect([update.head.ref, update.title, update.body.slice(0, opening.length)]).toEqual([
@@ -2908,7 +2908,7 @@ test('a package ticked again in an observed stream becomes required again', () =
 		packages: [npm],
 		required: [npm],
 		versioning: 'workspace',
-		observe: [{ name: 'release', file: 'release.yml', publications: [npm] }],
+		observe: [{ name: 'observe-release', file: 'release.yml', publications: [npm] }],
 	};
 	const options: Parameters<typeof bodyChoices>[1] = [npm, go].map(id => ({
 		kind: 'package',
@@ -2935,8 +2935,8 @@ on:
     inputs:
       beepboop_operation:
         type: choice
-        options: [prepare, publish]
-        default: publish
+        options: [prepare, release]
+        default: release
 jobs:
   prepare:
     if: ${gate('prepare')}
@@ -2944,7 +2944,7 @@ jobs:
     steps:
       - uses: acme/tool@0123456789abcdef0123456789abcdef01234567 # v9.9.9
   publish:
-    if: ${gate('publish')}
+    if: ${gate('release')}
     runs-on: ubuntu-latest
     steps:
       - run: echo ready`;
@@ -2962,7 +2962,7 @@ jobs:
 				commands: 'cargo check --workspace',
 				publicationSteps: {},
 			},
-			promote: {
+			release: {
 				file: 'release.yml',
 				job: 'publish',
 				triggers: 'review',
@@ -3019,7 +3019,7 @@ jobs:
 			packages: ['pkg:npm/widget'],
 			required: ['pkg:npm/widget'],
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file: 'ship.yml',
 				job: 'ship',
 				triggers: 'review',
@@ -3055,7 +3055,7 @@ for (const observed of [false, true]) {
 					required: ['pkg:npm/widget'],
 					credentials: ['npm-token'],
 					prepare: { strategy: 'managed' },
-					promote: {
+					release: {
 						approval: 'required',
 						workflow: { file: 'publish.yml', publications: ['pkg:npm/widget', optional] },
 					},

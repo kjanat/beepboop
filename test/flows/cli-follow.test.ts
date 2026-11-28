@@ -9,11 +9,11 @@ import { temporaryDirectory } from '@/tooling/runtime';
 afterEach(() => mock.restore());
 
 const running = {
-	id: 'promote-1',
+	id: 'release-1',
 	repositoryId: 1,
 	repository: 'octo/widget',
 	stream: 'main',
-	operation: 'promote',
+	operation: 'release',
 	state: 'running',
 	version: '1.0.1',
 	sourceSha: 'a'.repeat(40),

@@ -78,7 +78,7 @@ export function recommendedVersion(packages: Package[]): Effect.Effect<string | 
 
 export function unreleasedManifestVersion(packages: Package[]): string | undefined {
 	// Tags record releases already made; they cannot carry the version being
-	// prepared in manifests. In a mixed stream those tags land during promotion.
+	// prepared in manifests. In a mixed stream those tags land during the release.
 	const manifests = unique(packages.filter(pkg => tagPrefix(pkg.versionSource) === undefined).map(pkg => pkg.version));
 	const [manifest] = manifests;
 	if (manifests.length !== 1 || manifest === undefined || !packages.length) return undefined;

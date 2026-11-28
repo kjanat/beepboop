@@ -19,7 +19,7 @@ interface Names {
 	winner: Winner;
 	stream: readonly Rename[];
 	prepare: readonly Rename[];
-	promote: readonly Rename[];
+	release: readonly Rename[];
 	setup: readonly Rename[];
 }
 
@@ -32,7 +32,7 @@ const toLegacy: Names = {
 		{ from: 'mustPublish', to: 'required', values: unchanged },
 	],
 	prepare: [{ from: 'versionLands', to: 'bump', values: bumpOfVersionLands }],
-	promote: [{ from: 'publishWhen', to: 'approval', values: approvalOfPublishWhen }],
+	release: [{ from: 'publishWhen', to: 'approval', values: approvalOfPublishWhen }],
 	setup: [{ from: 'existingTriggers', to: 'triggers', values: triggersOfExistingTriggers }],
 };
 const toReadable: Names = {
@@ -43,7 +43,7 @@ const toReadable: Names = {
 		{ from: 'required', to: 'mustPublish', values: unchanged },
 	],
 	prepare: [{ from: 'bump', to: 'versionLands', values: versionLandsNames }],
-	promote: [{ from: 'approval', to: 'publishWhen', values: publishWhenNames }],
+	release: [{ from: 'approval', to: 'publishWhen', values: publishWhenNames }],
 	setup: [{ from: 'triggers', to: 'existingTriggers', values: existingTriggersNames }],
 };
 
@@ -84,7 +84,7 @@ function stream(value: unknown, names: Names): unknown {
 	return {
 		...row,
 		...('prepare' in row ? { prepare: role(row.prepare, names.prepare, names) } : {}),
-		...('promote' in row ? { promote: role(row.promote, names.promote, names) } : {}),
+		...('release' in row ? { release: role(row.release, names.release, names) } : {}),
 		...(isRecord(workflows)
 			? {
 				workflows: Object.fromEntries(Object.entries(workflows).map(([name, entry]) => [name, binding(entry, names)])),

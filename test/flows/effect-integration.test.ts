@@ -275,7 +275,7 @@ test('normalization codecs validate their output and round-trip canonical persis
 	const configuration = decodeSync(configurationSchema, {
 		streams: {
 			main: {
-				promote: {
+				release: {
 					workflow: {
 						file: 'publish.yml',
 						setup: { existingTriggers: 'replace-with-dispatch', commands: 'npm publish' },

@@ -155,7 +155,7 @@ export interface WorkflowEditor {
 }
 export function workflow(
 	parent: HTMLElement,
-	role: 'prepare' | 'promote',
+	role: 'prepare' | 'release',
 	plan: SetupPlan,
 	selection: () => Selection,
 	initial?: SetupWorkflow,

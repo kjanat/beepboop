@@ -9,6 +9,7 @@ import { runJobs } from '@/automation/run-jobs.ts';
 import { Automation } from '@/automation/service.ts';
 import { wakeUp } from '@/automation/wake-up.ts';
 import type { BinaryProgress } from '@/contract/views';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { releaseSchema, workflowRunSchema } from '@/github/resources.ts';
 import { classifyJob, jobProgressState } from '@/github/run-state.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -25,7 +26,7 @@ import { deriveExecution, recoverable, reopened } from '@/release/domain/executi
 import { retiredStates } from '@/release/domain/execution/states.ts';
 import type { Execution, PreparedRelease, ReleaseStarted } from '@/release/domain/execution/types.ts';
 import { preparationBody } from '@/release/domain/managed.ts';
-import { promotionOperations } from '@/release/domain/planning/promotion-operations.ts';
+import { downstreamOperations } from '@/release/domain/planning/downstream-operations.ts';
 import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
 import { Background } from '@/release/services/coordinator/background.ts';
 import { Executions, RepositoryRevisions } from '@/release/services/coordinator/executions.ts';
@@ -62,7 +63,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 	readonly execution: (id: string) => Effect.Effect<Execution | undefined, DomainError>;
 	readonly preparationVersions: (stream: string) => Effect.Effect<string[], DomainError>;
 	readonly preparationResults: (stream: string, version: string) => Effect.Effect<PreparedRelease[], DomainError>;
-	readonly promotions: (stream: string, version: string) => Effect.Effect<Execution[], DomainError>;
+	readonly releaseExecutions: (stream: string, version: string) => Effect.Effect<Execution[], DomainError>;
 	readonly reindex: (repositoryId: number) => Effect.Effect<number, DomainError>;
 	readonly exportJournal: Effect.Effect<{ key: string; value: unknown }[], DomainError>;
 	readonly openSubscriptionIssue: (
@@ -122,33 +123,36 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					yield* executions.put(cancelled);
 				}
 			});
-			const storePromotionPlan = Effect.fnUntraced(function*(promotion: Execution, existing: boolean) {
-				if (promotion.operation !== 'promote' || promotion.releaseSet || !promotion.eventId.startsWith('release:')) {
+			const storeReleasePlan = Effect.fnUntraced(function*(releaseExecution: Execution, existing: boolean) {
+				if (
+					releaseExecution.operation !== releaseOperation || releaseExecution.releaseSet
+					|| !releaseExecution.eventId.startsWith('release:')
+				) {
 					return false;
 				}
-				const stream = promotion.configuration.streams[promotion.stream];
-				if (!stream) return yield* precondition('Unknown promotion stream');
-				const operations = yield* Effect.fromResult(promotionOperations(stream));
+				const stream = releaseExecution.configuration.streams[releaseExecution.stream];
+				if (!stream) return yield* precondition('Unknown release stream');
+				const operations = yield* Effect.fromResult(downstreamOperations(stream));
 				if (!operations.length) return false;
-				const repository = yield* revisions.get(promotion.repositoryId);
-				if (!repository) return yield* precondition('Promotion repository unavailable');
-				const source = yield* revisions.inventoryAt(promotion);
-				const configuration = promotion.configurationSha === promotion.sourceSha
+				const repository = yield* revisions.get(releaseExecution.repositoryId);
+				if (!repository) return yield* precondition('Release repository unavailable');
+				const source = yield* revisions.inventoryAt(releaseExecution);
+				const configuration = releaseExecution.configurationSha === releaseExecution.sourceSha
 					? source
-					: yield* revisions.inventoryAt({ ...promotion, sourceSha: promotion.configurationSha });
+					: yield* revisions.inventoryAt({ ...releaseExecution, sourceSha: releaseExecution.configurationSha });
 				const revision = {
 					defaultBranch: repository.defaultBranch,
 					inventory: { ...source, workflows: configuration.workflows },
 				};
 				const entries: Committed[] = [];
-				const incoming = new Map([[promotion.operation, promotion.id]]);
+				const incoming = new Map([[releaseExecution.operation, releaseExecution.id]]);
 				for (const operation of operations) {
-					const member = yield* deriveExecution(promotion, revision, {
+					const member = yield* deriveExecution(releaseExecution, revision, {
 						operation,
-						stream: promotion.stream,
-						eventId: promotion.eventId,
-						sourceSha: promotion.sourceSha,
-						version: promotion.version,
+						stream: releaseExecution.stream,
+						eventId: releaseExecution.eventId,
+						sourceSha: releaseExecution.sourceSha,
+						version: releaseExecution.version,
 					});
 					if (!(yield* executions.stored(member.id))) {
 						incoming.set(operation, member.id);
@@ -161,7 +165,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					}
 				}
 				if (!existing) {
-					for (const cancelled of yield* supersededExecutions(promotion, incoming)) {
+					for (const cancelled of yield* supersededExecutions(releaseExecution, incoming)) {
 						entries.push({
 							entity: 'execution',
 							id: cancelled.id,
@@ -171,9 +175,9 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					}
 					entries.unshift({
 						entity: 'execution',
-						id: promotion.id,
-						repositoryId: promotion.repositoryId,
-						value: identifyExecution(promotion),
+						id: releaseExecution.id,
+						repositoryId: releaseExecution.repositoryId,
+						value: identifyExecution(releaseExecution),
 					});
 				}
 				const [first, ...rest] = entries;
@@ -243,15 +247,15 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 			});
 			const dispatchCurrentWorkflow = Effect.fnUntraced(function*(execution: Execution) {
 				const clock = yield* Clock.Clock;
-				if (execution.operation !== 'promote' || !retiredStates.includes(execution.state)) {
-					return yield* precondition('Only a failed or cancelled promotion can run the current workflow');
+				if (execution.operation !== releaseOperation || !retiredStates.includes(execution.state)) {
+					return yield* precondition('Only a failed or cancelled release can run the current workflow');
 				}
 				if (execution.attempts === 0 && execution.approvedAt === undefined) {
-					return yield* precondition('Publish this promotion first; it never ran');
+					return yield* precondition('Publish this release first; it never ran');
 				}
 				const record = yield* store.repositories.get(execution.repositoryId);
 				const current = record
-					&& (record.configuration?.streams[execution.stream]?.promote.workflow?.ref ?? record.defaultBranch);
+					&& (record.configuration?.streams[execution.stream]?.release.workflow?.ref ?? record.defaultBranch);
 				const workflow = execution.workflow && current && current !== execution.workflow.ref
 					? { ...execution.workflow, ref: current }
 					: execution.workflow;
@@ -297,11 +301,11 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 								: [];
 						})
 					)),
-				promotions: (stream, version) =>
+				releaseExecutions: (stream, version) =>
 					executions.all.pipe(Effect.map(all =>
 						all
 							.filter(execution =>
-								execution.operation === 'promote' && execution.stream === stream && execution.version === version
+								execution.operation === releaseOperation && execution.stream === stream && execution.version === version
 							)
 							.sort((left, right) => right.createdAt - left.createdAt)
 					)),
@@ -342,7 +346,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						yield* executions.put(started);
 						return started;
 					}
-					if (prior?.operation === 'promote' && execution.approvedBy === 'start') {
+					if (prior?.operation === releaseOperation && execution.approvedBy === 'start') {
 						return yield* restartRelease(prior, execution);
 					}
 					if (prior?.operation === 'prepare' && execution.started && retiredStates.includes(prior.state)) {
@@ -358,7 +362,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						return upgraded;
 					}
 					if (prior) return prior;
-					if (!(yield* storePromotionPlan(execution, false))) {
+					if (!(yield* storeReleasePlan(execution, false))) {
 						yield* supersedePending(execution);
 						yield* executions.put(execution);
 					}
@@ -444,10 +448,10 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					const clock = yield* Clock.Clock;
 					if (action === 'reconcile') yield* storage.remove(Keys.quarantine, id);
 					const execution = yield* executions.get(id);
-					const takeover = action === 'reconcile' || execution.operation !== 'promote'
+					const takeover = action === 'reconcile' || execution.operation !== releaseOperation
 						? undefined
 						: (yield* executions.all).find(other =>
-							other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+							other.id !== execution.id && other.operation === releaseOperation && other.stream === execution.stream
 							&& other.version === execution.version && (other.reclaims?.length ?? 0) > 0
 							&& !retiredStates.includes(other.state)
 						);
@@ -468,7 +472,9 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 							return yield* precondition('Artifacts expired; use the configured preparation/recovery producer');
 						}
 						const publications = reopened(execution.publications);
-						if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
+						if (
+							execution.operation === releaseOperation && execution.attempts === 0 && execution.approvedAt === undefined
+						) {
 							const next: Execution = { ...execution, state: 'awaiting-approval', publications };
 							delete next.reason;
 							yield* executions.put(next);
@@ -476,7 +482,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						} else yield* dispatcher.redispatch(execution, publications, 'Retry requested');
 					} else {
 						const published = yield* releases.published(execution);
-						if (published.state === 'succeeded') yield* storePromotionPlan(published, true);
+						if (published.state === 'succeeded') yield* storeReleasePlan(published, true);
 						if (published !== execution) yield* executions.put(published);
 						yield* wake;
 					}

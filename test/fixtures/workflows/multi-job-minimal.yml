@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: kjanat/beepboop/actions/begin@v1
         id: start
-        with: { execution-id: "${{ inputs.beepboop_execution_id }}", stream: main, operation: promote }
+        with: { execution-id: "${{ inputs.beepboop_execution_id }}", stream: main, operation: release }
       - uses: actions/checkout@v7
         with: { ref: "${{ fromJSON(steps.start.outputs.context).sourceSha }}" }
   publish:
@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: kjanat/beepboop/actions/begin@v1
         id: beepboop
-        with: { execution-id: "${{ inputs.beepboop_execution_id }}", stream: main, operation: promote }
+        with: { execution-id: "${{ inputs.beepboop_execution_id }}", stream: main, operation: release }
       - id: npm
         run: npm publish
       - uses: kjanat/beepboop/actions/report@v1

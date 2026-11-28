@@ -22,7 +22,7 @@ import {
 } from '@root/test/support/ledger.ts';
 import { silenced } from '@root/test/support/process.ts';
 import { crateResponse, npmIntegrity, pypiResponse } from '@root/test/support/registries.ts';
-import { promotions } from '@root/test/support/releases.ts';
+import { releaseExecutions } from '@root/test/support/releases.ts';
 import {
 	crateMetadata,
 	dispatchedPublishWorkflow,
@@ -126,7 +126,7 @@ function stream(name: string, packages: string[], layout: Layout, tagged: boolea
 		required: packages,
 		credentials: Object.keys(layout.secrets),
 		prepare: { strategy: 'managed' },
-		promote: {
+		release: {
 			approval,
 			workflow: {
 				file: `publish-${name}.yml`,
@@ -291,7 +291,7 @@ async function grant(
 			expect(
 				(await api('/api/credentials/grant', {
 					proof: 'proof',
-					selection: { alias, repositoryId: repository.id, stream: name, operation: 'promote', delivery: 'runtime' },
+					selection: { alias, repositoryId: repository.id, stream: name, operation: 'release', delivery: 'runtime' },
 				})).status,
 			).toBe(200);
 		}
@@ -309,13 +309,17 @@ async function released(streams: Record<string, string[]>, layout = cargoLayout,
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(60_000);
 	const begun = new Map<string, { execution: Execution; identity: RunIdentity }>();
-	for (const promotion of await promotions(api)) {
-		const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === promotion.id);
-		if (!run) throw new Error(`No run for ${promotion.stream}: ${promotion.state} ${promotion.reason ?? ''}`);
+	for (const releaseExecution of await releaseExecutions(api)) {
+		const run = repository.runs.find(entry => entry.inputs.beepboop_execution_id === releaseExecution.id);
+		if (!run) {
+			throw new Error(
+				`No run for ${releaseExecution.stream}: ${releaseExecution.state} ${releaseExecution.reason ?? ''}`,
+			);
+		}
 		run.status = 'in_progress';
-		const identity = runIdentity(repository, run, `publish-${promotion.stream}.yml`);
-		await begin(world, identity, promotion.id, promotion.stream, 'promote');
-		begun.set(promotion.stream, { execution: promotion, identity });
+		const identity = runIdentity(repository, run, `publish-${releaseExecution.stream}.yml`);
+		await begin(world, identity, releaseExecution.id, releaseExecution.stream, 'release');
+		begun.set(releaseExecution.stream, { execution: releaseExecution, identity });
 	}
 	return { repository, api, begun };
 }
@@ -330,8 +334,8 @@ async function forcedRelease() {
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(60_000);
-	const [waiting] = await promotions(api);
-	if (waiting?.state !== 'awaiting-approval') throw new Error(`Promotion is ${waiting?.state}`);
+	const [waiting] = await releaseExecutions(api);
+	if (waiting?.state !== 'awaiting-approval') throw new Error(`Release is ${waiting?.state}`);
 	await world.coordinator(repository).enqueue({
 		...waiting,
 		approvedBy: 'start',
@@ -342,7 +346,7 @@ async function forcedRelease() {
 	if (!run) throw new Error('The forced release dispatched no run');
 	run.status = 'in_progress';
 	const identity = runIdentity(repository, run, 'publish-main.yml');
-	await begin(world, identity, waiting.id, 'main', 'promote');
+	await begin(world, identity, waiting.id, 'main', 'release');
 	return { execution: waiting, identity };
 }
 
@@ -502,7 +506,7 @@ test('a failed publish stays retryable and the next run attempt publishes it', a
 	if (!run) throw new Error('Missing run');
 	run.attempt = 2;
 	const retried = { ...identity, attempt: 2 };
-	await begin(world, retried, execution.id, 'main', 'promote');
+	await begin(world, retried, execution.id, 'main', 'release');
 	const second = await publishing(retried, execution.id, state);
 	if (second.result._tag === 'Failure') throw new Error(second.result.failure.message);
 	expect(states(second.result.success)).toEqual([
@@ -543,7 +547,7 @@ test('Beepboop re-runs the failed jobs while the ledger retries a package, for t
 	const seen: unknown[] = [];
 	for (let attempt = 1; attempt <= 4; attempt++) {
 		const current = { ...identity, attempt };
-		if (attempt > 1) await begin(world, current, execution.id, 'main', 'promote');
+		if (attempt > 1) await begin(world, current, execution.id, 'main', 'release');
 		await publishing(current, execution.id, state);
 		seen.push(await failRun(repository, current, execution.id));
 	}
@@ -694,7 +698,7 @@ test('a run waiting on GitHub resumes without retaining its intervention reason'
 		run.status = status;
 		run.conclusion = null;
 		if (status === 'in_progress') {
-			await begin(world, identity, execution.id, 'main', 'promote');
+			await begin(world, identity, execution.id, 'main', 'release');
 			expect((await executionOf(repository, execution.id)).reason).toBeUndefined();
 		}
 		await world.wait(61_000);
@@ -740,7 +744,7 @@ test('a retry after the branch moved finishes a published release whose run left
 	const reopened = await executionOf(repository, execution.id);
 	expect([reopened.state, reopened.runId, reopened.runAttempt, run.attempt]).toEqual(['running', run.id, 2, 2]);
 	expect(reopened.publications.map(p => [p.id, p.outcome])).toEqual([
-		['refs:promote', 'succeeded'],
+		['refs:release', 'succeeded'],
 		['pkg:github/octo/lint', 'succeeded'],
 		[core, 'succeeded'],
 		[cli, 'pending'],
@@ -756,7 +760,7 @@ test('a retry after the branch moved finishes a published release whose run left
 
 	run.status = 'in_progress';
 	const retried = { ...identity, attempt: 2 };
-	await begin(world, retried, execution.id, 'main', 'promote');
+	await begin(world, retried, execution.id, 'main', 'release');
 	const second = await publishing(retried, execution.id, state);
 	if (second.result._tag === 'Failure') throw new Error(second.result.failure.message);
 	expect(states(second.result.success)).toEqual([
@@ -782,7 +786,7 @@ test('a retry after the branch moved finishes a published release whose run left
 	expect([finished.state, finished.publications.map(p => [p.id, p.outcome])]).toEqual([
 		'succeeded',
 		[
-			['refs:promote', 'succeeded'],
+			['refs:release', 'succeeded'],
 			['pkg:github/octo/lint', 'succeeded'],
 			[core, 'succeeded'],
 			[cli, 'succeeded'],
@@ -2018,7 +2022,7 @@ test('an accepted upload stays settled on a later run without another upload', a
 	if (!run) throw new Error('Missing run');
 	run.attempt = 2;
 	const retried = { ...identity, attempt: 2 };
-	await begin(world, retried, execution.id, 'main', 'promote');
+	await begin(world, retried, execution.id, 'main', 'release');
 	const second = await publishing(retried, execution.id, state);
 	if (second.result._tag === 'Failure') throw new Error(second.result.failure.message);
 	expect(states(second.result.success)).toEqual([

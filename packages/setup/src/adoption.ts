@@ -35,7 +35,7 @@ function list(values: string[]): string {
 }
 function bindingName(file: string, taken: Set<string>): string {
 	const stem = slug(file.replace(/\.ya?ml$/, ''));
-	let name = identifierPattern.test(stem) && stem !== 'prepare' && stem !== 'promote' ? stem : `observe-${stem}`;
+	let name = identifierPattern.test(stem) && stem !== 'prepare' && stem !== 'release' ? stem : `observe-${stem}`;
 	name = name.slice(0, 64);
 	const candidate = unusedName(name, index => `${name.slice(0, 60)}-${index}`, used => taken.has(used));
 	taken.add(candidate);

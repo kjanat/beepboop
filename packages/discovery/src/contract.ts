@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 
-export const releaseKinds = ['observes', 'unpublishable', 'promotes', 'prepares'] as const;
+export const releaseKinds = ['observes', 'unpublishable', 'releases', 'prepares'] as const;
 export const streamRelease = mutableStruct({ kind: Schema.Literals(releaseKinds), summary: Schema.String });
 export type StreamRelease = Decoded<typeof streamRelease>;
 

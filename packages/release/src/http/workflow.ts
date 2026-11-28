@@ -7,6 +7,7 @@ import { deliverCredentials } from '@/credentials/http/credentials.ts';
 import { isLockfile, reportableManagerNames } from '@/domain/catalog.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { startsFrom } from '@/domain/release-start.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { requireReady } from '@/domain/repository';
@@ -108,7 +109,7 @@ function observed(context: EnrolledContext, stream: string, operation: string, v
 				observed: true,
 			})
 		);
-		if (execution.operation === 'promote') {
+		if (execution.operation === releaseOperation) {
 			return yield* precondition('The release must be published in Beepboop before registration');
 		}
 		if (!execution.workflow) return yield* precondition('Operation is not a workflow');
@@ -184,7 +185,7 @@ export const workflowEndpoints = {
 				return yield* observed(context, stream, operation, version);
 			}));
 			const execution = yield* owned(context, id);
-			if (execution.operation === 'promote') yield* context.service.prepareJsr(execution);
+			if (execution.operation === releaseOperation) yield* context.service.prepareJsr(execution);
 			const registered = yield* context.service.coordinators.register(
 				context.identity.repositoryId,
 				id,

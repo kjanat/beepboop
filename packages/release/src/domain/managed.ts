@@ -14,7 +14,7 @@ export function preparationBody(execution: Pick<Execution, 'configuration' | 'st
 	if (started) {
 		return `Started from ${startLabels[started.via]}. Merging this PR publishes the release, and nothing asks again.`;
 	}
-	const policy = execution.configuration.streams[execution.stream]?.promote.approval ?? 'required';
+	const policy = execution.configuration.streams[execution.stream]?.release.approval ?? 'required';
 	return `\`publishWhen: ${publishWhenNames[policy]}\`: ${publishWhenSentences[policy]}`;
 }
 

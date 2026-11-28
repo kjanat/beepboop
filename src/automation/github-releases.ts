@@ -223,8 +223,8 @@ export class GitHubReleases extends Context.Service<GitHubReleases, {
 					if (!publishesGithubRelease(execution)) {
 						return yield* precondition(`Add github-release:${execution.repository} to this operation's publications`);
 					}
-					if (!(yield* refPublication.promoted(execution))) {
-						return yield* precondition('Release operation requires completed promotion');
+					if (!(yield* refPublication.releaseCompleted(execution))) {
+						return yield* precondition('Release operation requires a completed release');
 					}
 					if (
 						workflow.refs?.distribution

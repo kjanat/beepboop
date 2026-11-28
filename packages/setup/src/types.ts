@@ -17,13 +17,13 @@ export const versionings: readonly Versioning[] = ['workspace', 'independent', '
 export const triggerHandovers: readonly TriggerHandover[] = ['review', 'dispatchOnly', 'preserve'];
 export type SetupOption =
 	| { kind: 'package' | 'required'; stream: string; package: string }
-	| { kind: 'workflow'; stream: string; operation: 'prepare' | 'promote'; file: string; job?: string }
+	| { kind: 'workflow'; stream: string; operation: 'prepare' | 'release'; file: string; job?: string }
 	| { kind: 'versioning'; stream: string; value: Versioning }
 	| { kind: 'approval'; stream: string; value: Approval }
 	| { kind: 'start'; stream: string; value: ConfigurableStart }
 	| { kind: 'bump'; stream: string; value: VersionBump }
 	| { kind: 'versionPrMerge'; stream: string; value: VersionPrMerge }
-	| { kind: 'triggers'; stream: string; operation: 'prepare' | 'promote'; value: TriggerHandover }
+	| { kind: 'triggers'; stream: string; operation: 'prepare' | 'release'; value: TriggerHandover }
 	| { kind: 'binary'; stream: string; build: BinaryBuild; targets: BinaryTarget[] }
 	| { kind: 'target'; stream: string; target: BinaryTarget };
 export interface SetupEdit {

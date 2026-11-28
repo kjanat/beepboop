@@ -127,7 +127,7 @@ test('the dashboard offers action releases for nested metadata without requiring
 	expect(form.textContent).toContain('Enable immutable Releases');
 	change(action, 'source');
 	const commands = control(
-		role(form, 'promote'),
+		role(form, 'release'),
 		'Shell commands that publish the selected packages',
 		window.HTMLTextAreaElement,
 	);
@@ -150,7 +150,7 @@ test('distribution commands stay editable and are read from an existing reportin
 	const form = await open(repository.name);
 	change(control(form, 'GitHub Action release refs', window.HTMLSelectElement), 'distribution');
 	const commands = control(
-		role(form, 'promote'),
+		role(form, 'release'),
 		'Shell commands that publish the selected packages',
 		window.HTMLTextAreaElement,
 	);
@@ -181,7 +181,7 @@ test('the dashboard asks for the security key only for a grant the server accept
 	});
 	const grant = (repositoryId: number) => (proof: string | undefined) => ({
 		proof,
-		selection: { alias: 'npm-token', repositoryId, stream: 'main', operation: 'promote', delivery: 'runtime' },
+		selection: { alias: 'npm-token', repositoryId, stream: 'main', operation: 'release', delivery: 'runtime' },
 	});
 	const unconfigured = widget(world.github, { configured: false });
 	const session = bearer(world, await world.cliSession());
@@ -205,7 +205,7 @@ test('the dashboard asks for the security key only for a grant the server accept
 test('new publishing workflows get editable filenames, jobs and triggers automatically', async () => {
 	widget(world.github, { configured: false });
 	const form = await open('octo/widget');
-	const publishing = role(form, 'promote');
+	const publishing = role(form, 'release');
 	change(control(publishing, 'Publishing workflow', window.HTMLSelectElement), 'new');
 	const filename = control(publishing, 'Workflow file (you can rename it)', window.HTMLInputElement);
 	expect(filename.value).toBe('release-widget.yml');
@@ -268,7 +268,7 @@ jobs:
 `,
 	}, 'Add a workflow with two jobs');
 	const form = await open(repository.name);
-	const publishing = role(form, 'promote');
+	const publishing = role(form, 'release');
 	change(control(publishing, 'Publishing workflow', window.HTMLSelectElement), 'other.yml');
 	const job = control(publishing, 'Which job publishes these packages?', window.HTMLSelectElement);
 	expect(job.disabled).toBe(false);
@@ -301,7 +301,7 @@ jobs:
 `,
 	});
 	const form = await open(repository.name);
-	const publishing = role(form, 'promote');
+	const publishing = role(form, 'release');
 	change(control(publishing, 'Publishing workflow', window.HTMLSelectElement), 'publish.yml');
 	const mapping = (name: string) => control(publishing, `Publishing step for ${name}`, window.HTMLSelectElement);
 	const commands = control(publishing, 'Shell commands that publish the selected packages', window.HTMLTextAreaElement);
@@ -337,7 +337,7 @@ test('Cargo setup creates one workflow with preparation and publishing jobs', as
 		'src/lib.rs': '',
 	});
 	const form = await open(repository.name);
-	const publishing = role(form, 'promote'), preparing = role(form, 'prepare');
+	const publishing = role(form, 'release'), preparing = role(form, 'prepare');
 	expect(control(publishing, 'Workflow file (you can rename it)', window.HTMLInputElement).value).toBe(
 		'release-my-crate.yml',
 	);
@@ -358,7 +358,7 @@ test('Cargo setup creates one workflow with preparation and publishing jobs', as
 	const workflow = world.github.file(repository, '.github/workflows/release-my-crate.yml', 'automation/onboarding')
 		?? '';
 	expect(workflow).toContain("inputs.beepboop_operation == 'prepare'");
-	expect(workflow).toContain("inputs.beepboop_operation == 'publish'");
+	expect(workflow).toContain("inputs.beepboop_operation == 'release'");
 	expect(workflow).toContain('uses: kjanat/beepboop/actions/publish@v1');
 	const binding = mutableStruct({ file: Schema.String, inputs: mutableStruct({ beepboop_operation: Schema.String }) });
 	const configuration = decodeSync(
@@ -366,14 +366,14 @@ test('Cargo setup creates one workflow with preparation and publishing jobs', as
 			streams: mutableStruct({
 				main: mutableStruct({
 					prepare: mutableStruct({ workflow: binding }),
-					promote: mutableStruct({ workflow: binding }),
+					release: mutableStruct({ workflow: binding }),
 				}),
 			}),
 		}),
 		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
 	);
 	expect(configuration.streams.main.prepare.workflow.inputs.beepboop_operation).toBe('prepare');
-	expect(configuration.streams.main.promote.workflow.inputs.beepboop_operation).toBe('publish');
+	expect(configuration.streams.main.release.workflow.inputs.beepboop_operation).toBe('release');
 	await act(form, 'preview');
 	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	world.github.merge(repository, 1);
@@ -384,7 +384,7 @@ test('Cargo setup creates one workflow with preparation and publishing jobs', as
 	await act(configured, 'preview');
 	expect(configured.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
 	world.github.push(repository, {
-		'.github/workflows/release-my-crate.yml': workflow.replace("== 'publish'", "== 'prepare'"),
+		'.github/workflows/release-my-crate.yml': workflow.replace("== 'release'", "== 'prepare'"),
 	}, 'Change the publication job condition');
 	await act(configured, 'preview');
 	expect(configured.querySelector('.setup-result')?.textContent).toContain(
@@ -403,7 +403,7 @@ test('extension manifests require explicit publishing commands instead of npm su
 		}),
 	});
 	const form = await open('octo/extension');
-	const publishing = role(form, 'promote');
+	const publishing = role(form, 'release');
 	const commands = control(publishing, 'Shell commands that publish the selected packages', window.HTMLTextAreaElement);
 	expect(commands.value).toBe('');
 	expect(commands.required).toBe(true);
@@ -422,7 +422,7 @@ test('generated npm targets require explicit commands, including alongside ordin
 		'packages/ordinary/package.json': '{"name":"ordinary","version":"1.0.0"}',
 	});
 	const form = await open(repository.name);
-	const publishing = role(form, 'promote'), preparing = role(form, 'prepare');
+	const publishing = role(form, 'release'), preparing = role(form, 'prepare');
 	const commands = control(publishing, 'Shell commands that publish the selected packages', window.HTMLTextAreaElement);
 	const ordinary = control(form, 'ordinary (packages/ordinary/package.json)', window.HTMLInputElement);
 	const targets = ['@octo/widget-linux-x64', '@octo/widget-darwin-arm64', '@octo/widget'].map(name =>
@@ -474,7 +474,7 @@ test('existing shared Go workflows do not require replacement preparation comman
 			required: [],
 			versioning: 'workspace',
 			prepare: { file: 'release.yml', job: 'check', commands: 'go test ./...' },
-			promote: { file: 'release.yml', job: 'ship', commands: 'goreleaser release' },
+			release: { file: 'release.yml', job: 'ship', commands: 'goreleaser release' },
 		}],
 	};
 	const preview = await api('/api/repositories/setup/preview', { repository: repository.name, choices });
@@ -518,7 +518,7 @@ for (const locked of [false, true]) {
 		const repository = widget(world.github, { configured: false });
 		if (locked) world.github.push(repository, { 'package-lock.json': '{"lockfileVersion":3}\n' }, 'Add a lockfile');
 		const form = await open('octo/widget');
-		const publishing = role(form, 'promote'), preparing = role(form, 'prepare');
+		const publishing = role(form, 'release'), preparing = role(form, 'prepare');
 		const publication = control(publishing, 'Publishing workflow', window.HTMLSelectElement);
 		const preparation = control(preparing, 'How should release changes be prepared?', window.HTMLSelectElement);
 		change(publication, 'new');
@@ -543,7 +543,12 @@ test('an observed stream rejects a package its workflows do not publish', async 
 				main: {
 					packages: ['pkg:npm/a'],
 					workflows: {
-						release: { file: 'release.yml', mode: 'observe', ref: 'refs/tags/v*', publications: ['pkg:npm/a'] },
+						'observe-release': {
+							file: 'release.yml',
+							mode: 'observe',
+							ref: 'refs/tags/v*',
+							publications: ['pkg:npm/a'],
+						},
 					},
 				},
 			},
@@ -575,7 +580,7 @@ test('an observed workflow keeps its needs, its publications without a box and t
 			packages: ['pkg:cargo/tool', 'pkg:cargo/extra'],
 			required: ['pkg:cargo/tool'],
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file: 'release.yml',
 				job: 'publish',
 				triggers: 'review',
@@ -583,11 +588,11 @@ test('an observed workflow keeps its needs, its publications without a box and t
 				publicationSteps: {},
 			},
 			observe: [{
-				name: 'release',
+				name: 'observe-release',
 				file: 'github-release.yml',
 				ref: 'refs/tags/v*',
 				publications: ['pkg:github/octo/tool'],
-				needs: ['promote'],
+				needs: ['release'],
 			}],
 		}],
 	});
@@ -602,7 +607,7 @@ test('an observed workflow keeps its needs, its publications without a box and t
 	)
 		.toEqual(['pkg:cargo/tool']);
 	const form = await open('octo/tool');
-	expect(role(form, 'promote').hidden).toBe(false);
+	expect(role(form, 'release').hidden).toBe(false);
 	await act(form, 'preview');
 	expect(form.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
 });
@@ -624,7 +629,7 @@ test('a package ticked for an observed stream with its own publishing workflow i
 			packages: ['pkg:cargo/tool'],
 			required: ['pkg:cargo/tool'],
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file: 'release.yml',
 				job: 'publish',
 				triggers: 'review',
@@ -632,7 +637,7 @@ test('a package ticked for an observed stream with its own publishing workflow i
 				publicationSteps: {},
 			},
 			observe: [{
-				name: 'release',
+				name: 'observe-release',
 				file: 'github-release.yml',
 				ref: 'refs/tags/v*',
 				publications: ['pkg:github/octo/tool'],
@@ -671,14 +676,19 @@ test('an observed stream with only a preparation workflow gets no publishing wor
 				commands: 'cargo update --workspace',
 				publicationSteps: {},
 			},
-			observe: [{ name: 'release', file: 'github-release.yml', ref: 'refs/tags/v*', publications: ['pkg:cargo/tool'] }],
+			observe: [{
+				name: 'observe-release',
+				file: 'github-release.yml',
+				ref: 'refs/tags/v*',
+				publications: ['pkg:cargo/tool'],
+			}],
 		}],
 	});
 	world.github.merge(repository, 1);
 	passChecks(repository, world.github.head(repository));
 	const form = await open('octo/tool');
 	expect(role(form, 'prepare').hidden).toBe(false);
-	expect(role(form, 'promote').hidden).toBe(true);
+	expect(role(form, 'release').hidden).toBe(true);
 	await act(form, 'preview');
 	expect(form.querySelector('.setup-result')?.textContent).toContain('No file changes needed.');
 });
@@ -703,16 +713,16 @@ test('a tag publisher gets a Beepboop release workflow that only pushes the tag'
 	});
 	passChecks(repository, world.github.head(repository));
 	const form = await open('octo/tagged');
-	expect(role(form, 'promote').hidden).toBe(false);
+	expect(role(form, 'release').hidden).toBe(false);
 	await act(form, 'preview');
 	const result = form.querySelector('.setup-result')?.textContent ?? '';
 	expect(result).toContain('release-main.yml');
-	expect(result).toContain('"needs": ["promote"]');
+	expect(result).toContain('"needs": ["release"]');
 	expect(result).toContain('kjanat/beepboop/actions/publish-refs@v1');
 	expect(result).not.toContain('kjanat/beepboop/actions/publish@v1');
 	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	const commands = control(
-		role(form, 'promote'),
+		role(form, 'release'),
 		'Shell commands that publish the selected packages',
 		window.HTMLTextAreaElement,
 	);
@@ -739,15 +749,15 @@ test('an inferred stream keeps its workflow until observation is cleared', async
 		window.HTMLInputElement,
 	);
 	expect(keep.checked).toBe(true);
-	expect(role(form, 'promote').hidden).toBe(false);
+	expect(role(form, 'release').hidden).toBe(false);
 	expect(role(form, 'prepare').hidden).toBe(true);
-	expect(role(form, 'promote').hasAttribute('disabled')).toBe(false);
+	expect(role(form, 'release').hasAttribute('disabled')).toBe(false);
 	await act(form, 'preview');
 	expect(form.querySelector('button[value="apply"]')?.hasAttribute('disabled')).toBe(false);
 	expect(form.querySelector('.setup-result')?.textContent).toContain('"mode": "observe"');
 	toggle(keep, false);
-	expect(role(form, 'promote').hidden).toBe(false);
-	expect(role(form, 'promote').hasAttribute('disabled')).toBe(false);
+	expect(role(form, 'release').hidden).toBe(false);
+	expect(role(form, 'release').hasAttribute('disabled')).toBe(false);
 	await expect(act(form, 'preview')).rejects.toThrow('Select at least one package to release.');
 });
 
@@ -767,7 +777,7 @@ test('the dashboard renders a control for every stream and publication workflow 
 		expect([field, form.querySelector(`[data-field~="${field}"]`) !== null]).toEqual([field, true]);
 	}
 	expect(form.querySelector('[data-field="actionRelease"]')).toBeNull();
-	const publishing = role(form, 'promote');
+	const publishing = role(form, 'release');
 	for (const field of workflowFields) {
 		expect([field, publishing.querySelector(`[data-field~="${field}"]`) !== null]).toEqual([field, true]);
 	}
@@ -775,7 +785,7 @@ test('the dashboard renders a control for every stream and publication workflow 
 
 test('the dashboard proposes the crate binary for Unix targets and writes edited fields into the setup', async () => {
 	const form = await open(toolRepository().name);
-	const publishing = role(form, 'promote');
+	const publishing = role(form, 'release');
 	expect(control(publishing, 'tool (Cargo, Cargo.toml)', window.HTMLInputElement).checked).toBe(true);
 	expect(control(publishing, 'linux-amd64', window.HTMLInputElement).checked).toBe(true);
 	expect(control(publishing, 'windows-amd64', window.HTMLInputElement).checked).toBe(false);

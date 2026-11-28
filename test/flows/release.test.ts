@@ -6,7 +6,7 @@ import { ownerId } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { loggedErrors } from '@root/test/support/process.ts';
-import { approvePromotion, only, prepareRelease } from '@root/test/support/releases.ts';
+import { approveRelease, only, prepareRelease } from '@root/test/support/releases.ts';
 import { editableConfiguration, jsonFile, npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
 import { fakeSigner, signingKey } from '@root/test/support/signing.ts';
 import type { World } from '@root/test/support/world.ts';
@@ -85,9 +85,9 @@ test('a managed release travels from discovery to a verified publication', async
 	passChecks(repository, merged.sha);
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(1_000);
-	const promotion = await only(api, 'promote');
-	expect(promotion.state).toBe('awaiting-approval');
-	expect(promotion.sourceSha).toBe(merged.sha);
+	const releaseExecution = await only(api, 'release');
+	expect(releaseExecution.state).toBe('awaiting-approval');
+	expect(releaseExecution.sourceSha).toBe(merged.sha);
 
 	let open = 0, peak = 0, failing = false;
 	world.network.serve('api.github.com', async request => {
@@ -99,30 +99,30 @@ test('a managed release travels from discovery to a verified publication', async
 		open--;
 		return response;
 	});
-	const readiness = await api('/api/executions/approval', { id: promotion.id });
+	const readiness = await api('/api/executions/approval', { id: releaseExecution.id });
 	expect(readiness.body).toEqual({ problems: [], blocked: [] });
 	expect(peak).toBeGreaterThanOrEqual(4);
 	failing = true;
-	const unreadable = await api('/api/executions/approval', { id: promotion.id });
+	const unreadable = await api('/api/executions/approval', { id: releaseExecution.id });
 	expect(unreadable.status).not.toBe(200);
 	world.network.serve('api.github.com', request => world.github.handle(request));
-	const approved = await api('/api/executions/approve', { id: promotion.id, sourceSha: merged.sha });
+	const approved = await api('/api/executions/approve', { id: releaseExecution.id, sourceSha: merged.sha });
 	expect(text(approved.body, 'state')).toBe('ready');
 
 	await world.wait(16_000);
 	const [dispatch] = world.github.dispatches;
-	expect(dispatch?.inputs.beepboop_execution_id).toBe(promotion.id);
+	expect(dispatch?.inputs.beepboop_execution_id).toBe(releaseExecution.id);
 	const run = repository.runs.at(-1);
 	if (!run) throw new Error('No workflow run');
 	run.status = 'in_progress';
 	const identity = runIdentity(repository, run, 'publish.yml');
-	const begun = await begin(world, identity, promotion.id, 'main', 'promote');
-	expect(begun.outputs['execution-id']).toBe(promotion.id);
+	const begun = await begin(world, identity, releaseExecution.id, 'main', 'release');
+	expect(begun.outputs['execution-id']).toBe(releaseExecution.id);
 	expect(text(JSON.parse(begun.outputs.context ?? '{}'), 'state')).toBe('running');
 
 	world.npm.publish('widget', '1.1.0');
 	const reported = await runAction(world, 'report', identity, {
-		EXECUTION_ID: promotion.id,
+		EXECUTION_ID: releaseExecution.id,
 		PUBLICATIONS: JSON.stringify([
 			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome: 'succeeded' },
 			{
@@ -135,18 +135,18 @@ test('a managed release travels from discovery to a verified publication', async
 		]),
 	});
 	expect(reported.outputs.result).toContain('"outcome":"succeeded"');
-	expect((await only(api, 'promote')).release).toMatchObject({ tag: 'v1.1.0', commit: merged.sha });
+	expect((await only(api, 'release')).release).toMatchObject({ tag: 'v1.1.0', commit: merged.sha });
 
 	run.status = 'completed';
 	run.conclusion = 'success';
 	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 	await world.wait(2_000);
-	expect((await only(api, 'promote')).state).toBe('succeeded');
+	expect((await only(api, 'release')).state).toBe('succeeded');
 	const journal = await world.coordinator(repository).exportJournal();
 	const executions = journal.filter(entry => entry.key.startsWith('execution:')).map(entry =>
 		decodeExecutionV1(entry.value)
 	);
-	expect(executions.map(execution => execution.operation).sort()).toEqual(['prepare', 'promote']);
+	expect(executions.map(execution => execution.operation).sort()).toEqual(['prepare', 'release']);
 	for (const execution of executions) {
 		expect(execution.id).toBe(
 			await Effect.runPromise(
@@ -156,7 +156,7 @@ test('a managed release travels from discovery to a verified publication', async
 	}
 	const preparation = executions.find(execution => execution.operation === 'prepare');
 	expect(preparation?.eventId).toBe(`plan:${text(plan.body, 'planId')}`);
-	const succeeded = await only(api, 'promote');
+	const succeeded = await only(api, 'release');
 	expect(journal.find(entry => entry.key.startsWith('release-event:'))?.value).toMatchObject({
 		release: { tag: 'v1.1.0', commit: merged.sha },
 	});
@@ -167,7 +167,7 @@ test('a managed release travels from discovery to a verified publication', async
 	expect(world.network.unrouted).toEqual([]);
 });
 
-async function finishedPromotion(outcome: 'pending' | 'skipped' | 'cancelled', published = false) {
+async function finishedRelease(outcome: 'pending' | 'skipped' | 'cancelled', published = false) {
 	const conclusion = outcome === 'cancelled' ? 'cancelled' : 'success';
 	const session = await world.cliSession();
 	const repository = await discoveredWidget(world, session);
@@ -176,21 +176,21 @@ async function finishedPromotion(outcome: 'pending' | 'skipped' | 'cancelled', p
 	passChecks(repository, raised.sha);
 	await world.push(repository);
 	await world.wait(1_000);
-	const { promotion } = await approvePromotion(api, raised.sha);
-	expect(promotion.state).toBe('awaiting-approval');
+	const { releaseExecution } = await approveRelease(api, raised.sha);
+	expect(releaseExecution.state).toBe('awaiting-approval');
 	await world.wait(16_000);
 	const run = repository.runs.at(-1);
 	if (!run) throw new Error('No workflow run');
 	run.status = 'in_progress';
 	const identity = runIdentity(repository, run, 'publish.yml');
-	await begin(world, identity, promotion.id, 'main', 'promote');
+	await begin(world, identity, releaseExecution.id, 'main', 'release');
 	const token = await runAction(world, 'token', identity, {
-		EXECUTION_ID: promotion.id,
+		EXECUTION_ID: releaseExecution.id,
 		PERMISSIONS: '{"contents":"read"}',
 		TOKEN_IDENTITY: 'true',
 	});
 	await runAction(world, 'report', identity, {
-		EXECUTION_ID: promotion.id,
+		EXECUTION_ID: releaseExecution.id,
 		PUBLICATIONS: JSON.stringify([
 			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome },
 		]),
@@ -201,14 +201,14 @@ async function finishedPromotion(outcome: 'pending' | 'skipped' | 'cancelled', p
 	await world.workflowRun(repository, run, conclusion, 'workflow_dispatch');
 	await world.wait(2_000);
 	const entry = (await world.coordinator(repository).exportJournal()).find(entry =>
-		entry.key === `execution:${promotion.id}`
+		entry.key === `execution:${releaseExecution.id}`
 	);
 	const stored = decodeSync(mutableRecord(Schema.String, Schema.Unknown), entry?.value);
-	return { api, repository, raised, promotion, stored, token, finished: await only(api, 'promote') };
+	return { api, repository, raised, releaseExecution, stored, token, finished: await only(api, 'release') };
 }
 
 test('the token action outputs the bot identity as an insertable Git environment', async () => {
-	const { token } = await finishedPromotion('pending');
+	const { token } = await finishedRelease('pending');
 	const login = token.outputs['bot-login'];
 	const email = token.outputs['bot-email'];
 	expect(login).toMatch(/\[bot\]$/);
@@ -221,7 +221,7 @@ test('the token action outputs the bot identity as an insertable Git environment
 });
 
 test('a finished run whose registry publication appears late is verified without a second approval', async () => {
-	const { api, repository, raised, promotion, stored, finished } = await finishedPromotion('pending');
+	const { api, repository, raised, releaseExecution, stored, finished } = await finishedRelease('pending');
 	expect(finished.state).toBe('verifying');
 	expect(finished.publications.map(publication => publication.outcome)).toEqual(['pending']);
 	expect(stored['state']).toBe('verifying');
@@ -240,11 +240,13 @@ test('a finished run whose registry publication appears late is verified without
 	expect(releaseSummaries([{ ...finished, state: 'awaiting-approval' }]).map(release => release.attention)).toEqual([
 		true,
 	]);
-	expect((await api('/api/executions/approve', { id: promotion.id, sourceSha: raised.sha })).status).not.toBe(200);
+	expect((await api('/api/executions/approve', { id: releaseExecution.id, sourceSha: raised.sha })).status).not.toBe(
+		200,
+	);
 
 	world.npm.publish('widget', '1.1.0');
 	await world.wait(61_000);
-	const settled = await only(api, 'promote');
+	const settled = await only(api, 'release');
 	expect(settled.state).toBe('succeeded');
 	expect(settled.publications.map(publication => publication.outcome)).toEqual(['succeeded']);
 	expect(world.github.dispatches).toHaveLength(1);
@@ -293,7 +295,7 @@ test('a finished run whose registry publication appears late is verified without
 });
 
 test('the overview counts only runs that still need the user and shows each version as one release', async () => {
-	const { finished, repository } = await finishedPromotion('pending');
+	const { finished, repository } = await finishedRelease('pending');
 	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('No stored repository');
 	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
@@ -308,8 +310,8 @@ test('the overview counts only runs that still need the user and shows each vers
 	const readable = [
 		run('prepare-failed', 1, { ...prepared, state: 'failed' }),
 		run('prepare-done', 2, { ...prepared, state: 'succeeded' }),
-		run('promote-cancelled', 3, { state: 'cancelled' }),
-		run('promote-done', 4, { state: 'succeeded', publications: published }),
+		run('release-cancelled', 3, { state: 'cancelled' }),
+		run('release-done', 4, { state: 'succeeded', publications: published }),
 		run('abandoned', 5, { version: '1.0.9', state: 'cancelled' }),
 		run('waiting', 6, { version: '2.0.0', state: 'awaiting-approval' }),
 		run('next-prepared', 7, { ...prepared, version: '2.1.0', state: 'succeeded' }),
@@ -333,7 +335,7 @@ test('the overview counts only runs that still need the user and shows each vers
 	);
 	expect(statuses).toEqual({
 		[finished.version ?? '']: [
-			['prepare-failed', 'prepare-done', 'promote-cancelled', 'promote-done'],
+			['prepare-failed', 'prepare-done', 'release-cancelled', 'release-done'],
 			`✓ ${finished.version}`,
 		],
 		'1.0.9': [['abandoned'], 'Needs attention'],
@@ -363,15 +365,15 @@ test('the overview counts only runs that still need the user and shows each vers
 	expect(texts('.release-path li')).toContain('Publish commit');
 	expect(texts('.release-path li')).not.toContain('Approve commit');
 	const text = page.document.body.textContent;
-	expect(text).toContain('Publication run');
+	expect(text).toContain('Release run');
 	expect(text).toContain('Preparation run');
 	expect(text).toContain('waiting for you to publish');
-	expect(texts('*')).not.toContain('promote');
+	expect(texts('*')).not.toContain('release');
 	await page.happyDOM.close();
 });
 
 test('a run cancelled after a newer release started stays below the unfinished release', async () => {
-	const { finished, repository } = await finishedPromotion('pending');
+	const { finished, repository } = await finishedRelease('pending');
 	const record = await Effect.runPromise(new Store(world.db).repositories.get(repository.id));
 	if (!record) throw new Error('No stored repository');
 	const run = (id: string, createdAt: number, updatedAt: number, changes: Partial<Execution>): Execution => ({
@@ -444,7 +446,7 @@ test('GitHub package links preserve literal tags while GoReleaser keeps its vers
 test.each(['1.1.0', 'v1.1.0', 'widget-v1.1.0', 'tools/v1.1.0'])(
 	'the runs page preserves release tag %s in its publication table and run card',
 	async tag => {
-		const { finished } = await finishedPromotion('pending');
+		const { finished } = await finishedRelease('pending');
 		const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
 			...finished,
 			id,
@@ -475,15 +477,15 @@ test.each(['1.1.0', 'v1.1.0', 'widget-v1.1.0', 'tools/v1.1.0'])(
 		};
 		const readable = [
 			run('crates', 5, { operation: 'crates', state: 'running', runId: 44, runAttempt: 1 }),
-			run('release', 4, {
-				operation: 'release',
+			run('observe-release', 4, {
+				operation: 'observe-release',
 				state: 'failed',
 				runId: 43,
 				runAttempt: 2,
 				publications: [{ ...wheel, outcome: 'succeeded' }, { ...notes, outcome: 'succeeded' }],
 			}),
-			run('promote', 3, { state: 'succeeded', publications: [{ ...npm, outcome: 'succeeded' }] }),
-			run('promote-cancelled', 2, { state: 'cancelled' }),
+			run('release', 3, { state: 'succeeded', publications: [{ ...npm, outcome: 'succeeded' }] }),
+			run('release-cancelled', 2, { state: 'cancelled' }),
 			run('prepare', 1, { operation: 'prepare', state: 'succeeded' }),
 		];
 		const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
@@ -505,8 +507,8 @@ test.each(['1.1.0', 'v1.1.0', 'widget-v1.1.0', 'tools/v1.1.0'])(
 		)
 			.toEqual([
 				['prepare', 'ok'],
-				['promote', 'ok'],
-				['release', 'error'],
+				['release', 'ok'],
+				['observe-release', 'error'],
 				['crates', 'active'],
 			]);
 		expect(words('.pipeline li small')).toEqual([
@@ -539,9 +541,9 @@ test.each(['1.1.0', 'v1.1.0', 'widget-v1.1.0', 'tools/v1.1.0'])(
 		expect(all('.stage-detail').map(detail => [detail.querySelector('.run-card')?.id, detail.hasAttribute('open')]))
 			.toEqual([
 				['prepare', false],
-				['promote', false],
-				['promote-cancelled', false],
-				['release', true],
+				['release', false],
+				['release-cancelled', false],
+				['observe-release', true],
 				['crates', true],
 			]);
 		expect(page.document.body.textContent).not.toContain('Still to publish');
@@ -550,7 +552,7 @@ test.each(['1.1.0', 'v1.1.0', 'widget-v1.1.0', 'tools/v1.1.0'])(
 );
 
 test('the runs page filters by repository and folds a settled release', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
 	const { runId: _runId, runAttempt: _runAttempt, workflowSha: _workflowSha, ...unstarted } = finished;
 	const actor = 'ab'.repeat(16);
@@ -626,10 +628,10 @@ test('the runs page filters by repository and folds a settled release', async ()
 	expect([...needingUser([prepared], completed)]).toEqual([]);
 	expect([...needingUser([prepared])]).toEqual(['prepare-failed']);
 	expect([...needingUser([{ ...prepared, updatedAt: 9 }], completed)]).toEqual(['prepare-failed']);
-	expect([...needingUser([{ ...prepared, operation: 'promote' }], completed)]).toEqual(['prepare-failed']);
+	expect([...needingUser([{ ...prepared, operation: 'release' }], completed)]).toEqual(['prepare-failed']);
 	const built = completed.map(entry => ({ ...entry, version: `${entry.version}+build` }));
 	expect([...needingUser([prepared], built)]).toEqual([]);
-	expect([...needingUser([{ ...prepared, operation: 'promote' }], built)]).toEqual(['prepare-failed']);
+	expect([...needingUser([{ ...prepared, operation: 'release' }], built)]).toEqual(['prepare-failed']);
 	expect([...needingUser([{ ...prepared, version: 'unversioned' }], completed)]).toEqual([]);
 	expect([...needingUser([prepared], completed.map(entry => ({ ...entry, version: 'unversioned' })))]).toEqual([
 		'prepare-failed',
@@ -690,7 +692,7 @@ test('the runs page filters by repository and folds a settled release', async ()
 });
 
 test('the runs loader reads one repository when the page names it', async () => {
-	const { finished, repository } = await finishedPromotion('pending');
+	const { finished, repository } = await finishedRelease('pending');
 	const load = (name?: string) =>
 		world.run(loaders.runs({ env: world.env, actor: 'admin', ...(name ? { repository: name } : {}) }));
 	const named = await load(repository.name);
@@ -707,7 +709,7 @@ test('the runs loader reads one repository when the page names it', async () => 
 });
 
 test('an earlier run that still needs the user decides its stage and stays unfolded', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
 	const readable: Execution[] = [
 		{ ...finished, id: 'unknown', state: 'uncertain', publications: [], createdAt: 1 },
@@ -749,7 +751,7 @@ test('an earlier run that still needs the user decides its stage and stays unfol
 });
 
 test('a stage whose run failed after publishing is green and says the run failed', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
 	const readable = [{ ...finished, state: 'succeeded' as const, reason: runFailedNote, publications: published }];
 	const [release] = releaseSummaries(readable);
@@ -757,7 +759,7 @@ test('a stage whose run failed after publishing is green and says the run failed
 	const view = pipeline(release, Date.now());
 	expect([view?.status.label, view?.stages.map(stage => [stage.operation, stage.tone, stage.note])]).toEqual([
 		`✓ ${finished.version}`,
-		[['promote', 'ok', 'succeeded, workflow run failed']],
+		[['release', 'ok', 'succeeded, workflow run failed']],
 	]);
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/Runs.astro'));
 	const container = await experimental_AstroContainer.create();
@@ -770,7 +772,7 @@ test('a stage whose run failed after publishing is green and says the run failed
 });
 
 test('a verified release badge shows a check and its version with the count in the tooltip', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
 	const releases = releaseSummaries([{ ...finished, state: 'succeeded', publications: published }]);
 	const loaded: unknown = await import(join(import.meta.dir, '../../src/components/ReleaseSummary.astro'));
@@ -795,7 +797,7 @@ test('a verified release badge shows a check and its version with the count in t
 });
 
 test('a stage with one execution per package stays unfinished until every package succeeds', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
 		...finished,
 		id,
@@ -827,7 +829,7 @@ test('a stage with one execution per package stays unfinished until every packag
 });
 
 test('stages follow the configured order and leave out the ones a release skipped', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const stream = finished.configuration.streams[finished.stream];
 	if (!stream) throw new Error('No stream');
 	const binding = { file: 'lint.yml', inputs: {}, required: true };
@@ -837,11 +839,11 @@ test('stages follow the configured order and leave out the ones a release skippe
 			...finished.configuration.streams,
 			[finished.stream]: {
 				...stream,
-				promote: { ...stream.promote, workflow: { ...binding, file: 'release.yml', needs: ['lint'] } },
+				release: { ...stream.release, workflow: { ...binding, file: 'release.yml', needs: ['lint'] } },
 				workflows: {
 					lint: binding,
-					release: { ...binding, file: 'observed.yml', needs: ['promote'] },
-					crates: { ...binding, file: 'crates.yml', needs: ['release'] },
+					'observe-release': { ...binding, file: 'observed.yml', needs: ['release'] },
+					crates: { ...binding, file: 'crates.yml', needs: ['observe-release'] },
 				},
 			},
 		},
@@ -864,21 +866,21 @@ test('stages follow the configured order and leave out the ones a release skippe
 	};
 	expect(stagesOf([run('lint', 1, { operation: 'lint', state: 'succeeded' })])).toEqual([
 		['lint', 'succeeded', [false]],
-		['promote', 'not run', []],
 		['release', 'not run', []],
+		['observe-release', 'not run', []],
 		['crates', 'not run', []],
 	]);
-	expect(stagesOf([run('observed', 1, { operation: 'release', state: 'cancelled' })])).toEqual([
-		['release', 'cancelled', [true]],
+	expect(stagesOf([run('observed', 1, { operation: 'observe-release', state: 'cancelled' })])).toEqual([
+		['observe-release', 'cancelled', [true]],
 		['crates', 'not run', []],
 	]);
 });
 
 test('a release stays publishing until the observed workflow that owns its packages finishes', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const stream = finished.configuration.streams[finished.stream];
-	const workflow = stream?.promote.workflow;
-	if (!stream || !workflow) throw new Error('No promote workflow');
+	const workflow = stream?.release.workflow;
+	if (!stream || !workflow) throw new Error('No release workflow');
 	const [npm] = finished.publications;
 	if (!npm) throw new Error('No publication');
 	const owned = {
@@ -888,7 +890,7 @@ test('a release stays publishing until the observed workflow that owns its packa
 			required: true,
 			mode: 'observe' as const,
 			ref: 'refs/tags/v*',
-			needs: ['promote'],
+			needs: ['release'],
 			publications: ['pkg:npm/widget'],
 		},
 	};
@@ -898,15 +900,21 @@ test('a release stays publishing until the observed workflow that owns its packa
 			...finished.configuration.streams,
 			[finished.stream]: {
 				...stream,
-				promote: { ...stream.promote, workflow: { ...workflow, publications: [] } },
+				release: { ...stream.release, workflow: { ...workflow, publications: [] } },
 				workflows,
 			},
 		},
 	});
 	const configuration = configured(owned);
-	const promoted: Execution = { ...finished, configuration, state: 'succeeded', publications: [], createdAt: 1 };
+	const succeededRelease: Execution = {
+		...finished,
+		configuration,
+		state: 'succeeded',
+		publications: [],
+		createdAt: 1,
+	};
 	const observed = (state: Execution['state'], outcome: 'succeeded' | 'failed' | 'cancelled'): Execution => ({
-		...promoted,
+		...succeededRelease,
 		id: 'observed',
 		operation: 'publish',
 		eventId: 'observed:1',
@@ -920,28 +928,28 @@ test('a release stays publishing until the observed workflow that owns its packa
 		return [releaseStatus(release), release.unfinished, pipeline(release, Date.now())?.open];
 	};
 	const none = '0 of 1 required publications verified';
-	expect(shown([promoted])).toEqual([{ tone: 'active', label: 'Publishing', detail: none }, true, true]);
-	expect(shown([promoted, observed('succeeded', 'succeeded')])).toEqual([
+	expect(shown([succeededRelease])).toEqual([{ tone: 'active', label: 'Publishing', detail: none }, true, true]);
+	expect(shown([succeededRelease, observed('succeeded', 'succeeded')])).toEqual([
 		{ tone: 'ok', label: `✓ ${finished.version}`, detail: '1 of 1 required publications verified' },
 		false,
 		false,
 	]);
-	expect(shown([promoted, observed('failed', 'failed')])[0]).toEqual({
+	expect(shown([succeededRelease, observed('failed', 'failed')])[0]).toEqual({
 		tone: 'warn',
 		label: 'Needs attention',
 		detail: none,
 	});
-	expect(shown([promoted, observed('cancelled', 'cancelled')])[0]).toEqual({
+	expect(shown([succeededRelease, observed('cancelled', 'cancelled')])[0]).toEqual({
 		tone: 'warn',
 		label: 'Needs attention',
 		detail: none,
 	});
-	const alone = { ...promoted, configuration: configured({}) };
+	const alone = { ...succeededRelease, configuration: configured({}) };
 	expect(shown([alone])[0]).toEqual({ tone: 'ok', label: 'succeeded', detail: none });
 });
 
 test('two releases of one repository with different tags both stay in the publication table', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const [npm] = finished.publications;
 	if (!npm) throw new Error('No publication');
 	const { identity: _identity, ...bare } = npm;
@@ -964,7 +972,7 @@ test('two releases of one repository with different tags both stay in the public
 });
 
 test('a later run replaces a failed run only for the same release target', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const run = (id: string, at: number, changes: Partial<Execution>): Execution => ({
 		...finished,
 		id,
@@ -1001,7 +1009,7 @@ test('a later run replaces a failed run only for the same release target', async
 });
 
 test('a run that publishes once its checks pass is not waiting for the user', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const waiting = { ...finished, id: 'waiting', state: 'awaiting-approval' as const };
 	const started = { ...waiting, id: 'started', approvedBy: 'start' as const };
 	const streams = finished.configuration.streams;
@@ -1014,7 +1022,7 @@ test('a run that publishes once its checks pass is not waiting for the user', as
 			...finished.configuration,
 			streams: {
 				...streams,
-				[finished.stream]: { ...stream, promote: { ...stream.promote, approval: 'push' as const } },
+				[finished.stream]: { ...stream, release: { ...stream.release, approval: 'push' as const } },
 			},
 		},
 	};
@@ -1044,7 +1052,7 @@ test('a run that publishes once its checks pass is not waiting for the user', as
 });
 
 test('a newer active run decides the release badge over earlier verified publications', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const published = finished.publications.map(publication => ({ ...publication, outcome: 'succeeded' as const }));
 	const done = { ...finished, id: 'done', state: 'succeeded' as const, publications: published, createdAt: 1 };
 	const rerun = { ...finished, id: 'rerun', state: 'running' as const, publications: [], createdAt: 2 };
@@ -1054,7 +1062,7 @@ test('a newer active run decides the release badge over earlier verified publica
 });
 
 test('runs created in the same millisecond have one order whatever the input order', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	const failed = { ...finished, id: 'a-failed', state: 'failed' as const, createdAt: 5 };
 	const retried = { ...finished, id: 'b-running', state: 'running' as const, createdAt: 5 };
 	for (const input of [[failed, retried], [retried, failed]]) {
@@ -1068,21 +1076,21 @@ test('runs created in the same millisecond have one order whatever the input ord
 });
 
 test('a registry outage during verification is retried once the registry answers again', async () => {
-	const { api } = await finishedPromotion('pending');
+	const { api } = await finishedRelease('pending');
 	world.network.serve('registry.npmjs.org', () => new Response('unavailable', { status: 503 }));
 	await world.wait(61_000);
-	expect((await only(api, 'promote')).state).toBe('uncertain');
+	expect((await only(api, 'release')).state).toBe('uncertain');
 
 	world.network.serve('registry.npmjs.org', request => world.npm.handle(request));
 	world.npm.publish('widget', '1.1.0');
 	await world.wait(61_000);
-	const settled = await only(api, 'promote');
+	const settled = await only(api, 'release');
 	expect(settled.state).toBe('succeeded');
 	expect(world.github.dispatches).toHaveLength(1);
 });
 
 test('a finished run whose publication cannot be rechecked is blocked and needs attention', async () => {
-	const { finished } = await finishedPromotion('skipped');
+	const { finished } = await finishedRelease('skipped');
 	expect(finished.state).toBe('blocked');
 	expect(finished.publications.map(publication => publication.outcome)).toEqual(['skipped']);
 	expect(runCard(finished, Date.now()).missing).toEqual(['pkg:npm/widget']);
@@ -1099,14 +1107,14 @@ test('a finished run whose publication cannot be rechecked is blocked and needs 
 });
 
 test('a cancelled run with a cancelled publication settles as cancelled', async () => {
-	const { finished, stored } = await finishedPromotion('cancelled');
+	const { finished, stored } = await finishedRelease('cancelled');
 	expect(finished.state).toBe('cancelled');
 	expect(finished.publications.map(publication => publication.outcome)).toEqual(['cancelled']);
 	expect(decodeExecutionV1(stored).state).toBe('cancelled');
 });
 
 test('a cancelled publication already on the registry when the run ends settles as succeeded', async () => {
-	const { finished } = await finishedPromotion('cancelled', true);
+	const { finished } = await finishedRelease('cancelled', true);
 	expect([finished.state, finished.publications.map(publication => publication.outcome)]).toEqual([
 		'succeeded',
 		['succeeded'],
@@ -1114,19 +1122,19 @@ test('a cancelled publication already on the registry when the run ends settles 
 });
 
 test('the package watcher settles a cancelled publication once its version appears', async () => {
-	const { api } = await finishedPromotion('cancelled');
+	const { api } = await finishedRelease('cancelled');
 	const watch = () => world.run(Automation.use(service => service.scheduled));
 	world.npm.publish('widget', '1.0.0');
 	await watch();
 	await world.wait(61_000);
-	const waiting = await only(api, 'promote');
+	const waiting = await only(api, 'release');
 	expect([waiting.state, waiting.publications.map(publication => publication.outcome)]).toEqual([
 		'cancelled',
 		['cancelled'],
 	]);
 	world.npm.publish('widget', '1.1.0');
 	await watch();
-	const settled = await only(api, 'promote');
+	const settled = await only(api, 'release');
 	expect([settled.state, settled.publications.map(publication => publication.outcome)]).toEqual([
 		'succeeded',
 		['succeeded'],
@@ -1134,10 +1142,10 @@ test('the package watcher settles a cancelled publication once its version appea
 });
 
 test('a definite registry failure replaces a cancelled publication', async () => {
-	const { api, repository } = await finishedPromotion('cancelled');
+	const { api, repository } = await finishedRelease('cancelled');
 	world.network.serve('registry.npmjs.org', () => Response.json({ name: 'widget', version: '1.1.0' }));
 	await world.coordinator(repository).packagePublished('npm', 'widget', '1.1.0');
-	const settled = await only(api, 'promote');
+	const settled = await only(api, 'release');
 	expect([settled.state, settled.publications.map(publication => publication.outcome)]).toEqual([
 		'failed',
 		['failed'],
@@ -1145,20 +1153,20 @@ test('a definite registry failure replaces a cancelled publication', async () =>
 });
 
 test('an operator cancellation stays cancelled when the registry later shows the version', async () => {
-	const { api, repository, promotion } = await finishedPromotion('cancelled');
-	const cancelled = await world.coordinator(repository).cancel(promotion.id, String(ownerId));
+	const { api, repository, releaseExecution } = await finishedRelease('cancelled');
+	const cancelled = await world.coordinator(repository).cancel(releaseExecution.id, String(ownerId));
 	expect(cancelled.cancelledBy).toBe(String(ownerId));
 	world.npm.publish('widget', '1.1.0');
 	await world.coordinator(repository).packagePublished('npm', 'widget', '1.1.0');
-	const stopped = await only(api, 'promote');
+	const stopped = await only(api, 'release');
 	expect([stopped.state, stopped.publications.map(publication => publication.outcome)]).toEqual([
 		'cancelled',
 		['cancelled'],
 	]);
 });
 
-test('a stored blocked promotion decodes as verifying only when a recheck can settle it', async () => {
-	const { stored } = await finishedPromotion('pending');
+test('a stored blocked release decodes as verifying only when a recheck can settle it', async () => {
+	const { stored } = await finishedRelease('pending');
 	expect(decodeExecutionV1({ ...stored, state: 'blocked' }).state).toBe('verifying');
 	const workflow = {
 		...decodeSync(mutableRecord(Schema.String, Schema.Unknown), stored['workflow']),
@@ -1168,7 +1176,7 @@ test('a stored blocked promotion decodes as verifying only when a recheck can se
 });
 
 test('the state filter matches the state a stored blocked run decodes to and keeps the limit correct', async () => {
-	const { stored, finished } = await finishedPromotion('pending');
+	const { stored, finished } = await finishedRelease('pending');
 	const workflow = {
 		...decodeSync(mutableRecord(Schema.String, Schema.Unknown), stored['workflow']),
 		publications: ['pkg:npm/other'],
@@ -1178,7 +1186,7 @@ test('the state filter matches the state a stored blocked run decodes to and kee
 		{ id: finished.id, document: { ...stored, state: 'blocked' }, updatedAt: 3_000 },
 		{
 			id: 'legacy-approval',
-			document: { ...unapproved, id: 'legacy-approval', operation: 'promote', attempts: 0, state: 'blocked' },
+			document: { ...unapproved, id: 'legacy-approval', operation: 'release', attempts: 0, state: 'blocked' },
 			updatedAt: 2_000,
 		},
 		{
@@ -1204,11 +1212,11 @@ test('the state filter matches the state a stored blocked run decodes to and kee
 	expect(await found(['verifying', 'awaiting-approval'], 1)).toEqual([[finished.id, 'verifying']]);
 });
 
-test('a promotion whose workflow branch was deleted fails with the missing ref named', async () => {
+test('a release whose workflow branch was deleted fails with the missing ref named', async () => {
 	const repository = widget(world.github);
 	world.npm.publish('widget', '1.0.0');
 	const configuration = editableConfiguration();
-	configuration.streams.main.promote.workflow.ref = 'release-line';
+	configuration.streams.main.release.workflow.ref = 'release-line';
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Release from a branch');
 	passChecks(repository, world.github.head(repository));
 	const api = bearer(world, await world.cliSession());
@@ -1223,13 +1231,13 @@ test('a promotion whose workflow branch was deleted fails with the missing ref n
 	repository.refs.set('heads/release-line', merged.sha);
 	await world.push(repository);
 	await world.wait(1_000);
-	const { promotion, approved } = await approvePromotion(api, merged.sha);
+	const { releaseExecution, approved } = await approveRelease(api, merged.sha);
 	expect(text(approved.body, 'state')).toBe('ready');
 
 	repository.refs.delete('heads/release-line');
 	await world.wait(16_000);
 	expect(world.github.dispatches).toEqual([]);
-	expect((await only(api, 'promote')).reason).toBe(
+	expect((await only(api, 'release')).reason).toBe(
 		'Beepboop could not continue: Workflow ref release-line no longer exists',
 	);
 });
@@ -1241,7 +1249,7 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 	configuration.streams.main = {
 		...configuration.streams.main,
 		versionScope: 'per-package',
-		promote: { ...configuration.streams.main.promote, publishWhen: 'version-pr-merged' },
+		release: { ...configuration.streams.main.release, publishWhen: 'version-pr-merged' },
 	};
 	const head = world.github.push(
 		repository,
@@ -1276,9 +1284,9 @@ test('a merge-approved release whose merge cannot be confirmed waits for approva
 		error:
 			`GitHub HTTP 403 on GET /repos/octo/widget/compare/${merged.sha}...${merged.sha}: Resource not accessible by integration`,
 	})]);
-	const promotion = await only(api, 'promote');
-	expect(promotion.state).toBe('awaiting-approval');
-	expect(promotion.approvedBy).toBeUndefined();
+	const releaseExecution = await only(api, 'release');
+	expect(releaseExecution.state).toBe('awaiting-approval');
+	expect(releaseExecution.approvedBy).toBeUndefined();
 });
 
 test('the signer binding signs the version tag without a signed ref policy', async () => {
@@ -1286,9 +1294,9 @@ test('the signer binding signs the version tag without a signed ref policy', asy
 	try {
 		const signer = fakeSigner(key);
 		const { plan, tags } = await packedRelease(world, undefined, { key, signer });
-		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
-		expect(promotion.state).toBe('succeeded');
-		expect(promotion.publications.find(entry => entry.id === 'refs:promote')?.outcome).toBe('succeeded');
+		const releaseExecution = await only(bearer(world, await world.cliSession()), 'release');
+		expect(releaseExecution.state).toBe('succeeded');
+		expect(releaseExecution.publications.find(entry => entry.id === 'refs:release')?.outcome).toBe('succeeded');
 		expect(plan.changes[0]?.signed).toBe(true);
 		expect(plan.publicKey).toBe(key.publicKey);
 		expect(signer.calls).toEqual([{
@@ -1317,12 +1325,12 @@ test('a successful release creates the signed tags of its published packages', a
 		const signer = fakeSigner(key);
 		const { repository, plan } = await packedRelease(world, undefined, { key, signer }, false, undefined, false, true);
 		await settled(() => repository.refs.has('tags/widget-v1.1.0'));
-		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
-		expect(promotion.state).toBe('succeeded');
+		const releaseExecution = await only(bearer(world, await world.cliSession()), 'release');
+		expect(releaseExecution.state).toBe('succeeded');
 		expect(plan.changes.map(change => change.name)).toEqual(['v1.1.0']);
 		const ref = repository.refs.get('tags/widget-v1.1.0');
 		const tag = ref === undefined ? undefined : repository.tagObjects.get(ref);
-		expect([tag?.name, tag?.commit, tag?.verified]).toEqual(['widget-v1.1.0', promotion.sourceSha, true]);
+		expect([tag?.name, tag?.commit, tag?.verified]).toEqual(['widget-v1.1.0', releaseExecution.sourceSha, true]);
 		expect(signer.calls.map(call => /^tag (.+)$/m.exec(call.data)?.[1])).toEqual(['v1.1.0', 'widget-v1.1.0']);
 	} finally {
 		key.dispose();
@@ -1347,11 +1355,11 @@ test('a release tags the packages it started with after discovery drops them', a
 			true,
 		);
 		await settled(() => repository.refs.has('tags/widget-v1.1.0'));
-		const promotion = await only(api, 'promote');
+		const releaseExecution = await only(api, 'release');
 		const ref = repository.refs.get('tags/widget-v1.1.0');
-		expect([promotion.state, ref === undefined ? undefined : repository.tagObjects.get(ref)?.commit]).toEqual([
+		expect([releaseExecution.state, ref === undefined ? undefined : repository.tagObjects.get(ref)?.commit]).toEqual([
 			'succeeded',
-			promotion.sourceSha,
+			releaseExecution.sourceSha,
 		]);
 	} finally {
 		key.dispose();
@@ -1374,11 +1382,11 @@ test('a package tag a release cannot create is logged and leaves the release suc
 		);
 		await settled(() => [...repository.tagObjects.values()].some(tag => tag.name === 'widget-v1.1.0'));
 		await world.wait(10_000);
-		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
-		expect([promotion.state, repository.refs.has('tags/widget-v1.1.0')]).toEqual(['succeeded', false]);
+		const releaseExecution = await only(bearer(world, await world.cliSession()), 'release');
+		expect([releaseExecution.state, repository.refs.has('tags/widget-v1.1.0')]).toEqual(['succeeded', false]);
 		expect(logged.events()).toContainEqual(expect.objectContaining({
 			event: 'package-tags.failed',
-			executionId: promotion.id,
+			executionId: releaseExecution.id,
 			tag: 'widget-v1.1.0',
 			error: 'GitHub did not verify the signature of widget-v1.1.0 (unsigned)',
 		}));
@@ -1401,11 +1409,11 @@ test('a later publication of the released version creates the package tags the r
 			true,
 		);
 		await settled(() => [...repository.tagObjects.values()].some(tag => tag.name === 'widget-v1.1.0'));
-		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
-		expect([promotion.state, repository.refs.has('tags/widget-v1.1.0')]).toEqual(['succeeded', false]);
+		const releaseExecution = await only(bearer(world, await world.cliSession()), 'release');
+		expect([releaseExecution.state, repository.refs.has('tags/widget-v1.1.0')]).toEqual(['succeeded', false]);
 		world.github.verifiesTags = true;
 		await world.coordinator(repository).enqueue({
-			...promotion,
+			...releaseExecution,
 			id: 'observed-publication',
 			operation: 'npm-backfill',
 			eventId: 'observed:1',
@@ -1413,7 +1421,7 @@ test('a later publication of the released version creates the package tags the r
 		});
 		await settled(() => repository.refs.has('tags/widget-v1.1.0'));
 		const ref = repository.refs.get('tags/widget-v1.1.0');
-		expect(ref === undefined ? undefined : repository.tagObjects.get(ref)?.commit).toBe(promotion.sourceSha);
+		expect(ref === undefined ? undefined : repository.tagObjects.get(ref)?.commit).toBe(releaseExecution.sourceSha);
 	} finally {
 		key.dispose();
 	}
@@ -1434,8 +1442,8 @@ test('a release without packageTags creates no package tag', async () => {
 
 test('a companion module tag is pushed on the release commit beside the version tag', async () => {
 	const { plan, tags } = await packedRelease(world, undefined, undefined, false, 'github.com/octo/widget/go');
-	const promotion = await only(bearer(world, await world.cliSession()), 'promote');
-	expect(promotion.state).toBe('succeeded');
+	const releaseExecution = await only(bearer(world, await world.cliSession()), 'release');
+	expect(releaseExecution.state).toBe('succeeded');
 	expect(plan.changes.map(change => change.name)).toEqual(['v1.1.0', 'go/v1.1.0']);
 	expect(new Set(plan.changes.map(change => change.commit)).size).toBe(1);
 	expect(Object.keys(tags)).toEqual(['v1.1.0', 'go/v1.1.0']);
@@ -1478,22 +1486,24 @@ test(
 
 test('a published release settles its failed operation only once the companion tag is on the commit too', async () => {
 	const states: unknown[] = [];
-	const scenario = async (promotionId: string) => {
+	const scenario = async (releaseExecutionId: string) => {
 		const target = world.github.repository('octo/widget');
 		const api = bearer(world, await world.cliSession());
 		const snapshot = async () => {
-			const promotion = await only(api, 'promote');
+			const releaseExecution = await only(api, 'release');
 			states.push([
-				promotion.state,
-				decodeSync(mutableArray(looseStruct({ id: Schema.String })), promotion.publications).map(entry => entry.id)
+				releaseExecution.state,
+				decodeSync(mutableArray(looseStruct({ id: Schema.String })), releaseExecution.publications).map(entry =>
+					entry.id
+				)
 					.sort(),
 			]);
 		};
 		const run = target.runs.filter(entry => entry.path === '.github/workflows/publish.yml').at(-1);
-		if (!run) throw new Error('No promote run');
+		if (!run) throw new Error('No release run');
 		world.npm.publish('widget', '1.1.0');
 		await runAction(world, 'report', runIdentity(target, run, 'publish.yml'), {
-			EXECUTION_ID: promotionId,
+			EXECUTION_ID: releaseExecutionId,
 			PUBLICATIONS: JSON.stringify([
 				{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.1.0', outcome: 'succeeded' },
 			]),
@@ -1506,7 +1516,7 @@ test('a published release settles its failed operation only once the companion t
 		const draft = target.releases.find(release => release.draft);
 		if (!draft) throw new Error('No draft release');
 		draft.draft = false;
-		const source = (await only(api, 'promote')).sourceSha;
+		const source = (await only(api, 'release')).sourceSha;
 		world.github.recordTag(target, 'v1.1.0', 'a'.repeat(40), source, true);
 		await world.releasePublished(target, 'v1.1.0');
 		await world.wait(16_000);
@@ -1523,23 +1533,23 @@ test('a published release settles its failed operation only once the companion t
 	expect(states).toEqual([
 		['failed', ['pkg:npm/widget']],
 		['failed', ['pkg:github/octo/widget', 'pkg:npm/widget']],
-		['succeeded', ['pkg:github/octo/widget', 'pkg:npm/widget', 'refs:promote']],
+		['succeeded', ['pkg:github/octo/widget', 'pkg:npm/widget', 'refs:release']],
 	]);
 }, 30_000);
 
 test('a retry after the branch moved refuses a release whose module tag is missing or on another commit', async () => {
 	const seen: unknown[] = [];
 	let refusal = '';
-	const scenario = async (promotionId: string) => {
+	const scenario = async (releaseExecutionId: string) => {
 		const target = world.github.repository('octo/widget');
 		const api = bearer(world, await world.cliSession());
 		const run = target.runs.filter(entry => entry.path === '.github/workflows/publish.yml').at(-1);
-		if (!run) throw new Error('No promote run');
+		if (!run) throw new Error('No release run');
 		run.status = 'completed';
 		run.conclusion = 'failure';
 		await world.workflowRun(target, run, 'failure', 'workflow_dispatch');
 		await world.wait(16_000);
-		const failed = await only(api, 'promote');
+		const failed = await only(api, 'release');
 		seen.push([failed.state, failed.moduleTags]);
 		target.refs.set('tags/v1.1.0', failed.sourceSha);
 		const file = '.github/workflows/publish.yml';
@@ -1549,7 +1559,7 @@ test('a retry after the branch moved refuses a release whose module tag is missi
 			failed.sourceSha.slice(0, 12)
 		}; prepare the release again`;
 		const retry = async () => {
-			const reply = await api('/api/executions/recover', { id: promotionId, action: 'retry' });
+			const reply = await api('/api/executions/recover', { id: releaseExecutionId, action: 'retry' });
 			seen.push([reply.status, reply.status === 200 ? run.attempt : text(reply.body, 'error')]);
 		};
 		await retry();
@@ -1558,7 +1568,7 @@ test('a retry after the branch moved refuses a release whose module tag is missi
 		target.refs.set('tags/go/v1.1.0', failed.sourceSha);
 		await retry();
 		await world.wait(16_000);
-		seen.push([(await only(api, 'promote')).runAttempt, run.attempt]);
+		seen.push([(await only(api, 'release')).runAttempt, run.attempt]);
 		throw new Error('scenario complete');
 	};
 	await expect(packedRelease(world, scenario, undefined, false, 'github.com/octo/widget/go')).rejects.toThrow(
@@ -1576,10 +1586,10 @@ test('a retry after the branch moved refuses a release whose module tag is missi
 test('a release stored without its companion modules reads them from discovery', async () => {
 	const { plan } = await packedRelease(
 		world,
-		async promotionId => {
+		async releaseExecutionId => {
 			const target = world.github.repository('octo/widget');
 			const storage = world.coordinators.instance(String(target.id)).storage;
-			const key = `execution:${promotionId}`;
+			const key = `execution:${releaseExecutionId}`;
 			const stored = decodeSync(looseStruct({ moduleTags: Schema.Unknown }), await storage.get(key));
 			expect(stored.moduleTags).toEqual([{ id: 'pkg:golang/github.com/octo/widget/go', prefix: 'go/v' }]);
 			delete stored.moduleTags;
@@ -1596,8 +1606,8 @@ test('signed version tags fall back to the runner key without a signer binding',
 	const key = signingKey('Beepboop <bot@example.com>');
 	try {
 		const { plan, tags } = await packedRelease(world, undefined, { key });
-		const promotion = await only(bearer(world, await world.cliSession()), 'promote');
-		expect(promotion.state).toBe('succeeded');
+		const releaseExecution = await only(bearer(world, await world.cliSession()), 'release');
+		expect(releaseExecution.state).toBe('succeeded');
 		expect(plan.publicKey).toBeUndefined();
 		expect(plan.changes[0]?.object).toBeUndefined();
 		expect(tags['v1.1.0']).toContain('tagger Beepboop <bot@example.com>');
@@ -1633,22 +1643,23 @@ test('ref planning refuses a signing key without a name and email', async () => 
 }, 30_000);
 
 test('packed prepare and refs runtimes publish the planned tag', async () => {
-	const { repository, promotionId, plan, tags } = await packedRelease(world);
+	const { repository, releaseExecutionId, plan, tags } = await packedRelease(world);
 	expect(plan.publicKey).toBeUndefined();
 	expect(tags['v1.1.0']).not.toContain('-----BEGIN PGP SIGNATURE-----');
 	const api = bearer(world, await world.cliSession());
-	const promotion = await only(api, 'promote');
-	expect(promotion.id).toBe(promotionId);
-	expect(promotion.state).toBe('succeeded');
-	expect(promotion.publications.some(entry => entry.id === 'refs:promote' && entry.outcome === 'succeeded')).toBe(
-		true,
-	);
-	expect(world.github.file(repository, 'package.json', promotion.sourceSha)).toContain('"version": "1.1.0"');
+	const releaseExecution = await only(api, 'release');
+	expect(releaseExecution.id).toBe(releaseExecutionId);
+	expect(releaseExecution.state).toBe('succeeded');
+	expect(releaseExecution.publications.some(entry => entry.id === 'refs:release' && entry.outcome === 'succeeded'))
+		.toBe(
+			true,
+		);
+	expect(world.github.file(repository, 'package.json', releaseExecution.sourceSha)).toContain('"version": "1.1.0"');
 	const journal = await world.coordinator(repository).exportJournal();
 	expect(
 		journal.filter(entry => entry.key.startsWith('execution:')).map(entry => decodeExecutionV1(entry.value).operation)
 			.sort(),
-	).toEqual(['prepare', 'promote']);
+	).toEqual(['prepare', 'release']);
 	expect(world.github.unhandled).toEqual([]);
 	expect(world.network.unrouted).toEqual([]);
 }, 30_000);
@@ -1696,9 +1707,9 @@ test('publish-release replaces the draft notes with one copy free of bot attribu
 		'',
 		'**Full Changelog**: https://github.com/octo/widget/commits/v1.1.0',
 	].join('\n'));
-	const promotion = await only(bearer(world, await world.cliSession()), 'promote');
-	expect(promotion.state).toBe('succeeded');
-	expect(promotion.publications.find(entry => entry.manager === 'github-release')).toMatchObject({
+	const releaseExecution = await only(bearer(world, await world.cliSession()), 'release');
+	expect(releaseExecution.state).toBe('succeeded');
+	expect(releaseExecution.publications.find(entry => entry.manager === 'github-release')).toMatchObject({
 		id: 'pkg:github/octo/widget',
 		version: 'v1.1.0',
 		outcome: 'succeeded',
@@ -1720,11 +1731,11 @@ test('publish-release drops the contributor section when only bots contributed',
 test('publish-release creates a missing release with the same cleaned notes', async () => {
 	const { repository } = await packedRelease(
 		world,
-		async promotionId => {
+		async releaseExecutionId => {
 			const target = world.github.repository('octo/widget');
 			target.releases = [];
 			const storage = world.coordinators.instance(String(target.id)).storage;
-			const key = `execution:${promotionId}`;
+			const key = `execution:${releaseExecutionId}`;
 			const stored = decodeSync(looseStruct({ draftRelease: Schema.Unknown }), await storage.get(key));
 			delete stored.draftRelease;
 			await storage.put(key, stored);
@@ -1744,7 +1755,7 @@ test('publish-release creates a missing release with the same cleaned notes', as
 }, 30_000);
 
 test('completion evidence survives execution pagination and later auxiliary work cannot move its timestamp', async () => {
-	const { finished, repository } = await finishedPromotion('pending');
+	const { finished, repository } = await finishedRelease('pending');
 	const store = new Store(world.db), coordinator = world.coordinator(repository);
 	const required = ['pkg:npm/widget', 'pkg:npm/other'];
 	const configuration = {
@@ -1821,7 +1832,7 @@ test('completion evidence survives execution pagination and later auxiliary work
 });
 
 test('many legacy blocked run IDs are normalized once without hiding an older verifying execution', async () => {
-	const { stored, finished } = await finishedPromotion('pending');
+	const { stored, finished } = await finishedRelease('pending');
 	await world.db.prepare('DELETE FROM executions').run();
 	const insert = world.db.prepare(
 		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',
@@ -1877,7 +1888,7 @@ test('many legacy blocked run IDs are normalized once without hiding an older ve
 });
 
 test('the parent publishes a companion tag and the module stream reuses it only at the same commit', async () => {
-	const { repository, promotionId } = await packedRelease(
+	const { repository, releaseExecutionId } = await packedRelease(
 		world,
 		undefined,
 		undefined,
@@ -1886,7 +1897,7 @@ test('the parent publishes a companion tag and the module stream reuses it only 
 		true,
 	);
 	const coordinator = world.coordinator(repository), store = new Store(world.db);
-	const parent = await coordinator.execution(promotionId);
+	const parent = await coordinator.execution(releaseExecutionId);
 	if (!parent) throw new Error('Missing parent');
 	expect(parent.state).toBe('succeeded');
 	const original = repository.refs.get('tags/go/v1.1.0');
@@ -1911,7 +1922,7 @@ test('the parent publishes a companion tag and the module stream reuses it only 
 		const execution = await world.run(
 			createExecution(ready, {
 				stream: 'sdk',
-				operation: 'promote',
+				operation: 'release',
 				eventId: `sdk:${sourceSha}`,
 				sourceSha,
 				version: '1.1.0',
@@ -1941,7 +1952,7 @@ test('the parent publishes a companion tag and the module stream reuses it only 
 }, 30000);
 
 test('repository filters render only their own readable and unreadable runs even outside the global page', async () => {
-	const { finished, repository } = await finishedPromotion('pending');
+	const { finished, repository } = await finishedRelease('pending');
 	const store = new Store(world.db);
 	const original = await Effect.runPromise(store.repositories.get(repository.id));
 	if (!original) throw new Error('Missing repository');
@@ -1998,7 +2009,7 @@ test('repository filters render only their own readable and unreadable runs even
 });
 
 test('legacy normalization bounds UTF-8 batch parameters and preserves concurrent document updates', async () => {
-	const { finished } = await finishedPromotion('pending');
+	const { finished } = await finishedRelease('pending');
 	await world.db.prepare('DELETE FROM executions').run();
 	const insert = world.db.prepare(
 		'INSERT INTO executions(id,repository_id,state,document,updated_at) VALUES(?,?,?,?,?)',

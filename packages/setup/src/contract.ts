@@ -7,6 +7,7 @@ import {
 	validTagPrefix,
 	workflowFilePattern,
 } from '@/domain/catalog.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { approvalPolicies, startChannel, versionBump } from '@/domain/release-start.ts';
 import { versionPrMerge } from '@/domain/setup-terms.ts';
 import { versionFileSchema } from '@/domain/version-files.ts';
@@ -41,8 +42,8 @@ const operation = strictStruct(
 		...{
 			name: refined(
 				identifier,
-				name => name !== 'prepare' && name !== 'promote',
-				'prepare and promote are reserved operation names',
+				name => name !== 'prepare' && name !== releaseOperation,
+				'prepare and release are reserved operation names',
 			),
 			backfill: Schema.optional(Schema.Literal(true)),
 			needs: mutableArray(identifier),
@@ -76,38 +77,37 @@ export const actionRelease = Schema.Union([
 		)).check(Schema.isMinLength(1)),
 	}),
 ]);
-export const setupStream = strictStruct(
-	mutableStruct({
-		name: identifier,
-		packages: mutableArray(Schema.String),
-		versioning: Schema.Literals(streamVersionings),
-		approval: Schema.optional(Schema.Literals(approvalPolicies)),
-		start: Schema.optional(mutableArray(startChannel)),
-		bump: Schema.optional(versionBump),
-		versionPrMerge: Schema.optional(versionPrMerge),
-		actionRelease: Schema.optional(actionRelease),
-		required: mutableArray(Schema.String),
-		versionSource: Schema.optional(strictStruct(
-			mutableStruct({
-				kind: Schema.Literal('tags'),
-				prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix'),
-			}).fields,
-		)),
-		versionFiles: Schema.optional(mutableArray(versionFileSchema)),
-		companionModules: Schema.optional(mutableArray(Schema.String)),
-		observe: Schema.optional(mutableArray(observed)),
-		needs: Schema.optional(mutableRecord(Schema.String, mutableArray(Schema.String))),
-		prepare: Schema.optional(setupWorkflow),
-		promote: Schema.optional(setupWorkflow),
-		operations: Schema.optional(mutableArray(operation)),
-	}).fields,
-);
+const setupStreamFields = mutableStruct({
+	name: identifier,
+	packages: mutableArray(Schema.String),
+	versioning: Schema.Literals(streamVersionings),
+	approval: Schema.optional(Schema.Literals(approvalPolicies)),
+	start: Schema.optional(mutableArray(startChannel)),
+	bump: Schema.optional(versionBump),
+	versionPrMerge: Schema.optional(versionPrMerge),
+	actionRelease: Schema.optional(actionRelease),
+	required: mutableArray(Schema.String),
+	versionSource: Schema.optional(strictStruct(
+		mutableStruct({
+			kind: Schema.Literal('tags'),
+			prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix'),
+		}).fields,
+	)),
+	versionFiles: Schema.optional(mutableArray(versionFileSchema)),
+	companionModules: Schema.optional(mutableArray(Schema.String)),
+	observe: Schema.optional(mutableArray(observed)),
+	needs: Schema.optional(mutableRecord(Schema.String, mutableArray(Schema.String))),
+	prepare: Schema.optional(setupWorkflow),
+	release: Schema.optional(setupWorkflow),
+	operations: Schema.optional(mutableArray(operation)),
+}).fields;
+export const setupStream = strictStruct(setupStreamFields);
 type SetupStream = Decoded<typeof setupStream>;
 export function bumpable(stream: SetupStream): boolean {
-	return !!stream.promote && stream.versionSource?.kind !== 'tags';
+	return !!stream.release && stream.versionSource?.kind !== 'tags';
 }
 export function startable(stream: SetupStream): boolean {
-	return !!stream.promote && stream.versioning !== 'independent';
+	return !!stream.release && stream.versioning !== 'independent';
 }
 export const setupChoicesSchema = strictStruct(
 	mutableStruct({

@@ -89,12 +89,12 @@ release and returns at once. Spinners and progress bars stay off when the
 output is not a terminal, and `NO_COLOR` turns off the colors and links. See [Start a release](automation.md#start-a-release).
 
 For a managed stream that stores its version only in `versionFiles`, the CLI
-can start publication when the promotion workflow publishes a matching version
+can start publication when the release workflow publishes a matching version
 tag. Independent versions and tag-based streams without a matching tag
 publisher support preparation only. A new version also stops after preparation
 when `prepare.strategy: "workflow"` delegates the bump. If no publishable
 package manifest carries the version, starting publication requires a workflow
-that publishes the version tag. In those cases, `promote.publishWhen`
+that publishes the version tag. In those cases, `release.publishWhen`
 determines when publication starts.
 
 The confirmation defaults to no. `--yes` skips only the confirmation; the
@@ -124,12 +124,12 @@ beepboop release minor --merge rebase
 ```
 
 When the default branch already carries the version, `beepboop release`
-publishes it after the same single confirmation, including a promotion that
+publishes it after the same single confirmation, including a release that
 waits for you to publish it. It handles only shared-version streams. Independent package versions use `plan-set` and
 `prepare-set` below.
 
 For a stream whose `versionSource` reads tags, an explicit start uses the
-latest matching tag to choose the next version. The promotion workflow must
+latest matching tag to choose the next version. The release workflow must
 publish a version tag with the same prefix. If preparation is needed, merging
 the version PR starts publication for that reviewed commit.
 
@@ -173,7 +173,7 @@ nothing. See [Version selection and release refs](automation.md#version-selectio
 workflow. `runs recover` reconciles by default. Pass
 `--action retry` to retry. The server applies its usual publishing and
 dispatch rules. `--action redispatch` runs the current workflow of the default
-branch for a failed promotion whose version tag already targets its release
+branch for a failed release whose version tag already targets its release
 commit, and follows that release to its end or for at most 60 minutes. Use it when the fix for the
 failure is in the workflow; a retry would run the old workflow again. See
 [Publish through Beepboop](automation.md#publish-through-beepboop).
@@ -208,7 +208,7 @@ Shared-version preparations follow the stream's publication policy instead.
 ```sh
 beepboop secrets list
 printf '%s' "$TOKEN" | beepboop secrets set crates-io
-beepboop secrets grant owner/repository crates-io --operation promote
+beepboop secrets grant owner/repository crates-io --operation release
 beepboop secrets revoke GRANT_ID
 ```
 
@@ -228,7 +228,7 @@ file changed before the merge, or when no value is stored under the name.
 
 `secrets grant` lets one stream operation of a repository use a secret. The
 alias must appear in that stream's `credentials` list in `.github/beepboop.json`.
-`--stream` defaults to the only stream, and `--operation` defaults to `promote`.
+`--stream` defaults to the only stream, and `--operation` defaults to `release`.
 `--delivery runtime`, the default, makes the credentials action fetch the value
 during the run, for the granted workflow file, ref and environment. With
 `--delivery repository` or `--delivery environment`, Beepboop copies the value
@@ -326,7 +326,7 @@ anything. A field without a flag keeps its proposed value, and a release option
 nobody chose stays unanswered in the setup PR:
 
 ```sh
-beepboop adopt owner/repository --promote-file release.yml \
+beepboop adopt owner/repository --release-file release.yml \
   --start-from action --version-lands via-direct-commit \
   --publish-when version-pr-merged \
   --binary tool --target linux-amd64 --target darwin-arm64
@@ -334,7 +334,7 @@ beepboop adopt owner/repository --promote-file release.yml \
 
 - `--operations` accepts JSON operation choices. A backfill has
   `"backfill": true` and `"needs": []`. It runs with
-  `beepboop runs backfill PROMOTION_ID OPERATION` for a published release.
+  `beepboop runs backfill RELEASE_ID OPERATION` for a published release.
 - `--stream` names the release group the other flags change. It is needed
   when the proposal has several groups, and a new name adds a group.
 - `--package` and `--must-publish` take a package name or PURL and repeat.
@@ -345,7 +345,7 @@ beepboop adopt owner/repository --promote-file release.yml \
   `--version-pr-merge` and `--publish-when` take the values of `versionScope`,
   `startFrom`, `versionLands`, `prepare.versionPrMerge` and `publishWhen` in
   `.github/beepboop.json`, shown in completion and help.
-- `--prepare-*` and `--promote-*` set the workflow fields: `file`, `job`,
+- `--prepare-*` and `--release-*` set the workflow fields: `file`, `job`,
   `existing-triggers`, `commands`, `tag-prefix`, `publication-steps`,
   `credentials` and,
   for preparation, `binaries`. A new workflow gets the `prepare` or `publish`
@@ -359,7 +359,7 @@ beepboop adopt owner/repository --promote-file release.yml \
 
 With `--choices`, a flag replaces that one field of the file. `--plan` refuses
 setup flags. The earlier flags `--required`, `--versioning`, `--start`, `--bump`,
-`--approval`, `--prepare-triggers` and `--promote-triggers` still work with their
+`--approval` and `--prepare-triggers` still work with their
 earlier values and print the current flag name.
 
 For automation, pass a JSON choices file with `--choices choices.json` and save
@@ -396,10 +396,10 @@ workflow's `triggers` is `existingTriggers`. Each stream has these fields:
 - `companionModules` (PURLs), Go modules whose version tag the release also
   pushes on the release commit. Setup proposes it in its notes when a module's
   tags follow another stream's tags, and never sets it unasked.
-- `prepare` and `promote`, each a workflow choice.
+- `prepare` and `release`, each a workflow choice.
 - `observe`, a list of workflows that Beepboop watches. Each entry has `name`,
   `file`, an optional `ref` pattern and the `publications` that workflow
-  produces. An observed stream needs no `prepare` or `promote`.
+  produces. An observed stream needs no `prepare` or `release`.
 
 A workflow choice has these fields:
 

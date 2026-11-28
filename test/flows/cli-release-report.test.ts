@@ -26,7 +26,7 @@ async function report(environment: Record<string, string>) {
 				GITHUB_OUTPUT: output,
 				RELEASE_CONTEXT: JSON.stringify({
 					sourceSha: head,
-					operation: 'promote',
+					operation: 'release',
 					stream: 'cli',
 					version: manifest.version,
 				}),

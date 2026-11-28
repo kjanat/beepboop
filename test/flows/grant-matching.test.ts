@@ -8,7 +8,7 @@ const runtime: Grant = {
 	alias: 'npm-token',
 	repositoryId: 42,
 	repository: 'octo/widget',
-	operation: 'promote',
+	operation: 'release',
 	workflow: 'release.yml',
 	ref: 'refs/tags/v*',
 	environment: 'release',
@@ -19,7 +19,7 @@ const secret: Grant = {
 	alias: 'cargo-token',
 	repositoryId: 42,
 	repository: 'octo/widget',
-	operation: 'promote',
+	operation: 'release',
 	workflow: 'release.yml',
 	ref: 'refs/tags/v*',
 	environment: 'release',
@@ -33,27 +33,27 @@ const run = {
 };
 
 test('a runtime grant allows only the run of its workflow, ref, environment and operation', () => {
-	expect(allowsRun(runtime, 'promote', run)).toBe(true);
+	expect(allowsRun(runtime, 'release', run)).toBe(true);
 	expect(allowsRun(runtime, 'prepare', run)).toBe(false);
-	expect(allowsRun(runtime, 'promote', { ...run, repository: 'octo/gadget' })).toBe(false);
-	expect(allowsRun(runtime, 'promote', {
+	expect(allowsRun(runtime, 'release', { ...run, repository: 'octo/gadget' })).toBe(false);
+	expect(allowsRun(runtime, 'release', {
 		...run,
 		ref: 'refs/heads/main',
 		workflowRef: 'octo/widget/.github/workflows/release.yml@refs/heads/main',
 	})).toBe(false);
-	expect(allowsRun(runtime, 'promote', { ...run, environment: 'staging' })).toBe(false);
-	expect(allowsRun(runtime, 'promote', {
+	expect(allowsRun(runtime, 'release', { ...run, environment: 'staging' })).toBe(false);
+	expect(allowsRun(runtime, 'release', {
 		repository: run.repository,
 		ref: run.ref,
 		workflowRef: run.workflowRef,
 	})).toBe(false);
-	expect(allowsRun(runtime, 'promote', {
+	expect(allowsRun(runtime, 'release', {
 		...run,
 		workflowRef: 'octo/widget/.github/workflows/other.yml@refs/tags/v1.2.0',
 	})).toBe(false);
-	expect(allowsRun(secret, 'promote', run)).toBe(false);
+	expect(allowsRun(secret, 'release', run)).toBe(false);
 	const { environment: _environment, ...unscoped } = runtime;
-	expect(allowsRun(unscoped, 'promote', {
+	expect(allowsRun(unscoped, 'release', {
 		repository: run.repository,
 		ref: run.ref,
 		workflowRef: run.workflowRef,
@@ -61,7 +61,7 @@ test('a runtime grant allows only the run of its workflow, ref, environment and 
 });
 
 test('runtime grants cover a stream when one grant matches one of its workflow bindings', () => {
-	const binding = { operation: 'promote', file: 'release.yml', ref: 'refs/tags/v1.0.0' };
+	const binding = { operation: 'release', file: 'release.yml', ref: 'refs/tags/v1.0.0' };
 	expect(coversBinding([runtime], [binding], 'octo/widget')).toBe(true);
 	expect(coversBinding([runtime], [{ ...binding, file: 'publish.yml' }, binding], 'octo/widget')).toBe(true);
 	expect(coversBinding([runtime], [{ ...binding, file: 'publish.yml' }], 'octo/widget')).toBe(false);
@@ -82,7 +82,7 @@ test('secret aliases name the GitHub secret grants of a workflow whose secret it
 		alias: 'registry-token',
 		repositoryId: 42,
 		repository: 'octo/widget',
-		operation: 'promote',
+		operation: 'release',
 		workflow: 'release.yml',
 		ref: 'refs/tags/v*',
 		secretName: 'REGISTRY_TOKEN',

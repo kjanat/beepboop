@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 import type { AutomationService } from '@/automation/service';
 import { routes } from '@/contract/routes';
 import { backfillRefusal } from '@/domain/configuration/backfill.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { requireReady } from '@/domain/repository';
 import { gitRefSchema, releaseSchema } from '@/github/resources.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -89,8 +90,8 @@ export const executionEndpoints = {
 		Effect.gen(function*() {
 			const parent = yield* execution(service, input.id, input.repositoryId);
 			const release = parent.release;
-			if (parent.operation !== 'promote' || !release?.tag || release.releaseId === undefined) {
-				return yield* precondition('Backfill requires a promotion with a published GitHub release');
+			if (parent.operation !== releaseOperation || !release?.tag || release.releaseId === undefined) {
+				return yield* precondition('Backfill requires a release with a published GitHub release');
 			}
 			const repository = yield* requireReady(yield* service.catalog.refresh(parent.repository, parent.repositoryId));
 			const binding = repository.configuration.streams[parent.stream]?.workflows[input.operation];

@@ -29,7 +29,7 @@ function fileSlug(value: string) {
 	return slug(value).slice(0, 70) || 'packages';
 }
 export function suggestedWorkflowFile(
-	role: 'prepare' | 'promote',
+	role: 'prepare' | 'release',
 	selection: Selection,
 	plan: SetupPlan,
 	reserved: string[] = [],
@@ -53,9 +53,9 @@ export function defaultTagPrefix(stream: string, streams: number): string {
 	return streams === 1 || stream === 'main' ? 'v' : `${stream}-v`;
 }
 type Context = Pick<SetupPlan, 'inventory' | 'preparation'>;
-export function suggestedCommands(role: 'prepare' | 'promote', selection: Selection, plan: Context): string {
+export function suggestedCommands(role: 'prepare' | 'release', selection: Selection, plan: Context): string {
 	if (ungenerated(selection).length) return '';
-	if (role === 'promote') return selection.packages.length ? ledgerCommand : '';
+	if (role === 'release') return selection.packages.length ? ledgerCommand : '';
 	const commands = managerCommands(selection, plan);
 	return role === 'prepare' && commands && plan.preparation?.lockfiles.some(path => /(?:^|\/)uv\.lock$/.test(path))
 		? `${commands}\nuv lock`
@@ -127,7 +127,7 @@ function managerCommands(selection: Selection, plan: Context): string {
 		.join('\n');
 }
 export function refreshedCommands(
-	role: 'prepare' | 'promote',
+	role: 'prepare' | 'release',
 	commands: string,
 	selection: Selection,
 	candidates: Selection['packages'],

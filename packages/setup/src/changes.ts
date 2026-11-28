@@ -149,7 +149,7 @@ function renamesSettings(source: string): boolean {
 	return !!source && !same(record(document(source)), readable(source));
 }
 const labelled: { pattern: RegExp; label: string }[] = [
-	{ pattern: /^streams\.[^.]+\.promote\.publishWhen$/, label: 'publishWhen' },
+	{ pattern: /^streams\.[^.]+\.release\.publishWhen$/, label: 'publishWhen' },
 	{ pattern: /^streams\.[^.]+\.startFrom$/, label: 'startFrom' },
 	{ pattern: /^streams\.[^.]+\.prepare\.versionLands$/, label: 'versionLands' },
 	{ pattern: /^streams\.[^.]+\.prepare\.versionPrMerge$/, label: 'versionPrMerge' },
@@ -191,7 +191,7 @@ function valueChange(before: unknown, after: unknown): string {
 	return `${shown(before)} → ${shown(after)}`;
 }
 function effect(path: string, after: unknown): string | undefined {
-	if (path.endsWith('.promote.publishWhen')) {
+	if (path.endsWith('.release.publishWhen')) {
 		const policy = Object.entries(approvalOfPublishWhen).find(([name]) => name === after)?.[1];
 		return policy && publishWhenSentences[policy];
 	}

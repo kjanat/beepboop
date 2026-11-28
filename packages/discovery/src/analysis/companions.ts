@@ -9,7 +9,7 @@ interface Stream {
 	readonly companionModules?: readonly string[];
 	readonly versionSource?: { readonly prefix: string };
 	readonly observe?: readonly { readonly ref?: string }[];
-	readonly promote?: { readonly tagPrefix?: string; readonly binaries?: unknown };
+	readonly release?: { readonly tagPrefix?: string; readonly binaries?: unknown };
 }
 export interface CompanionChoices {
 	readonly streams: readonly Stream[];
@@ -21,7 +21,7 @@ const code = /(?:^|\/)(?:go\.mod|go\.sum)$|\.go$/;
 function streamPrefixes(stream: Stream): string[] {
 	return [
 		...new Set([
-			...(stream.promote?.tagPrefix === undefined ? [] : [stream.promote.tagPrefix]),
+			...(stream.release?.tagPrefix === undefined ? [] : [stream.release.tagPrefix]),
 			...(stream.versionSource ? [stream.versionSource.prefix] : []),
 			...(stream.observe ?? []).flatMap(entry =>
 				entry.ref?.startsWith('refs/tags/') && entry.ref.endsWith('*') ? [entry.ref.slice(10, -1)] : []
@@ -30,9 +30,9 @@ function streamPrefixes(stream: Stream): string[] {
 	];
 }
 function pushedPrefix(stream: Stream): string | undefined {
-	const promote = stream.promote;
-	if (!promote) return undefined;
-	return promote.tagPrefix ?? (promote.binaries ? stream.versionSource?.prefix ?? 'v' : undefined);
+	const releaseWorkflow = stream.release;
+	if (!releaseWorkflow) return undefined;
+	return releaseWorkflow.tagPrefix ?? (releaseWorkflow.binaries ? stream.versionSource?.prefix ?? 'v' : undefined);
 }
 function versionsOf(tags: readonly string[], prefix: string): string[] {
 	return tags.flatMap(tag =>
@@ -75,14 +75,14 @@ export function companionProposals(choices: CompanionChoices, snapshot: Snapshot
 			if (found === undefined) return [];
 			const tracked =
 				`${target.name}: ${pkg.name} tags \`${module}<version>\` in its own stream \`${owner.name}\`, and ${found}. `;
-			if (!target.promote) {
+			if (!target.release) {
 				return [
-					`${tracked}\`${target.name}\` only observes tags. \`companionModules\` needs a stream Beepboop promotes.`,
+					`${tracked}\`${target.name}\` only observes tags. \`companionModules\` needs a stream Beepboop releases.`,
 				];
 			}
 			if (pushed === undefined) {
 				return [
-					`${tracked}A \`${target.name}\` release pushes no version tag. \`companionModules\` needs a promotion with a tag prefix.`,
+					`${tracked}A \`${target.name}\` release pushes no version tag. \`companionModules\` needs a release workflow with a tag prefix.`,
 				];
 			}
 			return [

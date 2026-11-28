@@ -49,7 +49,7 @@ function field(key: string, value: unknown, rewrite: Rewrite): unknown {
 				? Object.fromEntries(Object.entries(value).map(([id, needs]) => [rewrite(id), references(needs, rewrite)]))
 				: value;
 		case 'prepare':
-		case 'promote':
+		case 'release':
 			return role(value, rewrite);
 		case 'workflows':
 			return Predicate.isObject(value)

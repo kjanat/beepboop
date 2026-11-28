@@ -127,7 +127,7 @@ test('a release of the same version is proof for a preparation and for no other 
 		expect(await Effect.runPromise(store.completionEvidence([{ ...preparation, updatedAt: 50 }]))).toEqual([]);
 		expect(await Effect.runPromise(store.completionEvidence([{ ...preparation, version: '1.0.1' }]))).toEqual([]);
 		expect(await Effect.runPromise(store.completionEvidence([{ ...preparation, version: '0.9.0' }]))).toEqual(proof);
-		expect(await Effect.runPromise(store.completionEvidence([{ ...candidate, operation: 'promote' }]))).toEqual([]);
+		expect(await Effect.runPromise(store.completionEvidence([{ ...candidate, operation: 'release' }]))).toEqual([]);
 		expect(await Effect.runPromise(store.completionEvidence([candidate]))).toEqual([]);
 		await Effect.runPromise(new ProjectionStore(db, projectionRules).apply([
 			projection('build', '1.0.0+build', 100),

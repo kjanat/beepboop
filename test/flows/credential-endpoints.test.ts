@@ -32,7 +32,7 @@ test('credential endpoints refuse unknown names and grants and serve a stored va
 		alias: 'npm-token',
 		repositoryId: repository.id,
 		stream: 'main',
-		operation: 'promote',
+		operation: 'release',
 		delivery: 'runtime',
 	};
 	const missing: [number, string] = [404, 'No stored value under this name'];
@@ -91,14 +91,14 @@ test('workflow credential delivery refuses an alias the stream does not request 
 	};
 	expect(
 		await Effect.runPromise(
-			deliverCredentials(vault, { allowed: ['npm-token'], aliases: ['npm-token'], operation: 'promote', run }),
+			deliverCredentials(vault, { allowed: ['npm-token'], aliases: ['npm-token'], operation: 'release', run }),
 		),
 	).toEqual({ 'npm-token': 'npm-token-value' });
 	const exit = await Effect.runPromiseExit(
 		deliverCredentials(vault, {
 			allowed: ['npm-token'],
 			aliases: ['npm-token', 'cargo-token'],
-			operation: 'promote',
+			operation: 'release',
 			run,
 		}),
 	);

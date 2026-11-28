@@ -55,7 +55,7 @@ mismatch is rejected. The fingerprint covers the resolved versions, edits,
 operation graph, configuration, and preset revisions. Single-release preparation
 also requires its preview's `sourceSha` and `planId`; the dashboard supplies them.
 `POST /api/releases/prepare` takes `"start"`. With `"start": false` it
-prepares the release, and `promote.publishWhen` decides when it publishes.
+prepares the release, and `release.publishWhen` decides when it publishes.
 `"force": true` overrides `"start": false`.
 `"start": true` or `"force": true` starts the release, and is refused when the
 preview answered `"starts": false`. Without `start` or `force` the release
@@ -98,8 +98,8 @@ operation graph with `POST /api/releases/start-set`:
 Each planned operation ID must match a configured operation in the stream.
 Operations receive their group's version and the merged source SHA. Configured
 workflow dependencies are combined with the plan's dependencies; the plan cannot
-remove a promotion gate. Include every configured dependency in the plan, including
-`promote` where required. Promotion stays blocked until `publishWhen` publishes it.
+remove a release gate. Include every configured dependency in the plan, including
+`release` where required. Release stays blocked until `publishWhen` publishes it.
 
 Beepboop verifies the preparation PR's merged status, head, target branch, and
 merge commit. The target must contain every planned file edit and package version.

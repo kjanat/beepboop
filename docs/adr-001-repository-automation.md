@@ -16,7 +16,7 @@ encrypted credentials. Reconciliation repairs the index from the execution journ
 
 Each execution captures its configuration and preset revisions, source commit,
 workflow revision, and producing run. These fields identify the code used at each
-stage of preparation and promotion.
+stage of preparation and release.
 
 ## Authentication
 

@@ -102,7 +102,7 @@ const legacy = {
 			required: ['npm:widget'],
 			start: [{ via: 'cli' }],
 			prepare: { bump: 'commit', versionPrMerge: 'squash' },
-			promote: { approval: 'merge', workflow: { file: 'release.yml', setup: { triggers: 'dispatchOnly' } } },
+			release: { approval: 'merge', workflow: { file: 'release.yml', setup: { triggers: 'dispatchOnly' } } },
 		},
 	},
 };
@@ -114,7 +114,7 @@ const current = {
 			mustPublish: ['npm:widget'],
 			startFrom: [{ via: 'cli' }],
 			prepare: { versionLands: 'via-direct-commit', versionPrMerge: 'squash' },
-			promote: {
+			release: {
 				publishWhen: 'version-pr-merged',
 				workflow: { file: 'release.yml', setup: { existingTriggers: 'replace-with-dispatch' } },
 			},
@@ -141,15 +141,15 @@ test('the earlier setting names read the same as the current ones, and setup wri
 
 test('a repository setting overrides a preset whichever names each of them uses', async () => {
 	const preset = {
-		streams: { main: { versionScope: 'one-for-stream', promote: { publishWhen: 'version-pr-merged' } } },
+		streams: { main: { versionScope: 'one-for-stream', release: { publishWhen: 'version-pr-merged' } } },
 	};
 	const repository = {
 		extends: ['github>octo/presets:release'],
-		streams: { main: { versioning: 'independent', promote: { approval: 'push' } } },
+		streams: { main: { versioning: 'independent', release: { approval: 'push' } } },
 	};
 	const resolved = await Effect.runPromise(
 		resolveConfiguration(repository, () => Effect.succeed({ value: preset, sha: 'a'.repeat(40) })),
 	);
-	expect([resolved.configuration.streams.main?.versioning, resolved.configuration.streams.main?.promote.approval])
+	expect([resolved.configuration.streams.main?.versioning, resolved.configuration.streams.main?.release.approval])
 		.toEqual(['independent', 'push']);
 });

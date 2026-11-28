@@ -122,7 +122,7 @@ test('legacy blocked rows rank by the state they decode to and stay inside the 2
 	const { approvedAt: _approvedAt, runId: _runId, ...plain } = base.document;
 	const legacy = { ...base, document: plain };
 	await insert(legacy, [
-		['legacy-awaiting', 'blocked', 5, 5, { operation: 'promote', attempts: 0 }],
+		['legacy-awaiting', 'blocked', 5, 5, { operation: 'release', attempts: 0 }],
 		['legacy-stuck', 'blocked', 6, 6, { operation: 'prepare', attempts: 1 }],
 		...Array.from({ length: 205 }, (_, index): Row => [
 			`finished-${String(index).padStart(3, '0')}`,
@@ -232,7 +232,7 @@ test('the run list reads executions in index order and caps the blocked rows tha
 	const base = await template();
 	const { approvedAt: _approvedAt, runId: _runId, ...plain } = base.document;
 	await insert({ ...base, document: plain }, [
-		['legacy-awaiting', 'blocked', 5, 5, { operation: 'promote', attempts: 0 }],
+		['legacy-awaiting', 'blocked', 5, 5, { operation: 'release', attempts: 0 }],
 		['legacy-stuck', 'blocked', 6, 6, { operation: 'prepare', attempts: 1 }],
 		['new-running', 'running', 7, 7],
 	]);

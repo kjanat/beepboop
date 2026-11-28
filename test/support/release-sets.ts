@@ -7,9 +7,9 @@ import type { World } from '@root/test/support/world.ts';
 import { routes } from '@/contract/routes';
 import type { ReleaseWorkflowParams } from '@/server/durable/release-workflow.ts';
 
-const buildThenPromote = [{ id: 'build', group: 'widget' }, { id: 'promote', group: 'widget', needs: ['build'] }];
+const buildThenRelease = [{ id: 'build', group: 'widget' }, { id: 'release', group: 'widget', needs: ['build'] }];
 
-export async function releaseSet(world: World, operations: unknown[] = buildThenPromote) {
+export async function releaseSet(world: World, operations: unknown[] = buildThenRelease) {
 	const token = await world.cliSession();
 	const transport = cliTransport(world, token);
 	const repository = await discoveredWidget(world, token);
@@ -23,7 +23,7 @@ export async function releaseSet(world: World, operations: unknown[] = buildThen
 					packages: ['pkg:npm/widget'],
 					mustPublish: ['pkg:npm/widget'],
 					prepare: { strategy: 'managed' },
-					promote: {
+					release: {
 						publishWhen: 'approved-in-beepboop',
 						workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] },
 					},
@@ -105,7 +105,7 @@ export async function publish(
 	const run = lastRun(repository, 'publish.yml');
 	run.status = 'in_progress';
 	const identity = runIdentity(repository, run, 'publish.yml');
-	await begin(world, identity, execution, 'main', 'promote');
+	await begin(world, identity, execution, 'main', 'release');
 	await runAction(world, 'report', identity, {
 		EXECUTION_ID: execution,
 		PUBLICATIONS: JSON.stringify([
@@ -116,5 +116,6 @@ export async function publish(
 }
 
 export const loaded = (
-	promote = '{"id":"<promote>","operation":"promote","paced":false,"dependencies":["<build>"]}',
-) => `do Load release operations [{"id":"<build>","operation":"build","paced":false,"dependencies":[]},${promote}]`;
+	releaseEntry = '{"id":"<release>","operation":"release","paced":false,"dependencies":["<build>"]}',
+) =>
+	`do Load release operations [{"id":"<build>","operation":"build","paced":false,"dependencies":[]},${releaseEntry}]`;

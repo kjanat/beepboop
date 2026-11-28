@@ -5,6 +5,7 @@ import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { identityOf, packageId } from '@/domain/package-identity.ts';
 import type { RefPlan, RefState } from '@/domain/refs.ts';
 import { gateSkip } from '@/domain/release-gates.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { startChannel } from '@/domain/release-start.ts';
 import { autoMergeMethods, versionPrMerge } from '@/domain/setup-terms.ts';
 import { stringsSchema as strings } from '@/kernel/schema/result.ts';
@@ -268,7 +269,7 @@ export function currentState(execution: Execution): Execution {
 		return { ...execution, cancelledBy: actor };
 	}
 	if (execution.state !== 'blocked' || execution.github?.kind === 'action-required') return execution;
-	if (execution.operation === 'promote' && execution.attempts === 0 && execution.approvedAt === undefined) {
+	if (execution.operation === releaseOperation && execution.attempts === 0 && execution.approvedAt === undefined) {
 		return { ...execution, state: 'awaiting-approval' };
 	}
 	if (execution.runId !== undefined && completion(execution, true) === 'verifying') {

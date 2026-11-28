@@ -111,9 +111,9 @@ test('observed Cargo adoption distinguishes warnings, readiness, and tag filters
 	);
 	expect(stream.required).toEqual(stream.packages);
 	expect(stream.versioning).toBe('workspace');
-	expect(stream.promote).toEqual({
+	expect(stream.release).toEqual({
 		file: 'release-main.yml',
-		job: 'promote',
+		job: 'release',
 		triggers: 'review',
 		commands: '',
 		publicationSteps: {},
@@ -125,7 +125,7 @@ test('observed Cargo adoption distinguishes warnings, readiness, and tag filters
 		file: 'publish.yml',
 		ref: 'refs/tags/v*',
 		publications: stream.packages,
-		needs: ['promote'],
+		needs: ['release'],
 	}]);
 	expect(plan.edits.map(edit => edit.path)).toEqual([
 		'.github/beepboop.json',

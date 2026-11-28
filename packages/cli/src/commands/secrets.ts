@@ -109,7 +109,7 @@ export const secrets = group('secrets').description('Store secret values and lis
 		repository('grant', 'Let a configured release workflow use a stored secret')
 			.arg('alias', arg.string({ pattern: credentialAliasPattern }).describe('Stored secret name'))
 			.flag('stream', flag.string().describe('Release stream; defaults to the only configured stream'))
-			.flag('operation', flag.string().default('promote').describe('prepare, promote or another configured operation'))
+			.flag('operation', flag.string().default('release').describe('prepare, release or another configured operation'))
 			.flag(
 				'delivery',
 				flag.enum(['runtime', 'repository', 'environment']).default('runtime').describe(

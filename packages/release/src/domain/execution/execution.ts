@@ -8,6 +8,7 @@ import {
 	parseIdentity,
 	publishablePackages,
 } from '@/domain/package-identity.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -90,8 +91,8 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 		if (!stream) return yield* precondition('Unknown stream');
 		const binding: WorkflowBinding | undefined = operation === 'prepare'
 			? stream.prepare.workflow
-			: operation === 'promote'
-			? stream.promote.workflow
+			: operation === releaseOperation
+			? stream.release.workflow
 			: stream.workflows[operation];
 		if (!binding) return yield* precondition('Operation has no workflow binding');
 		if (binding.backfill && !eventId.startsWith('backfill:')) return yield* precondition('Start backfills in Beepboop');
@@ -135,7 +136,7 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 			presetShas: { ...source.presetShas },
 			sourceSha: request.sourceSha,
 			...(version ? { version } : {}),
-			state: observed ? 'pending' : operation === 'promote' ? 'awaiting-approval' : 'ready',
+			state: observed ? 'pending' : operation === releaseOperation ? 'awaiting-approval' : 'ready',
 			dependencies,
 			workflow: { ...binding, ref: binding.ref ?? source.defaultBranch },
 			...(operation === 'publish' && binding.publications === undefined && stream.packages === undefined
@@ -163,7 +164,7 @@ function executionFrom(source: ExecutionSource, request: ExecutionRequest): Effe
 export function runTitle(execution: Execution): string {
 	const label = execution.operation === 'prepare'
 		? 'Prepare'
-		: execution.operation === 'promote'
+		: execution.operation === releaseOperation
 		? 'Release'
 		: execution.operation;
 	return [label, execution.package?.id, execution.version, `(${execution.id.slice(0, 8)})`]

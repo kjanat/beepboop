@@ -1,4 +1,5 @@
 import { publicationStages } from '@/domain/publication-stages.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 
 function configuredStages(run: Execution): Map<string, string[]> {
@@ -6,7 +7,7 @@ function configuredStages(run: Execution): Map<string, string[]> {
 	if (!stream) return new Map();
 	const needs = new Map<string, string[]>([
 		['prepare', stream.prepare.workflow?.needs ?? []],
-		['promote', [...stream.promote.workflow?.needs ?? [], 'prepare']],
+		[releaseOperation, [...stream.release.workflow?.needs ?? [], 'prepare']],
 		...Object.entries(stream.workflows).map(([name, binding]): [string, string[]] => [name, binding.needs ?? []]),
 	]);
 	const order = publicationStages([...needs.keys()], Object.fromEntries(needs)).flat();

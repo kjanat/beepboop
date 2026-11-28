@@ -19,5 +19,6 @@ test('a coordinator result that does not match its schema fails as an internal e
 	);
 	expect(versions.problem.code).toBe('internal');
 	expect(await world.run(withAutomation(service => service.coordinators.wake(7)))).toBeUndefined();
-	expect(await world.run(withAutomation(service => service.coordinators.promotions(7, 'main', '1.0.0')))).toEqual([]);
+	expect(await world.run(withAutomation(service => service.coordinators.releaseExecutions(7, 'main', '1.0.0'))))
+		.toEqual([]);
 });

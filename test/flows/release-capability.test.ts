@@ -61,13 +61,18 @@ beforeEach(async () => {
 
 const module = 'pkg:golang/github.com/octo/statute';
 const observers = {
-	release: { file: 'release.yml', ref: 'refs/tags/v*', mode: 'observe', publications: ['pkg:github/octo/statute'] },
+	'observe-release': {
+		file: 'release.yml',
+		ref: 'refs/tags/v*',
+		mode: 'observe',
+		publications: ['pkg:github/octo/statute'],
+	},
 	pkg: { file: 'pkg.yml', ref: 'refs/tags/v*', mode: 'observe', publications: [module] },
 };
 const observed =
 	'release.yml on refs/tags/v* or pkg.yml on refs/tags/v* starts a release of main. Beepboop records the run and starts no release of this stream.';
 
-async function statute(promote?: Record<string, unknown>): Promise<Repository> {
+async function statute(release?: Record<string, unknown>): Promise<Repository> {
 	const repository = world.github.create('octo/statute', {
 		'go.mod': 'module github.com/octo/statute\n\ngo 1.26\n',
 		'.github/workflows/release.yml': `name: Release\n${
@@ -81,7 +86,7 @@ async function statute(promote?: Record<string, unknown>): Promise<Repository> {
 					packages: [module],
 					mustPublish: [module],
 					versionSource: { kind: 'tags', prefix: 'v' },
-					...(promote ? { promote } : {}),
+					...(release ? { release } : {}),
 					workflows: observers,
 				},
 			},
@@ -192,7 +197,7 @@ test('a tag-versioned stream with a publishing workflow goes straight to a publi
 	});
 	const summary =
 		'main has no version to write. The release goes straight to tag.yml and publishes once the commit is verified and its checks pass.';
-	expect(await release(repository)).toEqual({ kind: 'promotes', summary });
+	expect(await release(repository)).toEqual({ kind: 'releases', summary });
 
 	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
 	const planned = await api('/api/releases/plan', request);
@@ -211,7 +216,7 @@ test('a tag-versioned stream with a publishing workflow goes straight to a publi
 	});
 	expect(prepared.status).toBe(200);
 	expect([text(prepared.body, 'operation'), text(prepared.body, 'approvedBy'), text(prepared.body, 'version')])
-		.toEqual(['promote', 'start', '0.13.2']);
+		.toEqual(['release', 'start', '0.13.2']);
 
 	const form = await rendered('Releases', `?repository=${repository.id}`);
 	expect(form.text).toContain(summary);
@@ -229,7 +234,7 @@ test('a tag-versioned stream with a publishing workflow goes straight to a publi
 test('a tag-versioned stream whose workflow publishes no version tag waits for you and refuses force', async () => {
 	const repository = await statute({ workflow: { file: 'tag.yml', publications: [module] } });
 	expect(await release(repository)).toEqual({
-		kind: 'promotes',
+		kind: 'releases',
 		summary: 'main has no version to write. The release goes straight to tag.yml and waits for you to publish it.',
 	});
 	const request = { repositoryId: repository.id, stream: 'main', version: { bump: 'patch' } };
@@ -243,7 +248,7 @@ test('a tag-versioned stream whose workflow publishes no version tag waits for y
 		force: true,
 	});
 	expect(forced.status).toBe(422);
-	expect(refusal(forced.body)).toContain('main needs a dispatchable promotion that publishes a version tag');
+	expect(refusal(forced.body)).toContain('main needs a dispatchable release workflow that publishes a version tag');
 });
 
 async function configuredWidget(change: (main: Record<string, unknown>) => void) {
@@ -326,7 +331,7 @@ test('a tag-versioned stream with version files names them', async () => {
 
 test('a stream without any workflow asks for a publishing workflow', async () => {
 	const repository = await configuredWidget(main => {
-		main.promote = { approval: 'required' };
+		main.release = { approval: 'required' };
 	});
 	const summary = 'main has no publishing workflow. Add one in release setup.';
 	expect(await release(repository)).toEqual({ kind: 'unpublishable', summary });
@@ -358,7 +363,7 @@ test('a plan whose lockfiles need regenerating names the missing preparation wor
 				main: {
 					packages: ['pkg:cargo/gear'],
 					mustPublish: ['pkg:cargo/gear'],
-					promote: { workflow: { file: 'publish.yml', publications: ['pkg:cargo/gear'] } },
+					release: { workflow: { file: 'publish.yml', publications: ['pkg:cargo/gear'] } },
 				},
 			},
 		}),
@@ -384,7 +389,7 @@ test('a direct release under version-commit-pushed says that it publishes withou
 	});
 	const summary =
 		'main has no version to write. The release goes straight to tag.yml and publishes once the commit is verified and its checks pass.';
-	expect(await release(repository)).toEqual({ kind: 'promotes', summary });
+	expect(await release(repository)).toEqual({ kind: 'releases', summary });
 	const prompts: string[] = [];
 	const cli = await app.execute(['release', 'patch', '--repository', repository.name], {
 		prompter: {

@@ -104,7 +104,7 @@ test('runs list filters by stream, operation, state, version and limit', async (
 	const only = async (...args: string[]) => ids(await listed(args, outside));
 	expect(await only('--stream', 'main', '--operation', 'prepare', '--releaseVersion', '1.0.1')).toEqual([run.id]);
 	expect(await only('--stream', 'other')).toEqual([]);
-	expect(await only('--operation', 'promote')).toEqual([]);
+	expect(await only('--operation', 'release')).toEqual([]);
 	expect(await only('--releaseVersion', '9.9.9')).toEqual([]);
 	expect(await only('--state', run.state, '--state', 'failed')).toEqual([run.id]);
 	expect(await only('--state', 'failed')).toEqual([]);
@@ -158,7 +158,7 @@ test('slimRun keeps only publication ids and outcomes', () => {
 		repositoryId: 1,
 		repository,
 		stream: 'main',
-		operation: 'promote',
+		operation: 'release',
 		state,
 		version: '1.0.0',
 		sourceSha: 'a'.repeat(40),
@@ -174,7 +174,7 @@ test('slimRun keeps only publication ids and outcomes', () => {
 		id: 'd',
 		repository: 'octo/tool',
 		stream: 'main',
-		operation: 'promote',
+		operation: 'release',
 		state: 'succeeded',
 		version: '1.0.0',
 		sourceSha: 'a'.repeat(40),
@@ -235,7 +235,7 @@ test('the server applies stream, operation, state and version filters in SQL and
 		],
 	);
 	expect(await list({ repository: 'octo/widget', stream: 'nope' })).toEqual([]);
-	expect(await list({ repository: 'octo/widget', operation: 'promote' })).toEqual([]);
+	expect(await list({ repository: 'octo/widget', operation: 'release' })).toEqual([]);
 	expect(await list({ repository: 'octo/widget', version: '9.9.9' })).toEqual([]);
 	expect(await list({ repository: 'octo/widget', states: `failed,${run.state}` })).toEqual([run.id]);
 	expect(await list({ repository: 'octo/widget', states: 'failed' })).toEqual([]);

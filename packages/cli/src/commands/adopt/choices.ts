@@ -148,11 +148,11 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				failure('No publishable packages discovered', 'NO_PACKAGES', 'Inspect the repository diagnostics first'),
 			);
 		}
-		const created: { choice: SetupWorkflow; stream: SetupChoices['streams'][number]; role: 'prepare' | 'promote' }[] =
+		const created: { choice: SetupWorkflow; stream: SetupChoices['streams'][number]; role: 'prepare' | 'release' }[] =
 			[];
 		const files = () =>
 			choices.streams.flatMap(stream =>
-				[stream.prepare?.file, stream.promote?.file].filter((file): file is string => !!file)
+				[stream.prepare?.file, stream.release?.file].filter((file): file is string => !!file)
 			);
 		const selection = (stream: SetupChoices['streams'][number]): Selection => ({
 			name: stream.name,
@@ -179,7 +179,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			});
 		const chooseWorkflow = (
 			stream: SetupChoices['streams'][number],
-			role: 'prepare' | 'promote',
+			role: 'prepare' | 'release',
 			previous?: SetupWorkflow,
 			previousPackages: readonly string[] = [],
 			rejected: ReadonlySet<string> = new Set(),
@@ -187,8 +187,8 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 			Effect.gen(function*() {
 				const preparing = role === 'prepare', selectedPackages = selection(stream);
 				const reasons = preparationReasons(plan, selectedPackages);
-				const paired = preparing && previous?.file === stream.promote?.file;
-				const canShare = preparing && (paired || created.some(entry => entry.choice === stream.promote));
+				const paired = preparing && previous?.file === stream.release?.file;
+				const canShare = preparing && (paired || created.some(entry => entry.choice === stream.release));
 				const existing = previous && plan.workflows.some(w => w.file === previous.file) ? previous.file : undefined;
 				const preferred = paired
 					? 'same'
@@ -217,12 +217,12 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					preferring(entries, preferred),
 				);
 				if (selected === 'managed') return undefined;
-				const file = selected === 'same' ? stream.promote?.file ?? '' : selected === 'new'
+				const file = selected === 'same' ? stream.release?.file ?? '' : selected === 'new'
 					? previous && !existing ? previous.file : suggestedWorkflowFile(role, selectedPackages, plan, files())
 					: selected;
 				const evidence = plan.workflows.find(w => w.file === file);
-				const taken = preparing && selected !== 'same' && file === stream.promote?.file
-					? stream.promote.job
+				const taken = preparing && selected !== 'same' && file === stream.release?.file
+					? stream.release.job
 					: undefined;
 				const sharedTriggers = selected !== 'same' && !!evidence && evidence.jobs.length > 1 && !evidence.prepares
 					&& !evidence.reports
@@ -455,7 +455,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 					const chosen = chosenMerge(merge, stream.versionPrMerge);
 					if (chosen) stream.versionPrMerge = chosen;
 				}
-				if (stream.promote && (all || !stream.approval)) {
+				if (stream.release && (all || !stream.approval)) {
 					const approval = yield* select(
 						ask,
 						`${stream.name}: publishWhen. ${publishWhenQuestion}`,
@@ -479,10 +479,10 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				for (const field of jsonFields(streamFields, streamEditors)) {
 					entered[field] = yield* jsonInput(ask, `${stream.name}: ${field}`, stream[field]);
 				}
-				for (const role of ['prepare', 'promote'] as const) {
+				for (const role of ['prepare', 'release'] as const) {
 					const current = stream[role];
 					if (!current) continue;
-					const tagPrefix = role === 'promote'
+					const tagPrefix = role === 'release'
 						? yield* prompted(() =>
 							ask({
 								kind: 'input',
@@ -510,10 +510,10 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 						),
 					);
 				}
-				const { prepare, promote, ...fields } = parsed.data;
+				const { prepare, release: releaseWorkflow, ...fields } = parsed.data;
 				for (const field of jsonFields(streamFields, streamEditors)) delete stream[field];
 				Object.assign(stream, fields);
-				for (const [current, next] of [[stream.prepare, prepare], [stream.promote, promote]] as const) {
+				for (const [current, next] of [[stream.prepare, prepare], [stream.release, releaseWorkflow]] as const) {
 					if (!current || !next) continue;
 					delete current.tagPrefix;
 					delete current.credentials;
@@ -562,8 +562,8 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 							files: files.split(',').map(file => file.trim()).filter(Boolean),
 						};
 					}
-					if (stream.actionRelease && !stream.promote) {
-						stream.promote = {
+					if (stream.actionRelease && !stream.release) {
+						stream.release = {
 							file: 'release.yml',
 							triggers: 'dispatchOnly',
 							commands: stream.actionRelease.kind === 'distribution' ? plan.actionRelease.commands : '',
@@ -591,7 +591,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 				stream.packages = packageChoices.length ? yield* packages(stream.name, stream.packages) : [];
 				stream.required = [...stream.packages];
 				choices.streams.push(stream);
-				stream.promote = yield* chooseWorkflow(stream, 'promote', stream.promote, previousPackages);
+				stream.release = yield* chooseWorkflow(stream, 'release', stream.release, previousPackages);
 				stream.prepare = yield* chooseWorkflow(stream, 'prepare', stream.prepare, previousPackages);
 				yield* releaseMode(stream, false);
 			});
@@ -655,7 +655,7 @@ export function chooseSetup(plan: SetupPlan, ask: Ask, out: Out): Effect.Effect<
 								&& !plan.workflows.some(w => w.file === value) || 'Use an unused YAML filename.',
 					})
 				);
-				if (role === 'promote' && stream.prepare?.file === before) stream.prepare.file = choice.file;
+				if (role === 'release' && stream.prepare?.file === before) stream.prepare.file = choice.file;
 			}
 			const revision = yield* prompted(() =>
 				ask({

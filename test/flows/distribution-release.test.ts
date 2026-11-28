@@ -52,7 +52,7 @@ async function fixture(
 			main: {
 				packages: ['pkg:npm/widget'],
 				required: ['github-release:octo/widget'],
-				promote: {
+				release: {
 					approval: 'required',
 					workflow: {
 						file: 'publish.yml',
@@ -66,7 +66,7 @@ async function fixture(
 					},
 				},
 				workflows: {
-					aliases: { file: 'aliases.yml', needs: ['promote'], refs: { phase: 'aliases', aliases: ['major', 'minor'] } },
+					aliases: { file: 'aliases.yml', needs: ['release'], refs: { phase: 'aliases', aliases: ['major', 'minor'] } },
 				},
 			},
 		},
@@ -131,7 +131,7 @@ async function fixture(
 	if (!record) throw new Error('Repository missing');
 	const ready = await world.run(requireReady(record));
 	const coordinator = world.coordinator(repository);
-	const create = async (operation: 'promote' | 'aliases', dependencies: string[] = [], register = false) => {
+	const create = async (operation: 'release' | 'aliases', dependencies: string[] = [], register = false) => {
 		const execution = await world.run(
 			createExecution(ready, {
 				stream: 'main',
@@ -147,19 +147,19 @@ async function fixture(
 			repository: repository.name,
 			ownerId,
 			actorId: ownerId,
-			runId: operation === 'promote' ? 123 : 124,
+			runId: operation === 'release' ? 123 : 124,
 			attempt: 1,
 			sha: workflowSha,
 			workflowSha,
 			workflowRef: `${repository.name}/.github/workflows/${
-				operation === 'promote' ? 'publish.yml' : 'aliases.yml'
+				operation === 'release' ? 'publish.yml' : 'aliases.yml'
 			}@refs/heads/main`,
 			ref: 'refs/heads/main',
 			event: 'workflow_dispatch',
 		};
 		repository.runs.push({
 			id: identity.runId,
-			path: `.github/workflows/${operation === 'promote' ? 'publish.yml' : 'aliases.yml'}`,
+			path: `.github/workflows/${operation === 'release' ? 'publish.yml' : 'aliases.yml'}`,
 			event: 'workflow_dispatch',
 			headSha: workflowSha,
 			headBranch: repository.defaultBranch,
@@ -185,8 +185,8 @@ async function fixture(
 		});
 		return { execution, identity };
 	};
-	const promotion = await create('promote');
-	return { repository, source, coordinator, signer, promotion, create, settings };
+	const releaseExecution = await create('release');
+	return { repository, source, coordinator, signer, releaseExecution, create, settings };
 }
 
 function land(repository: Repository, plan: RefPlan) {
@@ -205,7 +205,7 @@ function land(repository: Repository, plan: RefPlan) {
 
 async function nativePublication(options: Parameters<typeof fixture>[0] = {}, empty = false) {
 	const scenario = await fixture(options);
-	const { repository, promotion, source } = scenario;
+	const { repository, releaseExecution, source } = scenario;
 	const distribution = world.github.push(
 		repository,
 		Object.fromEntries(files.map(file => [file.path, empty ? '' : file.after])),
@@ -228,7 +228,7 @@ async function nativePublication(options: Parameters<typeof fixture>[0] = {}, em
 		authorId: botId,
 		body: '',
 	});
-	const run = repository.runs.find(run => run.id === promotion.identity.runId);
+	const run = repository.runs.find(run => run.id === releaseExecution.identity.runId);
 	if (!run) throw new Error('Expected native publication run');
 	run.status = 'completed';
 	run.conclusion = 'success';
@@ -236,37 +236,38 @@ async function nativePublication(options: Parameters<typeof fixture>[0] = {}, em
 }
 
 test('native publication reconciliation rejects empty distribution blobs', async () => {
-	const { coordinator, promotion, repository, run } = await nativePublication({}, true);
+	const { coordinator, releaseExecution, repository, run } = await nativePublication({}, true);
 	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 	await world.wait(2000);
-	const reconciled = await coordinator.execution(promotion.execution.id);
+	const reconciled = await coordinator.execution(releaseExecution.execution.id);
 	expect(reconciled?.state).not.toBe('succeeded');
 	expect(reconciled?.refPlan).toBeUndefined();
 });
 
 test('a completed native workflow reconciles its signed distribution commit and lightweight patch ref', async () => {
-	const { coordinator, promotion, repository, source, distribution, ancestry, run, signer } = await nativePublication();
+	const { coordinator, releaseExecution, repository, source, distribution, ancestry, run, signer } =
+		await nativePublication();
 	expect((await world.workflowRun(repository, run, 'success', 'workflow_dispatch')).status).toBe(202);
 	await world.wait(2000);
-	const completed = await coordinator.execution(promotion.execution.id);
+	const completed = await coordinator.execution(releaseExecution.execution.id);
 	expect(completed?.state).toBe('succeeded');
 	expect(completed?.sourceSha).toBe(source);
 	expect(completed?.release?.commit).toBe(distribution.sha);
 	expect(completed?.refPlan?.distribution?.ancestryCommit).toBe(ancestry.sha);
 	expect(completed?.publications.map(publication => [publication.id, publication.outcome])).toEqual([
 		['pkg:github/octo/widget', 'succeeded'],
-		['refs:promote', 'succeeded'],
+		['refs:release', 'succeeded'],
 	]);
 	expect(filesAt(repository, ancestry.sha)).toEqual(filesAt(repository, source));
 	expect(signer.calls).toHaveLength(0);
 });
 
 test('native publication observation keeps the distribution target when the default branch advances', async () => {
-	const { coordinator, promotion, repository, source, distribution, ancestry, run } = await nativePublication();
+	const { coordinator, releaseExecution, repository, source, distribution, ancestry, run } = await nativePublication();
 	const next = world.github.push(repository, { 'README.md': '# Next work\n' }, 'Continue development');
 	expect((await world.workflowRun(repository, run, 'success', 'workflow_dispatch')).status).toBe(202);
 	await world.wait(2000);
-	const completed = await coordinator.execution(promotion.execution.id);
+	const completed = await coordinator.execution(releaseExecution.execution.id);
 	expect(completed?.state).toBe('succeeded');
 	expect(completed?.sourceSha).toBe(source);
 	expect(completed?.release?.commit).toBe(distribution.sha);
@@ -275,10 +276,12 @@ test('native publication observation keeps the distribution target when the defa
 });
 
 test('native publication reconciliation refuses a patch tag moved while reading the immutable release', async () => {
-	const { coordinator, promotion, repository, source, run } = await nativePublication({ moveTagOnReleaseRead: true });
+	const { coordinator, releaseExecution, repository, source, run } = await nativePublication({
+		moveTagOnReleaseRead: true,
+	});
 	expect((await world.workflowRun(repository, run, 'success', 'workflow_dispatch')).status).toBe(202);
 	await world.wait(2000);
-	const reconciled = await coordinator.execution(promotion.execution.id);
+	const reconciled = await coordinator.execution(releaseExecution.execution.id);
 	expect(repository.refs.get('tags/v1.2.3')).toBe(source);
 	expect(reconciled?.state).not.toBe('succeeded');
 	expect(reconciled?.release).toBeUndefined();
@@ -287,12 +290,12 @@ test('native publication reconciliation refuses a patch tag moved while reading 
 });
 
 test('native publication reconciliation finds ancestry beyond the first 250 comparison commits', async () => {
-	const { coordinator, promotion, distribution, ancestry } = await nativePublication({
+	const { coordinator, releaseExecution, distribution, ancestry } = await nativePublication({
 		cancelled: true,
 		longComparison: true,
 	});
 	const mark = world.network.mark();
-	const completed = await coordinator.recover(promotion.execution.id, 'reconcile', 'release-maintainer');
+	const completed = await coordinator.recover(releaseExecution.execution.id, 'reconcile', 'release-maintainer');
 	expect(completed.state).toBe('succeeded');
 	expect(completed.release?.commit).toBe(distribution.sha);
 	expect(completed.refPlan?.distribution?.ancestryCommit).toBe(ancestry.sha);
@@ -304,11 +307,11 @@ test('native publication reconciliation finds ancestry beyond the first 250 comp
 });
 
 test('explicit reconciliation repairs a cancelled native publication without cancelling or retrying its workflow', async () => {
-	const { coordinator, promotion, repository, source, distribution, ancestry, run } = await nativePublication({
+	const { coordinator, releaseExecution, repository, source, distribution, ancestry, run } = await nativePublication({
 		cancelled: true,
 	});
 	const mark = world.network.mark();
-	const completed = await coordinator.recover(promotion.execution.id, 'reconcile', 'release-maintainer');
+	const completed = await coordinator.recover(releaseExecution.execution.id, 'reconcile', 'release-maintainer');
 	expect(completed.state).toBe('succeeded');
 	expect(completed.reason).toBeUndefined();
 	expect(completed.release?.commit).toBe(distribution.sha);
@@ -337,7 +340,7 @@ for (const problem of [
 	'foreign run',
 ]) {
 	test(`native publication reconciliation rejects ${problem}`, async () => {
-		const { coordinator, promotion, repository, source, distribution, ancestry, run } = await nativePublication({
+		const { coordinator, releaseExecution, repository, source, distribution, ancestry, run } = await nativePublication({
 			foreignRun: problem === 'foreign run',
 		});
 		if (problem === 'unsigned distribution') distribution.verified = false;
@@ -354,7 +357,7 @@ for (const problem of [
 		if (problem === 'different workflow source') run.headSha = 'e'.repeat(40);
 		expect((await world.workflowRun(repository, run, 'success', 'workflow_dispatch')).status).toBe(202);
 		await world.wait(2000);
-		const reconciled = await coordinator.execution(promotion.execution.id);
+		const reconciled = await coordinator.execution(releaseExecution.execution.id);
 		expect(reconciled?.state).not.toBe('succeeded');
 		expect(reconciled?.release).toBeUndefined();
 		expect(reconciled?.refPlan).toBeUndefined();
@@ -363,17 +366,22 @@ for (const problem of [
 
 test('distribution authorization freezes a signed target while retaining source identity and source-only master', async () => {
 	const scenario = await fixture();
-	const { coordinator, promotion, repository, source, signer } = scenario;
-	const token = await world.runToken({ repository, runId: promotion.identity.runId, sha: source, file: 'publish.yml' });
+	const { coordinator, releaseExecution, repository, source, signer } = scenario;
+	const token = await world.runToken({
+		repository,
+		runId: releaseExecution.identity.runId,
+		sha: source,
+		file: 'publish.yml',
+	});
 	const response = await world.handle(
 		new Request('https://beepboop.kjanat.dev/api/workflow/refs-plan', {
 			method: 'POST',
 			headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-			body: JSON.stringify({ executionId: promotion.execution.id, files }),
+			body: JSON.stringify({ executionId: releaseExecution.execution.id, files }),
 		}),
 	);
 	expect(response.status).toBe(200);
-	const plan = (await coordinator.execution(promotion.execution.id))?.refPlan;
+	const plan = (await coordinator.execution(releaseExecution.execution.id))?.refPlan;
 	if (!plan) throw new Error('Expected frozen ref plan');
 	expect(await response.json()).toEqual(plan);
 	if (!plan.distribution) throw new Error('Expected distribution evidence');
@@ -383,7 +391,7 @@ test('distribution authorization freezes a signed target while retaining source 
 	expect(world.github.head(repository)).toBe(source);
 	expect(filesAt(repository, plan.distribution.commit)['dist/main.mjs']).toBe(files[0]?.after);
 	expect(filesAt(repository, plan.distribution.ancestryCommit)).toEqual(filesAt(repository, source));
-	const saved = await coordinator.execution(promotion.execution.id);
+	const saved = await coordinator.execution(releaseExecution.execution.id);
 	expect(saved?.sourceSha).toBe(source);
 	expect(saved?.refPlan).toEqual(plan);
 	if (!saved) throw new Error('Missing saved execution');
@@ -391,27 +399,28 @@ test('distribution authorization freezes a signed target while retaining source 
 });
 
 test('distribution planning rejects files outside the authorized exact paths before signing', async () => {
-	const { coordinator, promotion, signer } = await fixture();
-	await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, [
+	const { coordinator, releaseExecution, signer } = await fixture();
+	await expect(coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, [
 		...files,
 		{ path: 'README.md', before: '# widget\n', after: '# changed\n' },
 	])).rejects.toThrow('Distribution files must match');
 	expect(signer.calls).toHaveLength(0);
-	expect((await coordinator.execution(promotion.execution.id))?.refPlan).toBeUndefined();
+	expect((await coordinator.execution(releaseExecution.execution.id))?.refPlan).toBeUndefined();
 });
 
 test('distribution authorization refuses disabled immutable releases before signing', async () => {
-	const { coordinator, promotion, signer } = await fixture({ enabled: false });
-	await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, files)).rejects.toThrow(
-		'Enable immutable GitHub releases',
-	);
+	const { coordinator, releaseExecution, signer } = await fixture({ enabled: false });
+	await expect(coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files)).rejects
+		.toThrow(
+			'Enable immutable GitHub releases',
+		);
 	expect(signer.calls).toHaveLength(0);
 });
 
 test('distribution retries preserve the original plan and reject changed bytes or source text', async () => {
-	const { coordinator, promotion, signer } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
-	expect(await coordinator.refs(promotion.execution.id, promotion.identity, false, files)).toEqual(plan);
+	const { coordinator, releaseExecution, signer } = await fixture();
+	const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
+	expect(await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files)).toEqual(plan);
 	expect(signer.calls).toHaveLength(3);
 	for (const changed of [
 		files.map(file => ({ ...file, after: `${file.after}// changed\n` })),
@@ -419,44 +428,48 @@ test('distribution retries preserve the original plan and reject changed bytes o
 		files.map(file => ({ ...file, mode: '100755' as const })),
 		files.slice(1),
 	]) {
-		await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, changed)).rejects.toThrow(
-			'Distribution files differ from the frozen plan',
-		);
+		await expect(coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, changed)).rejects
+			.toThrow(
+				'Distribution files differ from the frozen plan',
+			);
 	}
-	expect((await coordinator.execution(promotion.execution.id))?.refPlan).toEqual(plan);
+	expect((await coordinator.execution(releaseExecution.execution.id))?.refPlan).toEqual(plan);
 	expect(signer.calls).toHaveLength(3);
 });
 
 test('distribution retries cannot omit a frozen executable mode', async () => {
-	const { coordinator, promotion } = await fixture();
+	const { coordinator, releaseExecution } = await fixture();
 	const executable = files.map(file => ({ ...file, mode: '100755' as const }));
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, executable);
-	expect(await coordinator.refs(promotion.execution.id, promotion.identity, false, executable)).toEqual(plan);
-	await expect(coordinator.refs(promotion.execution.id, promotion.identity, false, files)).rejects.toThrow(
-		'Distribution files differ from the frozen plan',
+	const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, executable);
+	expect(await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, executable)).toEqual(
+		plan,
 	);
+	await expect(coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files)).rejects
+		.toThrow(
+			'Distribution files differ from the frozen plan',
+		);
 });
 
 test('distribution completion requires the exact signed patch tag and landed ancestry', async () => {
-	const { coordinator, promotion, repository, source } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const { coordinator, releaseExecution, repository, source } = await fixture();
+	const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
 	if (!plan.distribution) throw new Error('Expected distribution');
-	await expect(coordinator.refs(promotion.execution.id, promotion.identity, true)).rejects.toThrow(
+	await expect(coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, true)).rejects.toThrow(
 		'Distribution tag object',
 	);
 	land(repository, plan);
 	repository.refs.set('heads/main', source);
-	await expect(coordinator.refs(promotion.execution.id, promotion.identity, true)).rejects.toThrow(
+	await expect(coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, true)).rejects.toThrow(
 		'Distribution ancestry did not land',
 	);
 	repository.refs.set('heads/main', plan.distribution.ancestryCommit);
-	expect(await coordinator.refs(promotion.execution.id, promotion.identity, true)).toEqual(plan);
+	expect(await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, true)).toEqual(plan);
 	expect(
-		(await coordinator.execution(promotion.execution.id))?.publications.find(publication =>
-			publication.id === 'refs:promote'
+		(await coordinator.execution(releaseExecution.execution.id))?.publications.find(publication =>
+			publication.id === 'refs:release'
 		),
 	).toMatchObject({
-		id: 'refs:promote',
+		id: 'refs:release',
 		manager: 'workflow',
 		name: repository.name,
 		version: '1.2.3',
@@ -466,48 +479,48 @@ test('distribution completion requires the exact signed patch tag and landed anc
 });
 
 test('immutable publication accepts only the frozen distribution commit and records its source separately', async () => {
-	const { coordinator, promotion, repository, source } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const { coordinator, releaseExecution, repository, source } = await fixture();
+	const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
 	if (!plan.distribution) throw new Error('Expected distribution');
 	land(repository, plan);
-	await coordinator.refs(promotion.execution.id, promotion.identity, true);
+	await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, true);
 	world.github.recordTag(repository, 'v1.2.3', 'd'.repeat(40), source, true);
-	await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
+	await expect(coordinator.publishRelease(releaseExecution.execution.id, releaseExecution.identity)).rejects.toThrow(
 		'Distribution tag object differs from the signed plan',
 	);
 	land(repository, plan);
-	const published = await coordinator.publishRelease(promotion.execution.id, promotion.identity);
+	const published = await coordinator.publishRelease(releaseExecution.execution.id, releaseExecution.identity);
 	expect(published.sourceSha).toBe(source);
 	expect(published.release?.commit).toBe(plan.distribution.commit);
 	expect(repository.releases.at(-1)?.target).toBe(plan.distribution.commit);
 });
 
 test('an immutable release policy refuses a GitHub release whose immutable flag is false', async () => {
-	const { coordinator, promotion, repository } = await fixture({ immutable: false });
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const { coordinator, releaseExecution, repository } = await fixture({ immutable: false });
+	const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
 	land(repository, plan);
-	await coordinator.refs(promotion.execution.id, promotion.identity, true);
-	await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
+	await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, true);
+	await expect(coordinator.publishRelease(releaseExecution.execution.id, releaseExecution.identity)).rejects.toThrow(
 		'Published GitHub release is not immutable',
 	);
-	expect((await coordinator.execution(promotion.execution.id))?.release).toBeUndefined();
+	expect((await coordinator.execution(releaseExecution.execution.id))?.release).toBeUndefined();
 });
 
-test('aliases inherit the completed promotion distribution without changing source identity', async () => {
-	const { coordinator, promotion, repository, source, create } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+test('aliases inherit the completed release distribution without changing source identity', async () => {
+	const { coordinator, releaseExecution, repository, source, create } = await fixture();
+	const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
 	if (!plan.distribution) throw new Error('Expected distribution');
 	land(repository, plan);
-	await coordinator.refs(promotion.execution.id, promotion.identity, true);
-	await coordinator.publishRelease(promotion.execution.id, promotion.identity);
-	const run = repository.runs.find(run => run.id === promotion.identity.runId);
-	if (!run) throw new Error('Expected promotion run');
+	await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, true);
+	await coordinator.publishRelease(releaseExecution.execution.id, releaseExecution.identity);
+	const run = repository.runs.find(run => run.id === releaseExecution.identity.runId);
+	if (!run) throw new Error('Expected releaseExecution run');
 	run.status = 'completed';
 	run.conclusion = 'success';
 	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 	await world.wait(2000);
-	expect((await coordinator.execution(promotion.execution.id))?.state).toBe('succeeded');
-	const aliases = await create('aliases', [promotion.execution.id], true);
+	expect((await coordinator.execution(releaseExecution.execution.id))?.state).toBe('succeeded');
+	const aliases = await create('aliases', [releaseExecution.execution.id], true);
 	const token = await world.runToken({
 		repository,
 		runId: aliases.identity.runId,
@@ -530,26 +543,26 @@ test('aliases inherit the completed promotion distribution without changing sour
 });
 
 test('distribution publication requires confirmed refs even when the signed patch tag exists', async () => {
-	const { coordinator, promotion, repository } = await fixture();
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const { coordinator, releaseExecution, repository } = await fixture();
+	const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
 	land(repository, plan);
-	await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
+	await expect(coordinator.publishRelease(releaseExecution.execution.id, releaseExecution.identity)).rejects.toThrow(
 		'Confirm distribution refs and ancestry before publishing the release',
 	);
 	expect(repository.releases).toEqual([]);
 });
 
 test('distribution publication requires an authorized plan even when a source version tag exists', async () => {
-	const { coordinator, promotion, repository, source } = await fixture();
+	const { coordinator, releaseExecution, repository, source } = await fixture();
 	world.github.recordTag(repository, 'v1.2.3', 'd'.repeat(40), source, true);
-	await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
+	await expect(coordinator.publishRelease(releaseExecution.execution.id, releaseExecution.identity)).rejects.toThrow(
 		'Confirm distribution refs and ancestry before publishing the release',
 	);
 	expect(repository.releases).toEqual([]);
 });
 
 test('reconciliation refuses a source release when distribution publication has no authorized plan', async () => {
-	const { coordinator, promotion, repository, source } = await fixture();
+	const { coordinator, releaseExecution, repository, source } = await fixture();
 	world.github.recordTag(repository, 'v1.2.3', 'd'.repeat(40), source, true);
 	repository.releases.push({
 		id: 999,
@@ -560,13 +573,13 @@ test('reconciliation refuses a source release when distribution publication has 
 		authorId: ownerId,
 		body: '',
 	});
-	const run = repository.runs.find(run => run.id === promotion.identity.runId);
-	if (!run) throw new Error('Expected promotion run');
+	const run = repository.runs.find(run => run.id === releaseExecution.identity.runId);
+	if (!run) throw new Error('Expected releaseExecution run');
 	run.status = 'completed';
 	run.conclusion = 'failure';
 	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
 	await world.wait(2000);
-	const reconciled = await coordinator.execution(promotion.execution.id);
+	const reconciled = await coordinator.execution(releaseExecution.execution.id);
 	expect(reconciled?.state).toBe('failed');
 	expect(reconciled?.release).toBeUndefined();
 	expect(reconciled?.refPlan).toBeUndefined();
@@ -574,14 +587,14 @@ test('reconciliation refuses a source release when distribution publication has 
 
 for (const problem of ['missing ancestry', 'different signed tag object']) {
 	test(`publication rechecks confirmed distribution refs after ${problem}`, async () => {
-		const { coordinator, promotion, repository, source } = await fixture();
-		const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+		const { coordinator, releaseExecution, repository, source } = await fixture();
+		const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
 		if (!plan.distribution) throw new Error('Expected distribution');
 		land(repository, plan);
-		await coordinator.refs(promotion.execution.id, promotion.identity, true);
+		await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, true);
 		if (problem === 'missing ancestry') repository.refs.set('heads/main', source);
 		else world.github.recordTag(repository, 'v1.2.3', 'd'.repeat(40), plan.distribution.commit, true);
-		await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
+		await expect(coordinator.publishRelease(releaseExecution.execution.id, releaseExecution.identity)).rejects.toThrow(
 			problem === 'missing ancestry'
 				? 'Distribution ancestry did not land'
 				: 'Distribution tag object differs from the signed plan',
@@ -591,24 +604,24 @@ for (const problem of ['missing ancestry', 'different signed tag object']) {
 }
 
 test('reconciliation after an ambiguous release response keeps the frozen target when master advances', async () => {
-	const { coordinator, promotion, repository, source, settings, signer } = await fixture({ immutable: false });
-	const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+	const { coordinator, releaseExecution, repository, source, settings, signer } = await fixture({ immutable: false });
+	const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
 	if (!plan.distribution) throw new Error('Expected distribution');
 	land(repository, plan);
-	await coordinator.refs(promotion.execution.id, promotion.identity, true);
-	await expect(coordinator.publishRelease(promotion.execution.id, promotion.identity)).rejects.toThrow(
+	await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, true);
+	await expect(coordinator.publishRelease(releaseExecution.execution.id, releaseExecution.identity)).rejects.toThrow(
 		'Published GitHub release is not immutable',
 	);
 	expect(repository.releases).toHaveLength(1);
 	settings.immutable = true;
 	const newer = world.github.push(repository, { 'README.md': '# next work\n' }, 'Continue development');
-	const run = repository.runs.find(run => run.id === promotion.identity.runId);
-	if (!run) throw new Error('Expected promotion run');
+	const run = repository.runs.find(run => run.id === releaseExecution.identity.runId);
+	if (!run) throw new Error('Expected releaseExecution run');
 	run.status = 'completed';
 	run.conclusion = 'failure';
 	await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
 	await world.wait(2000);
-	const reconciled = await coordinator.execution(promotion.execution.id);
+	const reconciled = await coordinator.execution(releaseExecution.execution.id);
 	expect(reconciled?.state).toBe('succeeded');
 	expect(reconciled?.sourceSha).toBe(source);
 	expect(reconciled?.refPlan).toEqual(plan);
@@ -620,8 +633,8 @@ test('reconciliation after an ambiguous release response keeps the frozen target
 
 for (const problem of ['missing ancestry', 'different signed tag object']) {
 	test(`reconciliation refuses a distribution release with ${problem}`, async () => {
-		const { coordinator, promotion, repository, source } = await fixture();
-		const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+		const { coordinator, releaseExecution, repository, source } = await fixture();
+		const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
 		if (!plan.distribution) throw new Error('Expected distribution');
 		land(repository, plan);
 		if (problem === 'missing ancestry') repository.refs.set('heads/main', source);
@@ -635,18 +648,18 @@ for (const problem of ['missing ancestry', 'different signed tag object']) {
 			authorId: ownerId,
 			body: '',
 		});
-		const run = repository.runs.find(run => run.id === promotion.identity.runId);
-		if (!run) throw new Error('Expected promotion run');
+		const run = repository.runs.find(run => run.id === releaseExecution.identity.runId);
+		if (!run) throw new Error('Expected releaseExecution run');
 		run.status = 'completed';
 		run.conclusion = 'failure';
 		await world.workflowRun(repository, run, 'failure', 'workflow_dispatch');
 		await world.wait(2000);
-		const reconciled = await coordinator.execution(promotion.execution.id);
+		const reconciled = await coordinator.execution(releaseExecution.execution.id);
 		expect(reconciled?.state).toBe('failed');
 		expect(reconciled?.release).toBeUndefined();
 		expect(
 			reconciled?.publications.some(publication =>
-				publication.id === 'refs:promote' && publication.outcome === 'succeeded'
+				publication.id === 'refs:release' && publication.outcome === 'succeeded'
 			),
 		).toBe(false);
 		expect(reconciled?.refPlan).toEqual(plan);
@@ -655,12 +668,12 @@ for (const problem of ['missing ancestry', 'different signed tag object']) {
 
 for (const problem of ['none', 'deleted release', 'mutable release', 'moved tag']) {
 	test(`native reconciliation revalidates an existing release receipt: ${problem}`, async () => {
-		const { coordinator, promotion, repository, source, distribution, settings, run } = await nativePublication({
+		const { coordinator, releaseExecution, repository, source, distribution, settings, run } = await nativePublication({
 			moveTagOnReleaseRead: problem === 'moved tag',
 		});
 		const reported = await coordinator.report(
-			promotion.execution.id,
-			promotion.identity,
+			releaseExecution.execution.id,
+			releaseExecution.identity,
 			[{
 				id: `github-release:${repository.name}`,
 				manager: 'github-release',
@@ -676,21 +689,21 @@ for (const problem of ['none', 'deleted release', 'mutable release', 'moved tag'
 		if (problem === 'mutable release') settings.immutable = false;
 		await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 		await world.wait(2000);
-		const completed = await coordinator.execution(promotion.execution.id);
+		const completed = await coordinator.execution(releaseExecution.execution.id);
 		if (problem === 'none') {
 			expect(completed?.state).toBe('succeeded');
 			expect(completed?.release?.commit).toBe(distribution.sha);
 		} else {
 			expect(completed?.state).not.toBe('succeeded');
 			expect(completed?.refPlan).toBeUndefined();
-			expect(completed?.publications.some(p => p.id === 'refs:promote' && p.outcome === 'succeeded')).toBe(false);
+			expect(completed?.publications.some(p => p.id === 'refs:release' && p.outcome === 'succeeded')).toBe(false);
 		}
 	});
 }
 
 for (const companion of ['missing', 'wrong commit', 'correct']) {
 	test(`native reconciliation requires companion module tags: ${companion}`, async () => {
-		const { coordinator, promotion, repository, source, distribution, run } = await nativePublication({
+		const { coordinator, releaseExecution, repository, source, distribution, run } = await nativePublication({
 			companion: true,
 		});
 		if (companion !== 'missing') {
@@ -698,7 +711,7 @@ for (const companion of ['missing', 'wrong commit', 'correct']) {
 		}
 		await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 		await world.wait(2000);
-		const completed = await coordinator.execution(promotion.execution.id);
+		const completed = await coordinator.execution(releaseExecution.execution.id);
 		if (companion === 'correct') {
 			expect(completed?.state).toBe('succeeded');
 			expect(completed?.refPlan?.changes.map(change => change.name)).toEqual(['v1.2.3', 'go/v1.2.3']);
@@ -711,12 +724,12 @@ for (const companion of ['missing', 'wrong commit', 'correct']) {
 
 for (const receipt of [false, true]) {
 	test(`cancelled service distribution reconciles with existing release receipt ${receipt}`, async () => {
-		const { coordinator, promotion, repository } = await fixture();
-		const plan = await coordinator.refs(promotion.execution.id, promotion.identity, false, files);
+		const { coordinator, releaseExecution, repository } = await fixture();
+		const plan = await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, false, files);
 		if (!plan.distribution) throw new Error('Expected distribution');
 		land(repository, plan);
-		await coordinator.refs(promotion.execution.id, promotion.identity, true);
-		if (receipt) await coordinator.publishRelease(promotion.execution.id, promotion.identity);
+		await coordinator.refs(releaseExecution.execution.id, releaseExecution.identity, true);
+		if (receipt) await coordinator.publishRelease(releaseExecution.execution.id, releaseExecution.identity);
 		else {
 			repository.releases.push({
 				id: 999,
@@ -728,8 +741,8 @@ for (const receipt of [false, true]) {
 				body: '',
 			});
 		}
-		await coordinator.cancel(promotion.execution.id, 'maintainer');
-		const completed = await coordinator.recover(promotion.execution.id, 'reconcile', 'maintainer');
+		await coordinator.cancel(releaseExecution.execution.id, 'maintainer');
+		const completed = await coordinator.recover(releaseExecution.execution.id, 'reconcile', 'maintainer');
 		expect(completed.state).toBe('succeeded');
 		expect(completed.reason).toBeUndefined();
 		expect(completed.release?.commit).toBe(plan.distribution.commit);
@@ -737,14 +750,14 @@ for (const receipt of [false, true]) {
 }
 
 test('native reconciliation rejects a companion tag moved during the release read', async () => {
-	const { coordinator, promotion, repository, distribution, run } = await nativePublication({
+	const { coordinator, releaseExecution, repository, distribution, run } = await nativePublication({
 		companion: true,
 		moveCompanionOnReleaseRead: true,
 	});
 	repository.refs.set('tags/go/v1.2.3', distribution.sha);
 	await world.workflowRun(repository, run, 'success', 'workflow_dispatch');
 	await world.wait(2000);
-	const completed = await coordinator.execution(promotion.execution.id);
+	const completed = await coordinator.execution(releaseExecution.execution.id);
 	expect(completed?.state).not.toBe('succeeded');
 	expect(completed?.refPlan).toBeUndefined();
 });

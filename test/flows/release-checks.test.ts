@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { CheckRun, Repository } from '@root/test/support/github.ts';
 import type { Api } from '@root/test/support/http.ts';
 import { bearer, text } from '@root/test/support/http.ts';
-import { promotions } from '@root/test/support/releases.ts';
+import { releaseExecutions } from '@root/test/support/releases.ts';
 import { npmManifest, passChecks, widget } from '@root/test/support/repositories.ts';
 import { eachWorld, origin, World } from '@root/test/support/world.ts';
 import { experimental_AstroContainer } from 'astro/container';
@@ -46,7 +46,7 @@ async function stopped(
 					required: ['pkg:npm/widget'],
 					prepare: { strategy: 'managed' },
 					credentials: stop.credentials ?? [],
-					promote: { approval: 'push', workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] } },
+					release: { approval: 'push', workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] } },
 				},
 			},
 		}),
@@ -76,7 +76,7 @@ async function stopped(
 	}
 	expect((await world.push(repository)).status).toBe(202);
 	await world.wait(16_000);
-	const [waiting] = await promotions(api);
+	const [waiting] = await releaseExecutions(api);
 	expect([waiting?.state, waiting?.reason]).toEqual(['awaiting-approval', stop.reason ?? 'checks failed: test']);
 	return { repository, api, sha: raised.sha, id: waiting?.id ?? '' };
 }
@@ -93,9 +93,9 @@ test('release without the check publishes this release and leaves the stream gat
 	expect(chosen.status).toBe(200);
 	await world.wait(16_000);
 	expect(dispatched()).toEqual([id]);
-	const [skip] = await audit('promotion.checks.skip');
+	const [skip] = await audit('release.checks.skip');
 	expect(skip?.target).toBe(`${id}: check test`);
-	expect((await audit('promotion.approve')).map(row => row.target)).toEqual([
+	expect((await audit('release.approve')).map(row => row.target)).toEqual([
 		`${id}:${sha}:push skipping: check test failure, skipped by ${skip?.actor}`,
 	]);
 	const gates = decodeSync(
@@ -124,9 +124,9 @@ test('rerun and wait reruns the failed jobs and publishes once the check passes'
 	expect((await api('/api/executions/checks', { id, choice: 'rerun' })).status).toBe(200);
 	const run = repository.runs.find(entry => entry.id === 7);
 	expect([run?.attempt, run?.status]).toEqual([2, 'queued']);
-	expect((await audit('promotion.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7`]);
+	expect((await audit('release.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7`]);
 	await world.wait(60_000);
-	expect((await promotions(api)).map(entry => [entry.state, entry.reason])).toEqual([
+	expect((await releaseExecutions(api)).map(entry => [entry.state, entry.reason])).toEqual([
 		['awaiting-approval', 'test running'],
 	]);
 	expect(dispatched()).toEqual([]);
@@ -137,17 +137,17 @@ test('rerun and wait reruns the failed jobs and publishes once the check passes'
 
 test('a started release that stopped on its checks waits again after a choice', async () => {
 	const { repository, api, id } = await stopped();
-	const [waiting] = await promotions(api);
-	if (!waiting) throw new Error('Expected a promotion');
+	const [waiting] = await releaseExecutions(api);
+	if (!waiting) throw new Error('Expected a releaseExecution');
 	await world.coordinator(repository).enqueue({
 		...waiting,
 		approvedBy: 'start',
 		started: { via: 'cli', actor: 'owner' },
 	});
 	await world.wait(16_000);
-	const [failed] = await promotions(api);
+	const [failed] = await releaseExecutions(api);
 	expect([failed?.state, failed?.reason]).toEqual(['failed', 'checks failed: test']);
-	if (!failed) throw new Error('Expected a promotion');
+	if (!failed) throw new Error('Expected a releaseExecution');
 	expect([
 		runCard(failed, Date.now()).checksStop,
 		runCard({ ...failed, attempts: 1 }, Date.now()).checksStop,
@@ -206,7 +206,7 @@ test(
 		const loaded: unknown = await import(join(import.meta.dir, '../../src/components/RunCard.astro'));
 		const container = await experimental_AstroContainer.create();
 		const buttons = async () => {
-			const [run] = await promotions(api);
+			const [run] = await releaseExecutions(api);
 			const html = await container.renderToString(decodeSync(componentModule, loaded).default, {
 				props: { run, now: Date.now() },
 				request: new Request(`${origin}/runs`),
@@ -265,7 +265,7 @@ test('rerun reruns every workflow run whose check failed, and refuses a run that
 	});
 	expect((await api('/api/executions/checks', { id, choice: 'rerun' })).status).toBe(200);
 	expect(repository.runs.map(run => [run.id, run.attempt])).toEqual([[7, 2], [8, 2], [9, 1]]);
-	expect((await audit('promotion.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7`, `${id}: 8`]);
+	expect((await audit('release.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7`, `${id}: 8`]);
 	const again = await api('/api/executions/checks', { id, choice: 'rerun' });
 	expect([again.status, text(again.body, 'error')]).toEqual([422, 'No finished check run failed, so none can rerun']);
 }, 60_000);
@@ -280,7 +280,7 @@ test('release without the check also skips running checks, and always switches o
 	};
 	const once = await stopped(running);
 	expect((await once.api('/api/executions/checks', { id: once.id, choice: 'skip' })).status).toBe(200);
-	expect((await audit('promotion.checks.skip')).map(row => row.target)).toEqual([`${once.id}: check test, check lint`]);
+	expect((await audit('release.checks.skip')).map(row => row.target)).toEqual([`${once.id}: check test, check lint`]);
 	await world.dispose();
 	world = await World.create();
 	const always = await stopped(running);
@@ -303,7 +303,7 @@ test('the gate list of a stream leaves out the checks that one release skips', a
 	});
 	expect((await api('/api/executions/checks', { id, choice: 'skip' })).status).toBe(200);
 	await world.wait(16_000);
-	expect((await promotions(api))[0]?.state).toBe('awaiting-approval');
+	expect((await releaseExecutions(api))[0]?.state).toBe('awaiting-approval');
 	const gates = decodeSync(
 		streamGates,
 		(await api('/api/repositories/gates', { repositoryId: repository.id, stream: 'main' })).body,
@@ -317,46 +317,46 @@ test('the gate list of a stream leaves out the checks that one release skips', a
 
 test('a choice on a started release whose checks pass by now restarts it', async () => {
 	const { repository, api, sha, id } = await stopped();
-	const [waiting] = await promotions(api);
-	if (!waiting) throw new Error('Expected a promotion');
+	const [waiting] = await releaseExecutions(api);
+	if (!waiting) throw new Error('Expected a releaseExecution');
 	await world.coordinator(repository).enqueue({
 		...waiting,
 		approvedBy: 'start',
 		started: { via: 'cli', actor: 'owner' },
 	});
 	await world.wait(16_000);
-	expect((await promotions(api))[0]?.state).toBe('failed');
+	expect((await releaseExecutions(api))[0]?.state).toBe('failed');
 	passChecks(repository, sha);
 	const chosen = await api('/api/executions/checks', { id, choice: 'skip' });
 	expect(text(chosen.body, 'state')).toBe('awaiting-approval');
-	expect(await audit('promotion.checks.skip')).toEqual([]);
+	expect(await audit('release.checks.skip')).toEqual([]);
 	await world.wait(16_000);
 	expect(dispatched()).toEqual([id]);
 }, 60_000);
 
 test('a started release keeps waiting while GitHub still shows the attempt before the rerun', async () => {
 	const { repository, api, id } = await stopped();
-	const [waiting] = await promotions(api);
-	if (!waiting) throw new Error('Expected a promotion');
+	const [waiting] = await releaseExecutions(api);
+	if (!waiting) throw new Error('Expected a releaseExecution');
 	await world.coordinator(repository).enqueue({
 		...waiting,
 		approvedBy: 'start',
 		started: { via: 'cli', actor: 'owner' },
 	});
 	await world.wait(16_000);
-	expect((await promotions(api))[0]?.state).toBe('failed');
+	expect((await releaseExecutions(api))[0]?.state).toBe('failed');
 	expect((await api('/api/executions/checks', { id, choice: 'rerun' })).status).toBe(200);
 	const run = repository.runs.find(entry => entry.id === 7);
 	if (!run) throw new Error('Expected the CI run');
 	run.attempt = 1;
 	run.status = 'completed';
 	await world.wait(60_000);
-	expect((await promotions(api)).map(entry => [entry.state, entry.reason])).toEqual([
+	expect((await releaseExecutions(api)).map(entry => [entry.state, entry.reason])).toEqual([
 		['awaiting-approval', 'test running'],
 	]);
 	run.attempt = 2;
 	await world.wait(60_000);
-	expect((await promotions(api)).map(entry => [entry.state, entry.reason])).toEqual([
+	expect((await releaseExecutions(api)).map(entry => [entry.state, entry.reason])).toEqual([
 		['failed', 'checks failed: test'],
 	]);
 }, 60_000);
@@ -378,7 +378,7 @@ test('a rerun keeps the reruns GitHub accepted when a later rerun request fails'
 				: world.github.handle(request),
 	);
 	expect((await api('/api/executions/checks', { id, choice: 'rerun' })).status).not.toBe(200);
-	expect((await audit('promotion.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7`]);
+	expect((await audit('release.checks.rerun')).map(row => row.target)).toEqual([`${id}: 7`]);
 	const stored = decodeSync(
 		mutableStruct({
 			reruns: Schema.optional(mutableArray(mutableStruct({ id: Schema.Finite, attempt: Schema.Finite }))),

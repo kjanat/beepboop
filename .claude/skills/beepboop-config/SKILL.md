@@ -60,7 +60,7 @@ is Beepboop's. A human commit on the setup branch stops that maintenance.
         "triggers": "dispatchOnly",
         "commands": "cargo update --workspace\ncargo test --workspace --locked"
       },
-      "promote": {
+      "release": {
         "file": "publish-crates.yml",
         "triggers": "dispatchOnly",
         "commands": "cargo publish --package example-core\ncargo publish --package example",
@@ -91,14 +91,14 @@ Stream fields:
 - `companionModules` lists Go modules (versionless PURLs) whose tag, such as
   `go/v1.2.3`, the stream's release also pushes on the release commit. The
   module keeps its own stream.
-- `prepare` and `promote` are workflow choices. Leave out `prepare` for a
+- `prepare` and `release` are workflow choices. Leave out `prepare` for a
   managed version PR. Lockfiles (`Cargo.lock`, `package-lock.json`,
   `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`) need a `prepare`
   workflow that regenerates them.
 - `observe` lists workflows that Beepboop watches without dispatching. Each
   entry has `name`, `file`, an optional `ref` pattern such as
   `refs/tags/v*` and `publications`. An observed stream needs no `prepare` or
-  `promote`.
+  `release`.
 
 Workflow choice fields:
 
@@ -141,7 +141,7 @@ security-key touch from the user, so leave them to the user:
 
 ```sh
 printf '%s' "$TOKEN" | beepboop secrets set crates-io
-beepboop secrets grant owner/repo crates-io --stream main --operation promote
+beepboop secrets grant owner/repo crates-io --stream main --operation release
 ```
 
 `--delivery runtime` is the default and lets the credentials action fetch the
@@ -172,7 +172,7 @@ trusted publishing on crates.io for the workflow file.
         "strategy": "workflow",
         "workflow": { "file": "prepare-release.yml", "ref": "main" }
       },
-      "promote": {
+      "release": {
         "approval": "required",
         "workflow": {
           "file": "publish-crates.yml",
@@ -205,12 +205,12 @@ Stream fields:
   match the choices file.
 - `prepare.strategy` is `managed` or `workflow`. `workflow` needs
   `prepare.workflow`.
-- `promote.approval` is `required`, `merge` or `push`. `required` waits for
+- `release.approval` is `required`, `merge` or `push`. `required` waits for
   the user's approval. `merge` releases the verified merge commit of a
   Beepboop preparation PR after its checks pass. `push` releases any
   default-branch commit whose manifest version is unpublished.
 - `workflows` maps extra operation names to workflow bindings. The names
-  `prepare` and `promote` are reserved.
+  `prepare` and `release` are reserved.
 - `credentials` lists secret aliases that the stream may request.
 - `needs` maps a publication to the publications that must finish first. Setup
   derives it from Cargo dependencies, from the order of the generated publish
@@ -233,8 +233,8 @@ Workflow binding fields:
 - `refs` creates tags. `phase` is `version` or `aliases`, `prefix` defaults to
   `v`, and `aliases` takes `major` and `minor`. Beepboop signs each new
   annotated tag itself. With `signed: true`, the ref step fails unless GitHub
-  reports the tag as verified. A `refs` binding must be `promote` or depend
-  on `promote` through `needs`.
+  reports the tag as verified. A `refs` binding must be `release` or depend
+  on `release` through `needs`.
 - `schedule` is a five-field UTC cron.
 - `platform`, `outputs` and `artifactInputs` describe platform builds. See
   `docs/release-planning.md`.

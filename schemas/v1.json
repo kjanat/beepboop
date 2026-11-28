@@ -1060,7 +1060,7 @@
 								]
 							}
 						},
-						"promote": {
+						"release": {
 							"type": "object",
 							"properties": {
 								"publishWhen": {
@@ -2609,7 +2609,7 @@
 							"companionModules",
 							"packageTags",
 							"prepare",
-							"promote",
+							"release",
 							"startFrom",
 							"start",
 							"workflows",

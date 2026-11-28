@@ -50,7 +50,7 @@ export function completeChoices(
 		...choices,
 		streams: choices.streams.map(stream => {
 			const chosen = candidates.filter(pkg => stream.packages.includes(pkg.id));
-			const previousPolicy = object(object(object(object(object(raw.streams)[stream.name]).promote).workflow).refs);
+			const previousPolicy = object(object(object(object(object(raw.streams)[stream.name]).release).workflow).refs);
 			const actionPrefix = typeof previousPolicy.prefix === 'string'
 				? previousPolicy.prefix
 				: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, streamCount);
@@ -68,7 +68,7 @@ export function completeChoices(
 				};
 				const build = actionReleaseOffer(snapshot)?.commands ?? '';
 				const publication = suggestedCommands(operation, scope, context);
-				const combined = operation === 'promote' && stream.actionRelease?.kind === 'distribution'
+				const combined = operation === 'release' && stream.actionRelease?.kind === 'distribution'
 						&& snapshot.files[`.github/workflows/${workflow.file}`] === undefined && workflow.commands === build
 						&& build
 					? [build, publication].filter(Boolean).join('\n')
@@ -81,12 +81,12 @@ export function completeChoices(
 				return {
 					...workflow,
 					commands,
-					...(operation === 'promote' && stream.actionRelease ? { tagPrefix: workflow.tagPrefix ?? actionPrefix } : {}),
-					...(operation === 'promote' && generated && !workflow.credentials
+					...(operation === 'release' && stream.actionRelease ? { tagPrefix: workflow.tagPrefix ?? actionPrefix } : {}),
+					...(operation === 'release' && generated && !workflow.credentials
 							&& scope.packages.some(pkg => pkg.manager === 'cargo')
 						? { credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' } }
 						: {}),
-					...(operation === 'promote' && tagged && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
+					...(operation === 'release' && tagged && !workflow.tagPrefix && !workflow.binaries && !stream.observe?.length
 							&& !stream.actionRelease
 						? { tagPrefix: stream.versionSource?.prefix ?? defaultTagPrefix(stream.name, streamCount) }
 						: {}),
@@ -94,9 +94,9 @@ export function completeChoices(
 			};
 			const operations = stream.operations?.map(entry => {
 				const scope = { name: stream.name, packages: chosen.filter(pkg => entry.publications.includes(pkg.id)) };
-				const commands = refreshedCommands('promote', entry.commands, scope, candidates, context);
+				const commands = refreshedCommands('release', entry.commands, scope, candidates, context);
 				const generated = commands !== ''
-					&& (commands === suggestedCommands('promote', scope, context) || crateScript(commands));
+					&& (commands === suggestedCommands('release', scope, context) || crateScript(commands));
 				return {
 					...entry,
 					commands,
@@ -106,7 +106,7 @@ export function completeChoices(
 				};
 			});
 			const stored = object(object(raw.streams)[stream.name]);
-			const configured = object(stored.promote).approval;
+			const configured = object(stored.release).approval;
 			const approval = stream.approval
 				?? (configured === 'required' || configured === 'merge' || configured === 'push' ? configured : undefined);
 			const starts = safeDecode(releaseStarts, stored.start);
@@ -117,12 +117,12 @@ export function completeChoices(
 			const merged = safeDecode(versionPrMerge, object(stored.prepare).versionPrMerge);
 			const merge = stream.versionPrMerge ?? (merged.success ? merged.data : undefined);
 			const prepare = complete('prepare', stream.prepare),
-				promote = complete(
-					'promote',
-					stream.promote ?? (stream.actionRelease
+				releaseWorkflow = complete(
+					'release',
+					stream.release ?? (stream.actionRelease
 						? {
 							file: 'release.yml',
-							job: 'promote',
+							job: 'release',
 							triggers: 'dispatchOnly',
 							commands: stream.actionRelease.kind === 'distribution'
 								? actionReleaseOffer(snapshot)?.commands ?? ''
@@ -135,14 +135,14 @@ export function completeChoices(
 			return {
 				...stream,
 				...(stream.actionRelease && !stream.packages.length && !stream.versionFiles?.length && !stream.versionSource
-					? { versionSource: { kind: 'tags' as const, prefix: promote?.tagPrefix ?? 'v' } }
+					? { versionSource: { kind: 'tags' as const, prefix: releaseWorkflow?.tagPrefix ?? 'v' } }
 					: {}),
-				...(promote && approval ? { approval } : {}),
+				...(releaseWorkflow && approval ? { approval } : {}),
 				...(start ? { start } : {}),
 				...(bump ? { bump } : {}),
 				...(merge ? { versionPrMerge: merge } : {}),
 				...(prepare ? { prepare } : {}),
-				...(promote ? { promote } : {}),
+				...(releaseWorkflow ? { release: releaseWorkflow } : {}),
 				...(operations ? { operations } : {}),
 			};
 		}),

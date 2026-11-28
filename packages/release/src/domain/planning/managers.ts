@@ -79,7 +79,7 @@ export function planRelease(
 			&& Object.keys(snapshot.files).some(isLockfile);
 		if (requiresPreparation) {
 			diagnostics.push(
-				'Preparation workflow must regenerate lockfiles and generated version carriers before promotion',
+				'Preparation workflow must regenerate lockfiles and generated version carriers before the release',
 			);
 		}
 		if (!edits.length) diagnostics.push(alreadyPrepared(version, snapshot.sha));

@@ -58,7 +58,7 @@ function configuration(packageTags: string[]) {
 				required: ['pkg:npm/widget'],
 				credentials: ['npm-token'],
 				prepare: { strategy: 'managed' },
-				promote: {
+				release: {
 					approval: 'required',
 					workflow: {
 						file: 'publish.yml',
@@ -331,7 +331,7 @@ test('validation blocks packageTags outside the stream packages or its registry 
 		['blocking', 'unknown-reference', 'Stream main packageTags names pkg:npm/missing, which discovery did not find'],
 	]);
 	document.streams.main.packageTags = ['pkg:npm/widget'];
-	delete document.streams.main.promote.workflow.refs;
+	delete document.streams.main.release.workflow.refs;
 	expect(found(document)).toEqual([
 		['warning', 'package-tag', 'Stream main pushes no version tag, so Beepboop creates no package tags for it'],
 	]);
@@ -424,7 +424,7 @@ test('a backfill names an unknown stream and a stream without a version tag', as
 	};
 	expect(await refusal('other')).toEqual([422, 'Unknown stream other']);
 	const document = JSON.parse(configuration(['pkg:npm/widget']));
-	delete document.streams.main.promote.workflow.refs;
+	delete document.streams.main.release.workflow.refs;
 	world.github.push(repository, { '.github/beepboop.json': jsonFile(document, '\t') }, 'Drop the version tag');
 	expect((await api('/api/repositories/discover', { repository: 'octo/widget' })).status).toBe(200);
 	expect(await refusal('main')).toEqual([422, 'Stream main pushes no version tag, so its packages get no tags']);

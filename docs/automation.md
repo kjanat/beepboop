@@ -12,7 +12,7 @@ scripts and task recipes they run, and the repository's tags. It groups them
 into release streams. Each tag family, manually dispatched release and scheduled
 channel gets one stream. Each stream observes its existing workflows and keeps
 their triggers. For a stream that starts from a tag family, the proposal also
-creates a `release-<stream>.yml` workflow under `promote`. Beepboop runs it to
+creates a `release-<stream>.yml` workflow under `release`. Beepboop runs it to
 push the version tag, and that tag starts the observed workflows. Beepboop
 starts the release, and the observed workflows still publish. A repository with
 one stream tags `v<version>`. With several streams, `main` tags `v<version>`
@@ -87,7 +87,7 @@ without a version file also need a preparation workflow.
 For a new release workflow, preparation can run as a second job in the **same
 file**. The dispatcher selects preparation or publication, and job conditions
 keep the other job from running. Preparation runs before the release PR merges.
-Publication runs when `promote.publishWhen` says so. You can still choose a separate preparation
+Publication runs when `release.publishWhen` says so. You can still choose a separate preparation
 workflow. Selecting managed PR preparation hides the unused job fields.
 
 **Versioning and group settings** holds `versionScope` and the release group
@@ -122,8 +122,8 @@ distribution commit SHA. When the repository contains
 `actions/<name>/action.yml`, setup references that action as `$/actions/<name>`.
 
 A setup PR publishes nothing. npm trusted-publisher setup is a separate step.
-When the `begin` step of a promotion runs, Beepboop creates each JSR package the
-promotion publishes and links it to the repository. It refuses a package that
+When the `begin` step of a release runs, Beepboop creates each JSR package the
+release publishes and links it to the repository. It refuses a package that
 is already linked to a different repository. It then turns off the JSR scope's
 GitHub Actions actor verification, and runs that Beepboop starts can publish to
 the scope. Beepboop makes these JSR calls with the credential stored as
@@ -177,8 +177,8 @@ choice on a workflow with more than one job also blocks. Its blocker asks you to
 split the selected job into a dedicated dispatch workflow first.
 
 Setup leaves a large `release.yml` with a `push: tags` trigger as it is.
-Observe it, and name a new file under `promote` for the crates. Setup creates
-that file with a single `promote` job:
+Observe it, and name a new file under `release` for the crates. Setup creates
+that file with a single `release` job:
 
 ```json
 {
@@ -200,7 +200,7 @@ that file with a single `promote` job:
         "file": "prepare-release.yml",
         "commands": "cargo check --workspace --all-targets\ncargo test --workspace"
       },
-      "promote": {
+      "release": {
         "file": "publish-crates.yml",
         "commands": "beepboop publish",
         "credentials": { "CARGO_REGISTRY_TOKEN": "crates-io" },
@@ -215,9 +215,9 @@ that file with a single `promote` job:
   `beepboop repositories show owner/repo`.
 - `observe` leaves `release.yml` and its triggers unchanged. Beepboop tracks its
   runs from GitHub workflow-run events and attributes the listed
-  `publications` to it. The promote workflow reports the remaining selected
+  `publications` to it. The release workflow reports the remaining selected
   packages.
-- `promote.file` names a new file. Setup creates it with
+- `release.file` names a new file. Setup creates it with
   `workflow_dispatch` inputs, `id-token: write`, the `begin` step and both
   checkouts. For `beepboop publish`, the `beepboop_publish` step runs
   `actions/publish`, which publishes every selected package and reports each
@@ -238,7 +238,7 @@ that file with a single `promote` job:
   identity to a kept `actions/publish-refs` step whose token comes from
   `actions/token`.
 
-Setup never writes `"each": "package"`. A promotion from `beepboop release`
+Setup never writes `"each": "package"`. A release from `beepboop release`
 dispatches `publish-crates.yml` once, and `actions/publish` publishes every
 crate in that run. Each crate claims a slot from the crates.io budget. Bash
 `commands` claim no slots. A Bash run that publishes more than five new crates
@@ -253,7 +253,7 @@ the `package` input from [Paced publishing](#paced-publishing).
 ## Configure release streams
 
 A stream groups operations and packages for a release. This example prepares
-and promotes through branch workflows and observes publication from a tag:
+and releases through branch workflows and observes publication from a tag:
 
 ```json
 {
@@ -265,9 +265,9 @@ and promotes through branch workflows and observes publication from a tag:
         "version": "manual",
         "workflow": { "file": "prepare.yml", "ref": "master" }
       },
-      "promote": {
+      "release": {
         "publishWhen": "approved-in-beepboop",
-        "workflow": { "file": "promote.yml", "ref": "master" }
+        "workflow": { "file": "release.yml", "ref": "master" }
       },
       "workflows": {
         "publish": {
@@ -297,12 +297,12 @@ and promotes through branch workflows and observes publication from a tag:
 | `mustPublish`            | Packages that must publish for the release to count as successful. An operation named `publish` uses this list by default.                                                                                                                                                                                                                                                                                                                                               |
 | `credentials`            | Credential aliases that the stream requests. Access also needs an administrator grant.                                                                                                                                                                                                                                                                                                                                                                                   |
 | `concurrency`            | `queue`, or `supersede-pending` to cancel older undispatched operations.                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `promote.publishWhen`    | When a version on the default branch publishes. `approved-in-beepboop`: you publish it with the Publish button in Beepboop or `beepboop runs publish`; approving or merging the version PR on GitHub does not publish. `version-pr-merged`: merging the version PR publishes it once the checks pass. `version-commit-pushed`: a signed commit that raises the version publishes it once the checks pass, with no review. Without a value, it is `approved-in-beepboop`. |
+| `release.publishWhen`    | When a version on the default branch publishes. `approved-in-beepboop`: you publish it with the Publish button in Beepboop or `beepboop runs publish`; approving or merging the version PR on GitHub does not publish. `version-pr-merged`: merging the version PR publishes it once the checks pass. `version-commit-pushed`: a signed commit that raises the version publishes it once the checks pass, with no review. Without a value, it is `approved-in-beepboop`. |
 | `startFrom`              | `[{ "via": "action", "workflow": "start-release.yml" }]` lets the Start release workflow start releases. `beepboop release` and the dashboard start releases without it. Entries for `dashboard` and `cli` are ignored. See [Start a release](#start-a-release).                                                                                                                                                                                                         |
 | `prepare.versionLands`   | How a new version reaches the default branch. `via-version-pr`: Beepboop opens a version PR, and merging it puts the new version on the default branch. `via-direct-commit`: Beepboop pushes a signed commit with the new version straight to the default branch. Without a value, it is `via-version-pr`.                                                                                                                                                               |
 | `prepare.versionPrMerge` | Who merges the version PR. `manual`: you merge it yourself. `squash`, `merge` or `rebase`: Beepboop turns on GitHub auto-merge with that method, and GitHub merges the version PR once its checks pass. With `publishWhen: version-pr-merged`, the release then publishes with nobody touching it. Without a value, it is `manual`.                                                                                                                                      |
 
-Files written before these names keep working: `versioning`, `required`, `start`, `prepare.bump` and `promote.approval` read as `versionScope`, `mustPublish`, `startFrom`, `prepare.versionLands` and `promote.publishWhen`, with the values `workspace`, `independent`, `commit`, `pr`, `required`, `merge` and `push`. In a workflow's `setup`, `triggers` reads as `existingTriggers`. The next setup PR writes the current names.
+Files written before these names keep working: `versioning`, `required`, `start`, `prepare.bump` and `release.approval` read as `versionScope`, `mustPublish`, `startFrom`, `prepare.versionLands` and `release.publishWhen`, with the values `workspace`, `independent`, `commit`, `pr`, `required`, `merge` and `push`. In a workflow's `setup`, `triggers` reads as `existingTriggers`. The next setup PR writes the current names.
 
 You select versions manually, and they follow SemVer. Select packages that
 share a version source together. Dependencies name operations in the same
@@ -443,7 +443,7 @@ For example, a release of `1.2.3` can expose these entries:
 | `pkg:npm/%40octo/widget`               | `https://npm.im/package/@octo/widget/v/1.2.3`         |
 | `pkg:golang/github.com/octo/widget/go` | `https://pkg.go.dev/github.com/octo/widget/go@v1.2.3` |
 | `github-release:octo/widget`           | `https://github.com/octo/widget/releases/tag/v1.2.3`  |
-| `refs:promote`                         | `https://github.com/octo/widget/tree/v1.2.3`          |
+| `refs:release`                         | `https://github.com/octo/widget/tree/v1.2.3`          |
 
 GitHub release and tag links use the execution’s tag policy. A version-tag
 operation can expose its tag and companion Go module alongside the explicitly
@@ -474,7 +474,7 @@ passes its files to each `publish-refs` step.
 
 Setup adds the aliases of each `actions/credentials` step, and the aliases in
 the `credentials` input of `actions/publish`, to the stream's `credentials`.
-It reads the prepare, promote and operation workflows. Merging the setup PR
+It reads the prepare, release and operation workflows. Merging the setup PR
 grants each alias to the operation and environment of its job. The `begin`
 step of a job names its operation. A job without `begin` takes the operation of
 its `beepboop_operation` condition, written with or without `${{ }}`. The job
@@ -488,10 +488,10 @@ in the merged `credentials` list.
 Declare a standalone operation under the stream's `workflows` with
 `mode: "dispatch"` and `backfill: true`. List the package publications that
 must succeed. During adoption the equivalent operation choice has
-`backfill: true` and `needs: []`. The promotion's publication requirements
+`backfill: true` and `needs: []`. The release's publication requirements
 still apply to normal releases.
 
-Run `beepboop runs backfill PROMOTION_ID OPERATION` for a promotion with a
+Run `beepboop runs backfill RELEASE_ID OPERATION` for a release with a
 published GitHub release. Beepboop checks the release tag against its recorded
 commit and dispatches the repository's current, checked-in workflow. The
 workflow reads the tag from its begin context's `upstreamRelease.tag`, builds
@@ -515,7 +515,7 @@ checkout of `context.sourceSha`:
 Beepboop plans the binding's `publications`, or the stream's `packages` when
 the binding lists none. It hands out each package after the packages it depends
 on in the repository have published, also when another stream releases them
-from the same commit. A promotion whose workflow calls `actions/publish` starts
+from the same commit. A release whose workflow calls `actions/publish` starts
 right away, and its packages wait for those streams in the ledger.
 
 For each package the action:
@@ -642,7 +642,7 @@ When the cause of the failure is in the workflow itself, re-running the failed
 jobs repeats it, because a re-run keeps the workflow file of the original
 commit. `beepboop runs recover ID --action redispatch` dispatches the workflow
 at the head of the stream's workflow ref instead, such as the default branch,
-for a failed or cancelled promotion whose version tags already target its
+for a failed or cancelled release whose version tags already target its
 release commit. The workflow must check out the `sourceSha` that
 `actions/begin` returns before it builds. The checkout that setup generates
 does this, and Beepboop cannot check what a hand-written workflow builds.
@@ -656,7 +656,7 @@ of the superseded run are dropped. The command follows the release like
 Starting a release also publishes it. Beepboop runs the version bump, the
 publication, the binaries, the tags and the GitHub release, and nothing asks
 again. A commit added to the version PR before the merge ends that: the
-release then follows `promote.publishWhen`. Failing checks or package metadata problems stop the release with a
+release then follows `release.publishWhen`. Failing checks or package metadata problems stop the release with a
 reason on the runs page. Starting the same version again restarts a stopped
 release whose workflow has not run yet, and Retry on the runs page does the same.
 
@@ -680,9 +680,9 @@ choice from a script.
 `beepboop release <version> --force` publishes without waiting on commit
 checks, the commit signature or package metadata, and asks nothing. It also
 restarts a release of that version that stopped, and runs its workflow again
-when the workflow already failed. If that promotion already created the
+when the workflow already failed. If that release already created the
 latest version tag, Beepboop can retry the same commit after verifying that
-the promotion stopped before publication. For tags created by the runner, this
+the release stopped before publication. For tags created by the runner, this
 requires the tag object ID recorded at confirmation. Older runs can supply the
 same proof from a signing-service tag object in their stored plan.
 
@@ -708,7 +708,7 @@ problems and more than 100 check runs always stop a release.
 
 `beepboop release` and the dashboard start a release on every stream that can
 publish one shared version. For a stream that writes its version only to
-`versionFiles`, configure a dispatchable promotion with `refs.phase: "version"`.
+`versionFiles`, configure a dispatchable release with `refs.phase: "version"`.
 Beepboop then uses that tag prefix to find the last release and follows the
 prepared version through its merge.
 
@@ -724,7 +724,7 @@ GitHub Actions workflow, list that workflow in `startFrom`:
     "main": {
       "startFrom": [{ "via": "action", "workflow": "start-release.yml" }],
       "prepare": { "strategy": "managed", "versionLands": "via-direct-commit" },
-      "promote": { "publishWhen": "approved-in-beepboop", "workflow": { "file": "release.yml" } }
+      "release": { "publishWhen": "approved-in-beepboop", "workflow": { "file": "release.yml" } }
     }
   }
 }
@@ -766,13 +766,13 @@ the runs page. `beepboop release --auto`, `--no-auto` or `--merge` sets the
 method for one release; see [CLI usage](cli.md).
 
 A version raised on the default branch without a start follows
-`promote.publishWhen`.
+`release.publishWhen`.
 
-## Prepare and promote
+## Prepare and release
 
 Choose the stream and version in the dashboard and select **Release**. When the
-manifests already carry the version, Beepboop creates the promotion, and
-`promote.publishWhen` decides when it publishes. Otherwise preparation runs in
+manifests already carry the version, Beepboop creates the release, and
+`release.publishWhen` decides when it publishes. Otherwise preparation runs in
 one of two ways:
 
 - **Managed.** Beepboop calculates the manifest edits. A preparation workflow
@@ -794,10 +794,10 @@ lockfile regeneration. When Beepboop updates an existing preparation branch, it
 checks the branch head and the generated file contents. Manual edits produce a
 conflict for review.
 
-Merge the preparation PR. With `approved-in-beepboop`, publish the promotion
+Merge the preparation PR. With `approved-in-beepboop`, publish the release
 commit in the dashboard. Repeating an operation for the same release attaches
 to its existing execution. You can retry failed jobs from the execution page.
-An ambiguous workflow dispatch offers reconciliation. If a promotion was
+An ambiguous workflow dispatch offers reconciliation. If a release was
 cancelled before its first dispatch, retrying it waits for you to publish it
 again.
 
@@ -805,23 +805,23 @@ A release is the commit that set its version: the merge of the version PR, the
 version commit Beepboop pushed, or the first pushed commit with the new
 version. Commits you add to the version PR before you merge it belong to that
 release. A started release whose version PR gained such commits follows
-`promote.publishWhen` instead of publishing on merge. The checks, the approval
+`release.publishWhen` instead of publishing on merge. The checks, the approval
 and the version tag all use the release commit.
 
-A later commit on the default branch creates no other promotion of the version
+A later commit on the default branch creates no other release of the version
 when it leaves the stream's manifests, `versionFiles`, workflow files, the
 reusable workflows they call, and the package metadata problems as they were.
 The release keeps waiting for the checks of its own commit, and publishing it
 in Beepboop still works. Its run starts on the newer head of the workflow ref
 and checks out the release commit, so npm provenance names that newer head as
 the workflow commit. A later commit that changes one of those gets its own
-promotion, and the earlier promotion can no longer publish while the later one
+release, and the earlier release can no longer publish while the later one
 still matches the head. The merge of the version PR or the start of the
-release does not publish that new promotion; with `version-pr-merged` it waits
-for you to publish it. A cancelled or failed promotion does not hold its
+release does not publish that new release; with `version-pr-merged` it waits
+for you to publish it. A cancelled or failed release does not hold its
 version, so the next push creates a new one, which can take over its tag. A
 stream whose packages depend on another
-stream's package waits for that stream's pending promotion of the version in
+stream's package waits for that stream's pending release of the version in
 the manifests, also when the two version commits differ.
 
 ### Release a shared version with lockfiles
@@ -882,10 +882,10 @@ any tool that the runner lacks.
    planned manifest differs from the plan, or when any other file changed. It
    then opens the release PR.
 6. Review and merge the release PR.
-7. After the merge, Beepboop creates a promotion when the manifests carry an
+7. After the merge, Beepboop creates a release when the manifests carry an
    unreleased version. A started release continues by itself. Otherwise the
-   promotion follows `promote.publishWhen`, which setup writes only when you
-   tick it. With `version-commit-pushed`, Beepboop publishes the promotion once
+   release follows `release.publishWhen`, which setup writes only when you
+   tick it. With `version-commit-pushed`, Beepboop publishes the release once
    the commit has a verified signature and passing checks. With
    `approved-in-beepboop`, publish it with the Publish button in the dashboard,
    or run `beepboop runs publish <execution-id> --sourceSha <merge-commit-sha>`.
@@ -896,15 +896,15 @@ any tool that the runner lacks.
    `--force` publishes despite a failed signature or check. Publishing also requires complete package metadata, as
    described in [Package metadata](#package-metadata). `--force` does not
    override that check.
-9. Beepboop dispatches the promote workflow on the default branch, and the job
+9. Beepboop dispatches the release workflow on the default branch, and the job
    checks out the merge commit. Its `beepboop_publish` step runs
    `actions/publish`, which publishes the packages and reports each outcome.
    `actions/token` then issues an App token, and `actions/publish-refs` pushes
    the version tag. When the Worker has the `SIGNER` binding, Beepboop signs
    that tag. Beepboop completes the release after the run, once every required publication has a successful result.
-10. In a new promote workflow with a `tagPrefix`, setup adds
+10. In a new release workflow with a `tagPrefix`, setup adds
     `actions/publish-release` after `actions/publish-refs`. It publishes the
-    GitHub release for the tag. A promote choice with `binaries` also uploads
+    GitHub release for the tag. A release choice with `binaries` also uploads
     the assets to the draft release first. See [Binary builds](#binary-builds).
 
 ## Generated npm packages
@@ -993,12 +993,12 @@ in the default branch:
 A symlink counts as the file it names. A missing license file reads `lacks a
 license file`.
 
-A promotion for a stream with an incomplete package waits in
+A release for a stream with an incomplete package waits in
 `awaiting-approval`, which the runs page shows as waiting for you to publish. Its
 reason on the runs page starts with `metadata incomplete:` and names each
 package, its manifest and the missing items.
 Publishing refuses it, also with `--force`. A push that completes
-the metadata creates a promotion for the new commit.
+the metadata creates a release for the new commit.
 
 The setup PR lists the same problems for every selected package. The setup
 PR stays mergeable. `actions/publish` checks the built package again before it
@@ -1167,7 +1167,7 @@ with the `publish-new` and `publish-update` scopes, then follow these steps:
 1. Store the token with
    `printf %s "$TOKEN" | beepboop secrets set crates-io`.
 2. Add `"credentials": { "CARGO_REGISTRY_TOKEN": "crates-io" }` to the
-   `promote` workflow choice. Setup adds this mapping for generated crate
+   `release` workflow choice. Setup adds this mapping for generated crate
    publishing itself. It adds `crates-io` to the stream's `credentials` list.
    With `beepboop publish`, setup passes the mapping to `actions/publish` as
    its `credentials` input. With Bash `commands`, setup inserts a
@@ -1176,13 +1176,13 @@ with the `publish-new` and `publish-update` scopes, then follow these steps:
    from that step's `values` output. The preview notes print the grant command.
 3. Merge the setup PR. A runtime grant requires the alias in the merged
    `credentials` list.
-4. Grant the promote workflow access:
+4. Grant the release workflow access:
 
    ```sh
-   beepboop secrets grant owner/repo crates-io --stream main --operation promote
+   beepboop secrets grant owner/repo crates-io --stream main --operation release
    ```
 
-`--operation` defaults to `promote`, and `--stream` defaults to the only
+`--operation` defaults to `release`, and `--stream` defaults to the only
 configured stream. `--delivery` defaults to `runtime`. A runtime grant covers
 the operation's workflow file and ref, and the job's GitHub environment. Pass
 `--environment <name>` when the publishing job sets `environment:`.
@@ -1208,7 +1208,7 @@ crate's **Settings**, then **Trusted Publishing**, and add a GitHub publisher:
 - the workflow filename, such as `publish-crates.yml`
 - the job's environment, if the job sets one
 
-Then edit the promote workflow. Add a `rust-lang/crates-io-auth-action@v1`
+Then edit the release workflow. Add a `rust-lang/crates-io-auth-action@v1`
 step before `beepboop_publish`, remove the `credentials` input, and set
 `CARGO_REGISTRY_TOKEN` from the auth step's `token` output:
 
@@ -1503,7 +1503,7 @@ release needs an explicit version.
 
 A workflow binding can declare `refs` with `phase` set to `"version"` or
 `"aliases"`, a `prefix` (default `v`), `aliases: ["major", "minor"]` and
-`signed` (default false). A ref operation must be the promotion operation or
+`signed` (default false). A ref operation must be the release operation or
 depend on it. Use
 `actions/publish-refs` after `begin`, and pass the repository token as `token`.
 Git needs a tagger identity for an annotated tag. Insert the `gitId` output of
@@ -1572,7 +1572,7 @@ scope joins the name with a hyphen, as in the archive name `npm pack` writes.
 Packages that share a name, such as a crate and an npm package both called
 `tree-sitter-svg`, share one tag.
 
-When a promotion succeeds, Beepboop checks each listed package against its
+When a release succeeds, Beepboop checks each listed package against its
 registry and creates a signed annotated tag for each package published at that
 version. The tag message is the tag name. The tag is created through the GitHub
 API from the `SIGNER` key, so the stream's workflow needs no step for it. A
@@ -1597,7 +1597,7 @@ configuration has no `packageTags` yet.
 
 Discovery blocks a `packageTags` entry that matches no package, matches only
 packages that skip their public registry, or is not in the stream's
-`packages`, and warns when the stream's promotion pushes no version tag.
+`packages`, and warns when the stream's release pushes no version tag.
 
 A release records its companion modules and their tag prefixes when Beepboop
 creates it, and plans its tags from that record. A discovery refresh during the
@@ -1608,12 +1608,12 @@ Adoption proposes `companionModules` when a Go module's tags carry the same
 versions as another stream's tags, or when one file builds both tag names. The
 setup notes name the module, the evidence, and both options, and change
 nothing until you choose one. For a stream that only observes tags, or whose
-promotion pushes no version tag, the note says so and offers no option:
-`companionModules` takes effect only on a stream whose promotion pushes a
+release pushes no version tag, the note says so and offers no option:
+`companionModules` takes effect only on a stream whose release pushes a
 version tag.
 
 Setup writes `refs` with `phase: "version"` for binary releases and for a
-promote setup choice with `tagPrefix`, such as `"tagPrefix": "cli-v"`. The
+release setup choice with `tagPrefix`, such as `"tagPrefix": "cli-v"`. The
 generated `publish-refs` step pushes with a Beepboop App token from
 `actions/token`. A push with `github.token` starts no other workflows, and a
 workflow that the version tag triggers would never run.
@@ -1650,7 +1650,7 @@ The authorized ref plan freezes the distribution target. Retries must provide
 the same bytes. The runtime verifies the signed commits, tree and parents, then
 atomically pushes the patch tag and ancestry merge with expected-old leases.
 The default branch keeps its source-only tree while the distribution becomes
-its ancestor. An aliases operation that depends on this promotion targets the
+its ancestor. An aliases operation that depends on this release targets the
 same frozen distribution commit. Source approval, CI and provenance continue
 to use the reviewed source SHA.
 
@@ -1717,7 +1717,7 @@ release:
 ```
 
 The operation must list `github-release:<owner>/<repo>` in its `publications`.
-Like a ref operation, it must be the promotion operation or depend on it.
+Like a ref operation, it must be the release operation or depend on it.
 Beepboop requires the annotated tag `<prefix><version>` to target the release
 commit. It then
 publishes the operation's draft with its uploaded assets. It refuses while an
@@ -1835,7 +1835,7 @@ selected job wait for the builds. It inserts the upload steps before the job's
 first `token`, `publish-refs` or `publish-release` step. Without those, it adds
 the release steps before the `report` step, or after the `actions/publish`
 step. In a workflow that shares preparation and publication, the `begin` and
-build jobs run only for `beepboop_operation: publish`. A job that already
+build jobs run only for `beepboop_operation: release`. A job that already
 carries the name `begin` or a build job's name must be a Beepboop binary build.
 When the job already uploads binaries, setup replaces its generated release
 steps, from the artifact download through `publish-release`. Unticking every
@@ -1899,7 +1899,7 @@ revision override. `schemas/v1.json` validates both.
 {
   "streams": {
     "main": {
-      "promote": {
+      "release": {
         "workflow": {
           "file": "release.yml",
           "setup": {

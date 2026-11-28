@@ -122,7 +122,7 @@ function fields(choices: unknown): [string, unknown][] {
 			streamFields.flatMap((field): [string, unknown][] => {
 				const value = stream[field];
 				const path = `${String(stream.name)}.${field}`;
-				if ((field !== 'prepare' && field !== 'promote') || !Predicate.isObject(value)) return [[path, value]];
+				if ((field !== 'prepare' && field !== 'release') || !Predicate.isObject(value)) return [[path, value]];
 				return workflowFields.map(entry => [`${path}.${entry}`, value[entry]]);
 			})
 		),
@@ -191,7 +191,7 @@ test('the CLI and the dashboard keep a saved trigger handover of an automatic wo
 			packages: ['pkg:npm/shipped'],
 			required: ['pkg:npm/shipped'],
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file: 'ship.yml',
 				job: 'ship',
 				triggers: 'dispatchOnly',
@@ -201,7 +201,7 @@ test('the CLI and the dashboard keep a saved trigger handover of an automatic wo
 		}],
 	});
 	await expectSameDefaults(repository.name);
-	expect(fields(sent.at(-1)?.choices)).toContainEqual(['main.promote.triggers', 'dispatchOnly']);
+	expect(fields(sent.at(-1)?.choices)).toContainEqual(['main.release.triggers', 'dispatchOnly']);
 });
 
 test('the setup editors declare an editor for every setup choice field', () => {

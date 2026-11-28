@@ -13,8 +13,8 @@ import { bumpable, startable } from '@/setup/contract.ts';
 import type { SetupChoices, SetupOption, SetupPlan, SetupWorkflow } from '@/setup/types.ts';
 import { approvals, triggerHandovers, versionings } from '@/setup/types.ts';
 
-export type Operation = 'prepare' | 'promote';
-const operations: Operation[] = ['prepare', 'promote'];
+export type Operation = 'prepare' | 'release';
+const operations: Operation[] = ['prepare', 'release'];
 export function setupOptions(plan: SetupPlan): SetupOption[] {
 	const candidates = plan.packageIds.filter((_, index) => {
 		const pkg = plan.inventory.packages[index];
@@ -45,7 +45,7 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 			}));
 		}),
 		...versionings.map((value): SetupOption => ({ kind: 'versioning', stream: stream.name, value })),
-		...(stream.promote
+		...(stream.release
 			? approvals.map((value): SetupOption => ({ kind: 'approval', stream: stream.name, value }))
 			: []),
 		...(startable(stream)
@@ -66,14 +66,14 @@ export function setupOptions(plan: SetupPlan): SetupOption[] {
 	]);
 }
 function binaryOptions(plan: SetupPlan, stream: SetupChoices['streams'][number]): SetupOption[] {
-	if (!stream.promote) return [];
+	if (!stream.release) return [];
 	const candidates = (plan.binaryCandidates ?? []).filter(candidate => stream.packages.includes(candidate.package));
 	const builds = [
-		...(stream.promote.binaries?.builds ?? []).map(build => ({
+		...(stream.release.binaries?.builds ?? []).map(build => ({
 			build,
 			targets: candidateOf(candidates, build)?.targets ?? [...binaryTargets],
 		})),
-		...unconfigured(candidates, stream.promote?.binaries?.builds ?? []),
+		...unconfigured(candidates, stream.release?.binaries?.builds ?? []),
 	];
 	if (!builds.length) return [];
 	return [
@@ -114,9 +114,9 @@ export function selected(option: SetupOption, choices: SetupChoices): boolean {
 	if (option.kind === 'versionPrMerge') return (stream?.versionPrMerge ?? 'manual') === option.value;
 	if (option.kind === 'triggers') return stream?.[option.operation]?.triggers === option.value;
 	if (option.kind === 'binary') {
-		return stream?.promote?.binaries?.builds.some(build => build.name === option.build.name) ?? false;
+		return stream?.release?.binaries?.builds.some(build => build.name === option.build.name) ?? false;
 	}
-	if (option.kind === 'target') return stream?.promote?.binaries?.targets.includes(option.target) ?? false;
+	if (option.kind === 'target') return stream?.release?.binaries?.targets.includes(option.target) ?? false;
 	return (option.kind === 'package' ? stream?.packages : stream?.required)?.includes(option.package) ?? false;
 }
 export function bodyChoices(body: string, options: SetupOption[], base: SetupChoices): SetupChoices {
@@ -177,7 +177,7 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 				return builds.length && targets.length ? { ...rest, binaries: { builds, targets } } : rest;
 			};
 			const prepare = handover('prepare', binding('prepare')),
-				promote = built(handover('promote', binding('promote')));
+				releaseWorkflow = built(handover('release', binding('release')));
 			const versions = own.flatMap(option => option.kind === 'versioning' && state(option) ? [option.value] : []);
 			const policies = own.flatMap(option => option.kind === 'approval' && state(option) ? [option.value] : []);
 			const approval = policies.find(value => value !== stream.approval) ?? policies[0];
@@ -191,7 +191,7 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 				?? stream.versionPrMerge;
 			const {
 				prepare: _prepare,
-				promote: _promote,
+				release: _release,
 				observe: _observe,
 				approval: _approval,
 				start: _start,
@@ -227,7 +227,7 @@ export function bodyChoices(body: string, options: SetupOption[], base: SetupCho
 					}
 					: {}),
 				...(prepare ? { prepare } : {}),
-				...(promote ? { promote } : {}),
+				...(releaseWorkflow ? { release: releaseWorkflow } : {}),
 			};
 		}),
 		...(base.actionsRevision ? { actionsRevision: base.actionsRevision } : {}),

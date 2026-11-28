@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Effect, Schema } from 'effect';
 import { packageId } from '@/domain/package-identity.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { checkoutAt } from '@/host/git.ts';
 import { writeOutput } from '@/host/github-output.ts';
 import { sha256Hex } from '@/kernel/crypto/sha256.ts';
@@ -73,11 +74,11 @@ await main(Effect.gen(function*() {
 	);
 	if (!checkoutAt(directory, context.sourceSha)) return yield* refuse('Checkout is not the planned release commit');
 	if (
-		context.operation !== 'promote' || context.stream !== 'cli' || context.version !== npm.version
+		context.operation !== releaseOperation || context.stream !== 'cli' || context.version !== npm.version
 		|| npm.version !== jsr.version || npm.name !== jsr.name
 	) {
 		return yield* refuse(
-			'Publication requires a promote operation of the cli stream with matching npm and JSR versions',
+			'Publication requires a release operation of the cli stream with matching npm and JSR versions',
 		);
 	}
 	if (process.env.GITHUB_SHA !== context.sourceSha) {

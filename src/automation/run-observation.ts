@@ -15,6 +15,7 @@ import {
 	selectorKey,
 } from '@/domain/package-identity.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import { tagPrefix } from '@/domain/version-tags.ts';
@@ -181,7 +182,7 @@ export class RunObservation extends Context.Service<RunObservation, {
 						execution.refNamespace = tagged ? 'tags' : 'heads';
 						execution.state = 'running';
 						execution.dependencies = (yield* executions.all).filter(other =>
-							other.stream === streamName && other.operation === 'promote' && other.state === 'succeeded'
+							other.stream === streamName && other.operation === releaseOperation && other.state === 'succeeded'
 							&& version !== undefined && other.version === version && other.sourceSha === snapshot.sha
 						).map(other => other.id);
 						if (version) {

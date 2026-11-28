@@ -34,7 +34,7 @@ export const streamEditors = {
 	actionRelease: 'control',
 	observe: 'control',
 	prepare: 'control',
-	promote: 'control',
+	release: 'control',
 	versionSource: 'json',
 	versionFiles: 'json',
 	companionModules: 'json',

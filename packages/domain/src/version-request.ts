@@ -52,7 +52,7 @@ export function nextVersion(current: string, request: VersionRequest): Effect.Ef
 		let target: string;
 		if ('version' in request) target = yield* release(request.version);
 		else if (request.bump === 'stable') {
-			if (!pre) return yield* precondition('Stable promotion requires a prerelease');
+			if (!pre) return yield* precondition('A stable version requires a prerelease');
 			target = core;
 		} else if (request.bump === 'next') {
 			if (!pre || !/\.\d+$/.test(pre)) return yield* precondition('Prerelease increment requires a numeric counter');

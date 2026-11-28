@@ -25,10 +25,11 @@ import { matchesPackage, packageId, publishablePackages } from '@/domain/package
 import { publishable } from '@/domain/package-publication.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
 import type { RefState } from '@/domain/refs.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import type { Access, ReadyRepository } from '@/domain/repository';
 import { readiness, requireReady } from '@/domain/repository';
 import { compareVersions } from '@/domain/semver.ts';
-import { promotionTagPrefix, releaseTagPrefix } from '@/domain/start-refusal.ts';
+import { releaseTagPrefix, releaseWorkflowTagPrefix } from '@/domain/start-refusal.ts';
 import { semVer } from '@/domain/version.ts';
 import { latestReleaseTag, versionsInFiles } from '@/domain/version-tags.ts';
 import { workflowPath } from '@/domain/workflow-path.ts';
@@ -381,19 +382,19 @@ export class AutomationService {
 		repository: ReadyRepository,
 		streamName: string,
 		stream: Stream,
-		promotions: Execution[],
+		releaseExecutions: Execution[],
 		packages: Package[],
 	): Effect.Effect<Snapshot | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			for (const promotion of promotions) {
-				if (retiredStates.includes(promotion.state)) continue;
-				if (JSON.stringify(promotion.configuration.streams[streamName]) !== JSON.stringify(stream)) continue;
-				const held = yield* this.releaseHeld(repository, stream, packages, promotion.sourceSha).pipe(
+			for (const releaseExecution of releaseExecutions) {
+				if (retiredStates.includes(releaseExecution.state)) continue;
+				if (JSON.stringify(releaseExecution.configuration.streams[streamName]) !== JSON.stringify(stream)) continue;
+				const held = yield* this.releaseHeld(repository, stream, packages, releaseExecution.sourceSha).pipe(
 					recover(error =>
 						logFailure('version-commit.failed', error, {
 							repository: repository.name,
 							stream: streamName,
-							promotion: promotion.id,
+							releaseExecution: releaseExecution.id,
 						}).pipe(Effect.as(undefined))
 					),
 				);
@@ -429,7 +430,7 @@ export class AutomationService {
 			let tags: RefState[] | undefined;
 			let setupMerge: { sha: string; body: string } | null | undefined;
 			for (const [name, stream] of Object.entries(repository.configuration.streams)) {
-				if (!stream.promote.workflow) continue;
+				if (!stream.release.workflow) continue;
 				const prefix = releaseTagPrefix(stream, repository.inventory);
 				if (prefix !== undefined) {
 					yield* this.releasePreparedTags(repository, name, stream, prefix);
@@ -467,7 +468,7 @@ export class AutomationService {
 				);
 				if (plan.edits.length || plan.requiresPreparation) continue;
 				let reclaims: RefState[] = [];
-				if (stream.promote.workflow.refs) {
+				if (stream.release.workflow.refs) {
 					tags ??= yield* this.gateway.tagRefs(repository.name, repository.id);
 					const claim = yield* this.tagClaims(repository, name, stream, version, plan.sourceSha, tags);
 					reclaims = claim.reclaims;
@@ -501,25 +502,25 @@ export class AutomationService {
 						continue;
 					}
 				}
-				const promotion = yield* (
+				const releaseExecution = yield* (
 					createExecution(repository, {
 						stream: name,
-						operation: 'promote',
+						operation: releaseOperation,
 						eventId: `release:${version}:${plan.sourceSha}`,
 						sourceSha: plan.sourceSha,
 						version,
 					})
 				);
-				if (reclaims.length) promotion.reclaims = reclaims;
-				if (yield* this.coordinators.execution(repository.id, promotion.id)) continue;
+				if (reclaims.length) releaseExecution.reclaims = reclaims;
+				if (yield* this.coordinators.execution(repository.id, releaseExecution.id)) continue;
 				setupMerge ??= (yield* this.setupMerge(repository)) ?? null;
 				if (setupMerge?.sha === plan.sourceSha && !releaseAfterMerge(setupMerge.body)) continue;
 				if (started && held) {
-					promotion.approvedBy = 'start';
-					promotion.started = started.started;
-				} else if (merge && held && stream.promote.approval === 'merge') promotion.approvedBy = 'merge';
-				yield* this.store.audit('beepboop', 'release.push', promotion.id);
-				yield* this.enqueue(repository, promotion);
+					releaseExecution.approvedBy = 'start';
+					releaseExecution.started = started.started;
+				} else if (merge && held && stream.release.approval === 'merge') releaseExecution.approvedBy = 'merge';
+				yield* this.store.audit('beepboop', 'release.push', releaseExecution.id);
+				yield* this.enqueue(repository, releaseExecution);
 			}
 		});
 	}
@@ -530,7 +531,7 @@ export class AutomationService {
 		prefix: string,
 	): Effect.Effect<void, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			if (promotionTagPrefix(stream) !== prefix) return;
+			if (releaseWorkflowTagPrefix(stream) !== prefix) return;
 			const versions = yield* this.coordinators.preparationVersions(repository.id, name);
 			if (!versions.length) return;
 			const tags = yield* this.gateway.tagRefs(repository.name, repository.id);
@@ -551,24 +552,24 @@ export class AutomationService {
 					? yield* planVersionFiles(snapshot, version, stream.versionFiles)
 					: undefined;
 				if (plan?.edits.length || plan?.requiresPreparation) continue;
-				const promotion = yield* createExecution(repository, {
+				const releaseExecution = yield* createExecution(repository, {
 					stream: name,
-					operation: 'promote',
+					operation: releaseOperation,
 					eventId: `release:${version}:${snapshot.sha}`,
 					sourceSha: snapshot.sha,
 					version,
 				});
-				if (yield* this.coordinators.execution(repository.id, promotion.id)) continue;
+				if (yield* this.coordinators.execution(repository.id, releaseExecution.id)) continue;
 				const claim = yield* this.tagClaims(repository, name, stream, version, snapshot.sha, tags);
 				if (claim.conflict) continue;
-				promotion.reclaims = claim.reclaims;
+				releaseExecution.reclaims = claim.reclaims;
 				if (started) {
-					promotion.approvedBy = 'start';
-					promotion.started = started.started;
-					promotion.initiatedBy = started.started.actor;
-				} else if (merged && stream.promote.approval === 'merge') promotion.approvedBy = 'merge';
-				yield* this.store.audit('beepboop', 'release.push', promotion.id);
-				yield* this.enqueue(repository, promotion);
+					releaseExecution.approvedBy = 'start';
+					releaseExecution.started = started.started;
+					releaseExecution.initiatedBy = started.started.actor;
+				} else if (merged && stream.release.approval === 'merge') releaseExecution.approvedBy = 'merge';
+				yield* this.store.audit('beepboop', 'release.push', releaseExecution.id);
+				yield* this.enqueue(repository, releaseExecution);
 			}
 		});
 	}
@@ -590,15 +591,15 @@ export class AutomationService {
 		return Effect.gen({ self: this }, function*() {
 			const started = yield* this.startedPreparation(repository, name, version, repository.sha);
 			const merge = started ? undefined : yield* this.mergedPreparation(repository, name, version, repository.sha);
-			const promotions = yield* this.coordinators.promotions(repository.id, name, version);
+			const releaseExecutions = yield* this.coordinators.releaseExecutions(repository.id, name, version);
 			const prepared = started?.sha ?? merge;
-			const retired = promotions.some(promotion =>
-				promotion.sourceSha === prepared && retiredStates.includes(promotion.state)
+			const retired = releaseExecutions.some(releaseExecution =>
+				releaseExecution.sourceSha === prepared && retiredStates.includes(releaseExecution.state)
 			);
 			const held = prepared === undefined || retired
 				? undefined
 				: yield* this.releaseHeld(repository, stream, packages, prepared);
-			const snapshot = held ?? (yield* this.versionCommit(repository, name, stream, promotions, packages))
+			const snapshot = held ?? (yield* this.versionCommit(repository, name, stream, releaseExecutions, packages))
 				?? (yield* repositorySnapshot(
 					this.gateway,
 					repository.name,
@@ -618,7 +619,7 @@ export class AutomationService {
 		known?: RefState[],
 	): Effect.Effect<{ reclaims: RefState[]; conflict?: RefState }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const policy = stream.promote.workflow?.refs;
+			const policy = stream.release.workflow?.refs;
 			const parsed = safeDecode(semVer, version);
 			if (!policy || !parsed.success) return { reclaims: [] };
 			const tags = known ?? (yield* this.gateway.tagRefs(repository.name, repository.id));
@@ -873,7 +874,7 @@ export class AutomationService {
 			const workflowPaths = (file: string | undefined) => file === undefined ? [] : [workflowPath(file)];
 			const workflows = choices.streams.flatMap(stream => [
 				...workflowPaths(stream.prepare?.file),
-				...workflowPaths(stream.promote?.file),
+				...workflowPaths(stream.release?.file),
 				...(stream.operations ?? []).flatMap(entry => workflowPaths(entry.file)),
 			]);
 			const merged = yield* repositorySnapshot(this.gateway, repository.name, repository.id, pull.merge_commit_sha, [
@@ -888,10 +889,10 @@ export class AutomationService {
 			const granted: Grant[] = [];
 			for (const stream of choices.streams) {
 				const requested: { operation: string; alias: string; environment?: string }[] = [
-					...(['prepare', 'promote'] as const).flatMap(operation =>
+					...(['prepare', 'release'] as const).flatMap(operation =>
 						Object.values(stream[operation]?.credentials ?? {}).map(alias => ({ operation, alias }))
 					),
-					...(['prepare', 'promote'] as const).flatMap(operation =>
+					...(['prepare', 'release'] as const).flatMap(operation =>
 						workflowPaths(stream[operation]?.file).flatMap(path =>
 							workflowCredentials(merged.files[path], operation).credentials.map(credential => ({
 								operation,

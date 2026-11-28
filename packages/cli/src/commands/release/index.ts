@@ -60,7 +60,7 @@ function releaseRepository(
 		);
 		const starts = (name: string) => {
 			const kind = repository.releases[name]?.kind;
-			return kind === 'promotes' || kind === 'prepares';
+			return kind === 'releases' || kind === 'prepares';
 		};
 		const eligible = streams.filter(({ name, stream }) => starts(name) && stream.versioning !== 'independent');
 		let selected = options.stream;
@@ -120,7 +120,7 @@ function releaseRepository(
 				failure(release?.summary ?? `Stream ${selected} cannot release`, 'STREAM_CANNOT_RELEASE'),
 			);
 		}
-		const direct = release.kind === 'promotes';
+		const direct = release.kind === 'releases';
 		let version = options.version;
 		if (!version) {
 			const required = failure(
@@ -189,7 +189,7 @@ function releaseRepository(
 			...(merging ? { versionPrMerge: merging } : {}),
 		};
 		if (out.jsonMode && (options.dryRun || (!options.yes && !options.force))) return yield* emit(out, preview);
-		const policy = stream.promote.approval;
+		const policy = stream.release.approval;
 		if (!out.jsonMode) {
 			printPreview(out, look, {
 				repository,
@@ -215,7 +215,7 @@ function releaseRepository(
 						message: started
 							? `Start this release? ${startFromEffect}`
 							: publishes
-							? stream.promote.approval === 'push'
+							? stream.release.approval === 'push'
 								? `Publish ${summary.version} once its commit is verified and its checks pass?`
 								: `Create the publication run of ${summary.version}?`
 							: committing
@@ -238,7 +238,7 @@ function releaseRepository(
 				start: started,
 			}),
 			created =>
-				`${created.operation === 'promote' ? 'Release' : 'Preparation'} ${look.id(created.id)} is ${created.state}`,
+				`${created.operation === 'release' ? 'Release' : 'Preparation'} ${look.id(created.id)} is ${created.state}`,
 		);
 		if (out.jsonMode) return yield* emit(out, { ...preview, preparation });
 		out.log(`${started || publishes ? 'Release' : 'Preparation'} ${look.id(preparation.id)}: ${preparation.state}`);
@@ -308,7 +308,7 @@ export const releaseCommand = base(
 		[
 			'The server plans the version from the repository default branch and prints a preview with the packages, their registries and the version file diffs. You confirm, and the stream setup decides what follows.',
 			'The release bumps the version and publishes it, and nothing asks again. A version that is already on the default branch publishes as it is.',
-			'Managed version files can start a release when the promotion workflow publishes the version tag. Independent versions and tag-based streams without a matching tag publisher support preparation only. A new version also stops after preparation when `prepare.strategy: workflow` delegates the bump. If no publishable package manifest carries the version, starting publication requires a workflow that publishes the version tag.',
+			'Managed version files can start a release when the release workflow publishes the version tag. Independent versions and tag-based streams without a matching tag publisher support preparation only. A new version also stops after preparation when `prepare.strategy: workflow` delegates the bump. If no publishable package manifest carries the version, starting publication requires a workflow that publishes the version tag.',
 			'`versionLands: via-direct-commit` commits the bump to the default branch. `versionLands: via-version-pr` opens the version PR. `publishWhen` decides when a prepared release publishes.',
 		].join('\n\n'),
 	)

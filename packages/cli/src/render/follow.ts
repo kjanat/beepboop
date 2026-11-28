@@ -60,7 +60,7 @@ export interface Followed {
 	version: string;
 	execution: { id: string };
 	bumped: boolean;
-	promotion?: string;
+	releaseExecution?: string;
 }
 
 function runUrl(execution: Tracked): string | undefined {
@@ -97,13 +97,13 @@ interface Stage {
 	summary: string;
 }
 
-function stages(promotion: Tracked, binaries: BinaryProgress, finished: boolean): Stage[] {
+function stages(releaseExecution: Tracked, binaries: BinaryProgress, finished: boolean): Stage[] {
 	const legs = binaries.legs;
 	const ended = legs.filter(leg => leg.status === 'completed' || buildState(leg) !== 'waiting').length;
 	const broken = legs.filter(leg => buildState(leg) === 'failed').length;
-	const total = promotion.configuration?.streams[promotion.stream]?.required?.length
-		|| promotion.publications.length;
-	const published = promotion.publications.filter(publication => publication.outcome === 'succeeded').length;
+	const total = releaseExecution.configuration?.streams[releaseExecution.stream]?.required?.length
+		|| releaseExecution.publications.length;
+	const published = releaseExecution.publications.filter(publication => publication.outcome === 'succeeded').length;
 	const uploaded = binaries.assets.filter(asset => asset.uploaded).length;
 	return [
 		...(legs.length
@@ -247,17 +247,17 @@ export function followRelease(
 		};
 		let started = false;
 		let announced = !followed.bumped;
-		let promotionId = followed.promotion;
+		let releaseExecutionId = followed.releaseExecution;
 		let reran = false;
 		const start = yield* Clock.monotonicTimeNanos;
 		while (Duration.isLessThan(Duration.nanos((yield* Clock.monotonicTimeNanos) - start), followLimit)) {
 			yield* client.pause(followInterval);
 			const rows = yield* snapshot(client, followed);
 			const preparation = rows.find(row => row.id === followed.execution.id);
-			const promotion = rows.find(row =>
-				promotionId === undefined
-					? row.operation === 'promote' && row.version === followed.version && row.approvedBy === 'start'
-					: row.id === promotionId
+			const releaseExecution = rows.find(row =>
+				releaseExecutionId === undefined
+					? row.operation === 'release' && row.version === followed.version && row.approvedBy === 'start'
+					: row.id === releaseExecutionId
 			);
 			if (!announced && preparation) {
 				const prepared = preparation.managed?.result ?? preparation.prepared?.result;
@@ -279,43 +279,47 @@ export function followRelease(
 					);
 				}
 			}
-			if (promotion?.operation !== 'promote') continue;
-			const sha = look.sha(promotion.sourceSha);
-			if (promotion.state === 'awaiting-approval') {
-				spinner.update(promotion.reason ? `${sha}: ${promotion.reason}` : `Waiting for checks on ${sha}`);
+			if (releaseExecution?.operation !== 'release') continue;
+			const sha = look.sha(releaseExecution.sourceSha);
+			if (releaseExecution.state === 'awaiting-approval') {
+				spinner.update(releaseExecution.reason ? `${sha}: ${releaseExecution.reason}` : `Waiting for checks on ${sha}`);
 				continue;
 			}
-			if (['pending', 'ready', 'dispatching'].includes(promotion.state)) {
-				spinner.update(`Dispatching ${promotion.workflow?.file ?? 'the release workflow'} for ${sha}`);
+			if (['pending', 'ready', 'dispatching'].includes(releaseExecution.state)) {
+				spinner.update(`Dispatching ${releaseExecution.workflow?.file ?? 'the release workflow'} for ${sha}`);
 				continue;
 			}
 			const binaries = yield* client.call(routes.executionsBinaries, {
-				id: promotion.id,
-				repositoryId: promotion.repositoryId,
+				id: releaseExecution.id,
+				repositoryId: releaseExecution.repositoryId,
 			});
-			const finished = promotion.state === 'succeeded';
+			const finished = releaseExecution.state === 'succeeded';
 			const report = () => {
-				if (promotion.publications.length) table(out, publicationRows(look, promotion));
+				if (releaseExecution.publications.length) table(out, publicationRows(look, releaseExecution));
 				if (binaries.legs.length) table(out, binaryRows(look, binaries));
-				links(out, look, promotion);
+				links(out, look, releaseExecution);
 			};
-			if (promotion.state === 'failed' || promotion.state === 'cancelled') {
-				const reason = promotion.reason ?? `The release stopped: ${promotion.state}`;
+			if (releaseExecution.state === 'failed' || releaseExecution.state === 'cancelled') {
+				const reason = releaseExecution.reason ?? `The release stopped: ${releaseExecution.state}`;
 				if (started) {
-					advance(stages(promotion, binaries, false).filter(stage => bars.has(stage.label)));
+					advance(stages(releaseExecution, binaries, false).filter(stage => bars.has(stage.label)));
 					for (const bar of open()) bar.handle.fail();
 				} else spinner.fail();
 				out.error(reason);
 				report();
-				if (promotion.state === 'failed' && stoppedByGates(promotion.reason) && !out.jsonMode) {
-					const choice: CheckChoice | 'stop' | 'unanswered' = yield* checkChoice(answers, reran, promotion.reason);
-					const hint = `Choose with beepboop runs checks ${promotion.id} --choice rerun, skip or always`;
+				if (releaseExecution.state === 'failed' && stoppedByGates(releaseExecution.reason) && !out.jsonMode) {
+					const choice: CheckChoice | 'stop' | 'unanswered' = yield* checkChoice(
+						answers,
+						reran,
+						releaseExecution.reason,
+					);
+					const hint = `Choose with beepboop runs checks ${releaseExecution.id} --choice rerun, skip or always`;
 					if (choice === 'unanswered') {
 						out.error(hint);
 					} else if (choice !== 'stop') {
 						const refused = yield* client.call(routes.executionsChecks, {
-							id: promotion.id,
-							repositoryId: promotion.repositoryId,
+							id: releaseExecution.id,
+							repositoryId: releaseExecution.repositoryId,
 							choice,
 						}).pipe(Effect.as(undefined), Effect.catch(error => Effect.succeed(error.message)));
 						if (refused !== undefined) {
@@ -326,7 +330,7 @@ export function followRelease(
 						}
 						out.log(chosenNote[choice]);
 						reran ||= choice === 'rerun';
-						promotionId = promotion.id;
+						releaseExecutionId = releaseExecution.id;
 						bars.clear();
 						started = false;
 						spinner = out.spinner(`Waiting for checks on ${sha}`, { concurrent: true });
@@ -338,10 +342,10 @@ export function followRelease(
 			}
 			if (!started) {
 				started = true;
-				const run = runUrl(promotion);
+				const run = runUrl(releaseExecution);
 				spinner.succeed(run ? `Release run ${look.link(run)}` : `Release of ${sha} started`);
 			}
-			advance(stages(promotion, binaries, finished));
+			advance(stages(releaseExecution, binaries, finished));
 			if (finished) {
 				out.log(
 					`${look.mark('published')} Released ${look.version(followed.version)} of ${look.pkg(followed.repository)}`,

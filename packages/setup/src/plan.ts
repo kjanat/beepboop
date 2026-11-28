@@ -101,7 +101,7 @@ const setupPlan: Schema.Codec<SetupPlan, unknown> = mutableStruct({
 					))),
 					needs: Schema.optional(Schema.Record(Schema.String, mutableArray(Schema.String))),
 					prepare: Schema.optional(workflow),
-					promote: Schema.optional(workflow),
+					release: Schema.optional(workflow),
 					operations: Schema.optional(mutableArray(operation)),
 				}).fields,
 			)),

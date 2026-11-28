@@ -49,7 +49,6 @@ import { streamSummary } from '@/setup/summary.ts';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/setup/types.ts';
 import { actionReleaseOffer } from '@/setup/workflows/action-release.ts';
 import {
-	dispatchedOperation,
 	integrateReleaseWorkflow,
 	integrateWorkflow,
 	workflowActions,
@@ -125,9 +124,9 @@ export function inferredConfiguration(
 		const unbuilt: SetupChoices = {
 			...requested,
 			streams: requested.streams.map(stream => {
-				if (!stream.promote?.binaries) return stream;
-				const { binaries: _binaries, ...promote } = stream.promote;
-				return { ...stream, promote };
+				if (!stream.release?.binaries) return stream;
+				const { binaries: _binaries, ...release } = stream.release;
+				return { ...stream, release };
 			}),
 		};
 		const adopted = completeChoices(
@@ -185,7 +184,7 @@ function draftSetup(
 			);
 		const narrowed: string[] = [], failing: string[] = [], unversioned: string[] = [], unstamped: string[] = [];
 		for (const stream of choices.streams) {
-			const release = stream.promote?.binaries;
+			const release = stream.release?.binaries;
 			for (const build of release?.builds ?? []) {
 				const candidate = candidateOf(candidates, build);
 				if (!candidate || !release) continue;
@@ -211,7 +210,7 @@ function draftSetup(
 			}
 		}
 		const unanswered = choices.streams.flatMap(stream => [
-			...(stream.promote && !stream.approval
+			...(stream.release && !stream.approval
 				? [
 					`${stream.name}: tick \`publishWhen\`. Until you do, it is \`${publishWhenNames.required}\`: ${publishWhenSentences.required}`,
 				]
@@ -268,9 +267,9 @@ function proposalMarkdown(
 	for (const stream of plan.choices.streams) {
 		lines.push(`### Stream \`${stream.name}\``, '', ...streamSummary(stream, plan).map(line => `- ${line}`));
 		const proposal = graph.streams.find(entry => entry.id === stream.name);
-		if (stream.promote) {
+		if (stream.release) {
 			const inherited = resolved?.streams[stream.name];
-			const policy = stream.approval ?? inherited?.promote.approval ?? 'required';
+			const policy = stream.approval ?? inherited?.release.approval ?? 'required';
 			const bump = stream.bump ?? inherited?.prepare.bump ?? 'pr';
 			const landing = bump === 'commit'
 				? 'Beepboop pushes a signed commit with the new version to the default branch.'
@@ -333,7 +332,7 @@ function drafted(
 			if (entry.code !== 'package-metadata') notes.push(`Discovery: ${entry.message}`);
 			else if (entry.subject?.kind === 'package' && ticked.has(entry.subject.key)) {
 				const id = entry.subject.key;
-				const managed = choices.streams.some(stream => stream.promote && stream.packages.includes(id));
+				const managed = choices.streams.some(stream => stream.release && stream.packages.includes(id));
 				const observed = choices.streams.some(stream =>
 					stream.observe?.some(workflow => workflow.publications.includes(id))
 				);
@@ -369,7 +368,7 @@ function drafted(
 					}). Select generated distribution publication and review all required files.`,
 				);
 			}
-			if (selection.actionRelease?.kind === 'distribution' && !selection.promote?.commands.trim()) {
+			if (selection.actionRelease?.kind === 'distribution' && !selection.release?.commands.trim()) {
 				blockers.push(
 					`${selection.name}: enter the build commands that produce the selected action distribution files.`,
 				);
@@ -381,9 +380,9 @@ function drafted(
 			);
 			const observedPublications = selection.observe?.flatMap(entry => entry.publications) ?? [];
 			const published = selected.filter(pkg => !observedPublications.some(reference => matchesPackage(reference, pkg)));
-			if (selection.promote?.binaries) managers.add('github-release');
+			if (selection.release?.binaries) managers.add('github-release');
 			if (
-				!selection.packages.length && !selection.observe?.length && !selection.promote?.binaries
+				!selection.packages.length && !selection.observe?.length && !selection.release?.binaries
 				&& !selection.actionRelease
 			) {
 				blockers.push(`${selection.name}: select the packages in this release stream.`);
@@ -432,14 +431,14 @@ function drafted(
 				return found.credentials.map(credential => ({ operation, file, ...credential }));
 			};
 			const granted = [
-				...(['prepare', 'promote'] as const).flatMap(operation =>
+				...(['prepare', 'release'] as const).flatMap(operation =>
 					Object.values(selection[operation]?.credentials ?? {}).map(alias => ({
 						operation,
 						file: selection[operation]?.file,
 						alias,
 					}))
 				),
-				...(['prepare', 'promote'] as const).flatMap(operation => requested(operation, selection[operation])),
+				...(['prepare', 'release'] as const).flatMap(operation => requested(operation, selection[operation])),
 				...(selection.operations ?? []).flatMap(entry =>
 					Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, file: entry.file, alias }))
 				),
@@ -514,11 +513,11 @@ function drafted(
 			const delegated = new Set(
 				selection.operations?.filter(entry => !entry.backfill).flatMap(entry => entry.publications) ?? [],
 			);
-			const promoted = published.filter(pkg => !delegated.has(packageId(pkg)));
-			const shared = selection.prepare && selection.promote && selection.prepare.file === selection.promote.file;
-			for (const operation of ['prepare', 'promote'] as const) {
+			const releasedPackages = published.filter(pkg => !delegated.has(packageId(pkg)));
+			const shared = selection.prepare && selection.release && selection.prepare.file === selection.release.file;
+			for (const operation of ['prepare', 'release'] as const) {
 				const workflow = selection[operation];
-				const reported = required.filter(id => promoted.some(pkg => packageId(pkg) === id));
+				const reported = required.filter(id => releasedPackages.some(pkg => packageId(pkg) === id));
 				if (!workflow) {
 					if (selection.observe?.length) continue;
 					if (
@@ -530,11 +529,11 @@ function drafted(
 								? current.versionFiles
 								: resolved?.streams[selection.name]?.versionFiles ?? []);
 						const fileless = !versionsInFiles({ ...inventory, packages: selected }) && !versionFiles.length;
-						const promote = selection.promote;
-						const tagged = fileless && selection.versionSource?.kind === 'tags' && promote !== undefined
-							&& (promote.binaries !== undefined || promote.tagPrefix !== undefined
+						const releaseWorkflow = selection.release;
+						const tagged = fileless && selection.versionSource?.kind === 'tags' && releaseWorkflow !== undefined
+							&& (releaseWorkflow.binaries !== undefined || releaseWorkflow.tagPrefix !== undefined
 								|| selection.actionRelease !== undefined
-								|| object(object(object(current.promote).workflow).refs).phase === 'version');
+								|| object(object(object(current.release).workflow).refs).phase === 'version');
 						if (!tagged && selected.length && snapshot.paths.some(isLockfile)) {
 							blockers.push(`${selection.name}: select a preparation workflow to regenerate lockfiles.`);
 						}
@@ -554,13 +553,13 @@ function drafted(
 					);
 					continue;
 				}
-				if (selectedFiles.has(workflow.file) && !(shared && operation === 'promote')) {
+				if (selectedFiles.has(workflow.file) && !(shared && operation === 'release')) {
 					blockers.push(`${workflow.file}: one workflow cannot be assigned to multiple release roles or streams.`);
 				}
 				selectedFiles.add(workflow.file);
 				managers.add('workflow');
 				const parent = object(current[operation]), previousBinding = object(parent.workflow);
-				const releasing = operation === 'promote' && releases(snapshot, selection, workflow, previousBinding);
+				const releasing = operation === 'release' && releases(snapshot, selection, workflow, previousBinding);
 				if (releasing) managers.add('github-release');
 				const inherited = object(resolved?.streams[selection.name]?.[operation].workflow);
 				const binding: Record<string, unknown> = {
@@ -568,19 +567,19 @@ function drafted(
 					setup: workflowInput(workflow),
 					file: workflow.file,
 					ref: previousBinding.ref ?? inherited.ref ?? snapshot.repository.defaultBranch,
-					...(operation === 'promote'
+					...(operation === 'release'
 						? {
 							publications: workflow.binaries || releasing
 								? [...reported, `github-release:${snapshot.repository.name}`]
 								: reported,
 						}
 						: {}),
-					...(operation === 'promote' && (workflow.binaries || workflow.tagPrefix) && !previousBinding.refs
+					...(operation === 'release' && (workflow.binaries || workflow.tagPrefix) && !previousBinding.refs
 						? { refs: { phase: 'version', prefix: workflow.tagPrefix ?? selection.versionSource?.prefix ?? 'v' } }
 						: {}),
 				};
 				const inputs = { ...object(inherited.inputs), ...object(previousBinding.inputs) };
-				if (operation === 'promote' && selection.actionRelease) {
+				if (operation === 'release' && selection.actionRelease) {
 					binding.refs = {
 						phase: 'version',
 						prefix: workflow.tagPrefix ?? 'v',
@@ -593,10 +592,10 @@ function drafted(
 				}
 				const packageTags = selected.filter(pkg => canVerifyPublication(pkg.manager)).map(packageId);
 				if (
-					operation === 'promote' && object(binding.refs).prefix === 'v' && current.packageTags === undefined
+					operation === 'release' && object(binding.refs).prefix === 'v' && current.packageTags === undefined
 					&& packageTags.length
 				) updated.packageTags = packageTags;
-				if (shared) inputs.beepboop_operation = dispatchedOperation(operation);
+				if (shared) inputs.beepboop_operation = operation;
 				else delete inputs.beepboop_operation;
 				if (Object.keys(inputs).length) binding.inputs = inputs;
 				else delete binding.inputs;
@@ -621,11 +620,11 @@ function drafted(
 					selection.name,
 					operation,
 					workflow,
-					operation === 'promote' ? promoted : selected,
+					operation === 'release' ? releasedPackages : selected,
 					choices.actionsRevision,
 					required,
 					releasing,
-					operation === 'promote' && selection.actionRelease
+					operation === 'release' && selection.actionRelease
 						? selection.actionRelease.kind === 'distribution' ? selection.actionRelease.files : []
 						: undefined,
 				));
@@ -635,12 +634,12 @@ function drafted(
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
 			}
 			if (selection.bump) updated.prepare = { ...object(updated.prepare), bump: selection.bump };
-			if (selection.actionRelease && selection.promote) {
+			if (selection.actionRelease && selection.release) {
 				const file = `${selection.name === 'main' ? 'action' : selection.name}-aliases.yml`;
 				const previousAlias = object(object(current.workflows).aliases), aliasRefs = object(previousAlias.refs);
 				const ownedAlias = previousAlias.file === file && aliasRefs.phase === 'aliases'
 					&& Array.isArray(previousAlias.needs) && previousAlias.needs.length === 1
-					&& previousAlias.needs[0] === 'promote'
+					&& previousAlias.needs[0] === 'release'
 					&& Array.isArray(aliasRefs.aliases) && aliasRefs.aliases.length === 2 && aliasRefs.aliases.includes('major')
 					&& aliasRefs.aliases.includes('minor');
 				if (
@@ -657,12 +656,12 @@ function drafted(
 						triggers: 'dispatchOnly',
 						commands: '',
 						publicationSteps: {},
-						tagPrefix: selection.promote.tagPrefix ?? 'v',
+						tagPrefix: selection.release.tagPrefix ?? 'v',
 					};
 					bindings.aliases = {
 						file,
 						ref: snapshot.repository.defaultBranch,
-						needs: ['promote'],
+						needs: ['release'],
 						publications: [],
 						refs: { phase: 'aliases', prefix: alias.tagPrefix, aliases: ['major', 'minor'] },
 					};
@@ -702,24 +701,24 @@ function drafted(
 				const path = `.github/workflows/${workflow.file}`, before = snapshot.files[path] ?? '';
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
 			}
-			if (shared && selection.prepare && selection.promote) {
+			if (shared && selection.prepare && selection.release) {
 				const generated = yield* Effect.fromResult(integrateReleaseWorkflow(
 					snapshot,
 					selection.name,
 					selection.prepare,
-					selection.promote,
+					selection.release,
 					selected,
 					choices.actionsRevision,
 					required,
 					published,
-					releases(snapshot, selection, selection.promote, object(object(current.promote).workflow)),
+					releases(snapshot, selection, selection.release, object(object(current.release).workflow)),
 					selection.actionRelease
 						? selection.actionRelease.kind === 'distribution' ? selection.actionRelease.files : []
 						: undefined,
 				));
 				blockers.push(...generated.blockers);
 				notes.push(...generated.notes);
-				const path = `.github/workflows/${selection.promote.file}`, before = snapshot.files[path] ?? '';
+				const path = `.github/workflows/${selection.release.file}`, before = snapshot.files[path] ?? '';
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
 			}
 		}

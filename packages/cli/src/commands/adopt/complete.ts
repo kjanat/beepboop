@@ -71,7 +71,7 @@ export const packageCandidates = candidates(plan =>
 
 export const binaryCandidates = candidates(plan =>
 	[
-		...plan.choices.streams.flatMap(stream => stream.promote?.binaries?.builds ?? []),
+		...plan.choices.streams.flatMap(stream => stream.release?.binaries?.builds ?? []),
 		...(plan.binaryCandidates ?? []).map(candidate => candidate.build),
 	].map(build => build.name)
 );

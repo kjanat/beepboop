@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Schema } from 'effect';
 import { Automation } from '@/automation/service.ts';
 import { unchangedSince } from '@/automation/unchanged-paths.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { commitSchema, comparisonSchema, gitRefSchema } from '@/github/resources.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -15,7 +16,7 @@ export interface RefHead {
 }
 
 function moved(execution: Execution, head: RefHead): string {
-	const release = execution.operation === 'prepare' || execution.operation === 'promote' || execution.releaseSet;
+	const release = execution.operation === 'prepare' || execution.operation === releaseOperation || execution.releaseSet;
 	return `${head.ref} is at ${head.sha.slice(0, 12)} but this execution builds ${execution.sourceSha.slice(0, 12)}; ${
 		release ? 'prepare the release again' : 'trigger the operation again'
 	}`;
@@ -48,7 +49,7 @@ export class ReleaseCommits extends Context.Service<ReleaseCommits, {
 				const kept = (commit: string) =>
 					unchangedSince(gateway, execution.repository, execution.repositoryId, commit, sha, paths);
 				const newer = (yield* executions.all).filter(other =>
-					other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+					other.id !== execution.id && other.operation === releaseOperation && other.stream === execution.stream
 					&& other.version === execution.version && other.createdAt > execution.createdAt
 					&& other.state !== 'cancelled' && other.state !== 'failed'
 				);
@@ -60,12 +61,12 @@ export class ReleaseCommits extends Context.Service<ReleaseCommits, {
 				if (sha === execution.sourceSha) return true;
 				if (!execution.eventId.startsWith('observed:') && !execution.currentWorkflow) {
 					const all = yield* executions.all;
-					let promotion = execution.operation === 'promote'
+					let releaseExecution = execution.operation === releaseOperation
 						? execution
-						: all.find(other => other.operation === 'promote' && other.dependencies.includes(execution.id));
+						: all.find(other => other.operation === releaseOperation && other.dependencies.includes(execution.id));
 					const pending = [...execution.dependencies];
 					const visited = new Set<string>();
-					while (!promotion && pending.length) {
+					while (!releaseExecution && pending.length) {
 						const id = pending.pop();
 						if (id === undefined || visited.has(id)) continue;
 						visited.add(id);
@@ -75,10 +76,10 @@ export class ReleaseCommits extends Context.Service<ReleaseCommits, {
 							|| dependency.configurationSha !== execution.configurationSha
 							|| dependency.stream !== execution.stream || dependency.version !== execution.version
 						) continue;
-						if (dependency.operation === 'promote') promotion = dependency;
+						if (dependency.operation === releaseOperation) releaseExecution = dependency;
 						else pending.push(...dependency.dependencies);
 					}
-					return promotion !== undefined && (yield* versionKept(promotion, sha));
+					return releaseExecution !== undefined && (yield* versionKept(releaseExecution, sha));
 				}
 				const comparison = yield* gateway.read(
 					comparisonSchema,

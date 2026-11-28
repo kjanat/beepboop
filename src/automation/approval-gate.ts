@@ -12,6 +12,7 @@ import { checkJobs, deploys } from '@/discovery/workflow-analysis/deployment-job
 import { matchesPackage, packageId, publishablePackages } from '@/domain/package-identity.ts';
 import type { CheckChoice, GateSkip, ReleaseGate } from '@/domain/release-gates.ts';
 import { gatedRelease, gateLabel, gateReasons, sameGate } from '@/domain/release-gates.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { workflowPath } from '@/domain/workflow-path.ts';
 import { checkRunsSchema, commitSchema, commitStatusSchema, workflowRunsSchema } from '@/github/resources.ts';
 import { recover } from '@/kernel/errors/classify.ts';
@@ -103,7 +104,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				return metadataProblems(record.inventory, publishablePackages(record.inventory.packages, references));
 			});
 			const metadataBlocks = Effect.fnUntraced(function*(execution: Execution) {
-				if (execution.operation !== 'promote') return [];
+				if (execution.operation !== releaseOperation) return [];
 				const skips = yield* gateSkips(execution);
 				if (skips.some(skip => skip.gate.kind === 'metadata')) return [];
 				return yield* metadataProblemsOf(execution);
@@ -145,7 +146,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				const runs = checks.check_runs;
 				const releaseFiles = new Set(
 					Object.values(subject.configuration.streams).flatMap(stream =>
-						[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
+						[stream.prepare.workflow, stream.release.workflow, ...Object.values(stream.workflows)]
 							.flatMap(binding => binding ? [workflowPath(binding.file)] : [])
 					),
 				);
@@ -243,10 +244,10 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				return { pending, failed, skipped } satisfies CommitChecks;
 			});
 			const supersedeVersion = Effect.fnUntraced(function*(execution: Execution) {
-				if (execution.operation !== 'promote' || !execution.version) return;
+				if (execution.operation !== releaseOperation || !execution.version) return;
 				for (const other of yield* executions.all) {
 					if (
-						other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+						other.id !== execution.id && other.operation === releaseOperation && other.stream === execution.stream
 						&& other.version === execution.version
 						&& ['awaiting-approval', 'blocked', 'pending', 'ready', 'failed'].includes(other.state)
 					) {
@@ -256,7 +257,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 			});
 			const admit = Effect.fnUntraced(function*(execution: Execution, actor: string, target: string) {
 				const clock = yield* Clock.Clock;
-				yield* store.audit(actor, 'promotion.approve', target);
+				yield* store.audit(actor, 'release.approve', target);
 				const next: Execution = { ...execution, state: 'ready', approvedAt: clock.currentTimeMillisUnsafe() };
 				delete next.reason;
 				yield* supersedeVersion(next);
@@ -307,7 +308,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				const record = yield* store.repositories.get(execution.repositoryId);
 				const defaultBranch = record?.defaultBranch ?? execution.workflow?.ref ?? '';
 				const bindings = [
-					['promote', stream.promote.workflow] as const,
+					[releaseOperation, stream.release.workflow] as const,
 					['prepare', stream.prepare.workflow] as const,
 					...Object.entries(stream.workflows).filter(([, binding]) => binding.mode !== 'observe'),
 				].flatMap(([operation, binding]) => {
@@ -320,7 +321,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 					const grants = yield* automation.grants.list({ alias, repositoryId: execution.repositoryId });
 					if (!coversBinding(grants, bindings, execution.repository)) missing.push(alias);
 				}
-				const workflow = stream.promote.workflow?.file ?? execution.workflow?.file;
+				const workflow = stream.release.workflow?.file ?? execution.workflow?.file;
 				return missing.length
 					? `no runtime grant for ${workflow}: ${missing.join(', ')}`
 					: undefined;
@@ -339,7 +340,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				);
 				for (const other of all) {
 					if (
-						other.id === execution.id || other.operation !== 'promote' || other.stream === execution.stream
+						other.id === execution.id || other.operation !== releaseOperation || other.stream === execution.stream
 						|| other.repositoryId !== execution.repositoryId
 						|| settledStates.includes(other.state)
 					) continue;
@@ -355,7 +356,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 			});
 			const approveFromPush = Effect.fnUntraced(function*(execution: Execution, all: Execution[]) {
 				const newer = all.find(other =>
-					other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
+					other.id !== execution.id && other.operation === releaseOperation && other.stream === execution.stream
 					&& other.version === execution.version && other.createdAt > execution.createdAt
 					&& !settledStates.includes(other.state)
 				);
@@ -441,7 +442,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 					}
 					if (blocked) return 'continue' as const;
 					if (
-						current.configuration.streams[current.stream]?.promote.approval !== 'push'
+						current.configuration.streams[current.stream]?.release.approval !== 'push'
 						&& current.approvedBy === undefined
 					) return 'continue' as const;
 					const approved = current;
@@ -508,7 +509,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				resolveChecks: Effect.fnUntraced(function*(id: string, choice: CheckChoice, actor: string) {
 					const clock = yield* Clock.Clock;
 					const execution = yield* executions.get(id);
-					if (execution.operation !== 'promote' || !['failed', 'awaiting-approval'].includes(execution.state)) {
+					if (execution.operation !== releaseOperation || !['failed', 'awaiting-approval'].includes(execution.state)) {
 						return yield* precondition('Only a release that waits on its checks or stopped on them takes this choice');
 					}
 					if (execution.state === 'failed' && (execution.attempts > 0 || execution.approvedAt !== undefined)) {
@@ -558,7 +559,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 							);
 							next.reruns = [...(next.reruns ?? []).filter(rerun => rerun.id !== run), { id: run, attempt }];
 							yield* executions.put(next);
-							yield* store.audit(actor, 'promotion.checks.rerun', `${id}: ${run}`);
+							yield* store.audit(actor, 'release.checks.rerun', `${id}: ${run}`);
 						}
 					} else if (choice === 'skip') {
 						next.skippedGates = [
@@ -567,7 +568,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 						];
 						yield* store.audit(
 							actor,
-							'promotion.checks.skip',
+							'release.checks.skip',
 							`${id}: ${stopping.map(outcome => gateLabel(outcome.gate)).join(', ')}`,
 						);
 					} else {

@@ -21,7 +21,7 @@ failed jobs from one dashboard. Each repository keeps its settings in
 3. Select **Configure releases**. Choose the packages and the publishing
    workflow, preview the setup, and open the setup PR. Beepboop names new
    workflows and writes their jobs.
-4. Connect your preparation and promotion workflows with the
+4. Connect your preparation and release workflows with the
    [Actions integration](docs/automation.md#connect-a-workflow).
 5. Choose a version. Review the preparation PR and merge it.
 6. Publish the merged commit with the Publish button. The dashboard shows each build and

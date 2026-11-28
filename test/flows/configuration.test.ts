@@ -121,7 +121,7 @@ function jsonBlocks(markdown: string): unknown[] {
 const widgetSchema = looseStruct({
 	streams: looseStruct({
 		main: looseStruct({
-			promote: looseStruct({ publishWhen: Schema.String, workflow: looseStruct({ file: Schema.String }) }),
+			release: looseStruct({ publishWhen: Schema.String, workflow: looseStruct({ file: Schema.String }) }),
 		}),
 	}),
 });
@@ -189,7 +189,7 @@ const storedRepository = {
 					'strategy': 'managed',
 					'version': 'manual',
 				},
-				'promote': {
+				'release': {
 					'approval': 'merge',
 					'workflow': {
 						'outputs': [
@@ -219,7 +219,7 @@ const storedRepository = {
 					'mirror': {
 						'artifactInputs': [
 							{
-								'operation': 'promote',
+								'operation': 'release',
 								'output': 'bin',
 							},
 						],
@@ -228,7 +228,7 @@ const storedRepository = {
 							'arch': 'x64',
 						},
 						'needs': [
-							'promote',
+							'release',
 						],
 						'schedule': '0 6 * * 1',
 						'file': 'mirror.yml',
@@ -284,9 +284,9 @@ test('stored repositories keep their plan identity and decode under the configur
 		requiresPreparation: true,
 	};
 	const planId = await Effect.runPromise(planIdentity(plan, repository));
-	expect(planId).toBe('4e4698a1d2eeabb327fb101c304d1bae874a2636ac09a4e43ce0071925e9fa25');
-	expect(await Effect.runPromise(executionId(repository.id, 'main', 'promote', `plan:${planId}`))).toBe(
-		'f9274d828597fbfa4356186d1739f66ed39439b301b9e632e6705f83bd7de9c1',
+	expect(planId).toBe('4fe2198ae4b6904e1f2087c5c633357227d02eb3c06cf45876e604b0b9b57bd9');
+	expect(await Effect.runPromise(executionId(repository.id, 'main', 'release', `plan:${planId}`))).toBe(
+		'fa200e7cef3ba00726b4ed0f658de4e99b454551ef743f2084c7d52451a31885',
 	);
 	expect(releaseEventId({
 		repositoryId: repository.id,
@@ -347,7 +347,7 @@ test('editors validate with the published schema and refuse what refresh refuses
 		const value of [
 			{ streams: { main: { workflows: { publish: { file: 'nested/publish.yml' } } } } },
 			{ extends: ['owner/presets'] },
-			{ streams: { main: { promote: { approval: 'sometimes' } } } },
+			{ streams: { main: { release: { approval: 'sometimes' } } } },
 			{ subscriptions: [{ id: 'hook', source: 'octo/tool', event: 'workflow_run', stream: 'main', operation: 'x' }] },
 		]
 	) {
@@ -359,7 +359,7 @@ test('editors validate with the published schema and refuse what refresh refuses
 test('workflow setup rejects unknown keys before normalization in runtime and published schemas', async () => {
 	const published = new Validator(Result.getOrThrow(record(await Bun.file(schemaPath).json())), '2020-12', false);
 	for (const setup of [{ comands: 'npm publish' }, { file: 'other.yml' }, { existingTrigers: 'preserve' }]) {
-		const document = { streams: { main: { promote: { workflow: { file: 'publish.yml', setup } } } } };
+		const document = { streams: { main: { release: { workflow: { file: 'publish.yml', setup } } } } };
 		expect(safeDecode(workflowSetup, setup).success).toBe(false);
 		expect(safeDecode(configurationSchema, document).success).toBe(false);
 		expect(Result.isFailure(parseRepositoryConfiguration(document))).toBe(true);
@@ -420,32 +420,32 @@ const lateFailures: Finding[] = [
 		},
 	},
 	{
-		name: 'a promotion whose workflow file is missing',
+		name: 'a releaseExecution whose workflow file is missing',
 		codes: ['binding-missing'],
 		edit: stream => {
-			stream.promote.workflow.file = 'release.yml';
+			stream.release.workflow.file = 'release.yml';
 		},
 	},
 	{
-		name: 'a promotion dependency whose workflow cannot be dispatched',
+		name: 'a releaseExecution dependency whose workflow cannot be dispatched',
 		codes: ['binding-not-dispatchable'],
 		edit: stream => {
-			stream.promote.workflow.needs = ['lint'];
+			stream.release.workflow.needs = ['lint'];
 			stream.workflows = { lint: { file: 'ci.yml' } };
 		},
 	},
 	{
-		name: 'a promotion with a wildcard ref',
+		name: 'a releaseExecution with a wildcard ref',
 		codes: ['wildcard-ref'],
 		edit: stream => {
-			stream.promote.workflow.ref = 'release/*';
+			stream.release.workflow.ref = 'release/*';
 		},
 	},
 	{
 		name: 'a per-package workflow without a package input',
 		codes: ['each-package-input'],
 		edit: stream => {
-			stream.workflows = { mirror: { file: 'publish.yml', each: 'package', needs: ['promote'] } };
+			stream.workflows = { mirror: { file: 'publish.yml', each: 'package', needs: ['release'] } };
 		},
 	},
 	{
@@ -501,7 +501,7 @@ const workingConfigurations: Finding[] = [
 		},
 	},
 	{
-		name: 'a required publication only the promotion run reports',
+		name: 'a required publication only the releaseExecution run reports',
 		codes: ['required-uncovered'],
 		edit: stream => {
 			stream.mustPublish = ['pkg:npm/widget', 'pkg:github/octo/widget'];
@@ -576,7 +576,7 @@ test('setup preview blocks a proposal that refresh would refuse', async () => {
 test('setup preview names each schema problem in an invalid configuration', async () => {
 	const repository = widget(world.github);
 	const configuration = widgetDocument();
-	configuration.streams.main.promote.publishWhen = 'sometimes';
+	configuration.streams.main.release.publishWhen = 'sometimes';
 	world.github.push(repository, { '.github/beepboop.json': JSON.stringify(configuration) }, 'Bad approval');
 	const api = bearer(world, await world.cliSession());
 
@@ -588,13 +588,13 @@ test('setup preview names each schema problem in an invalid configuration', asyn
 			subject: { kind: 'file', path: '.github/beepboop.json' },
 		}),
 	]);
-	expect(field(preview.body, 'error')).toContain('streams.main.promote.approval');
+	expect(field(preview.body, 'error')).toContain('streams.main.release.approval');
 });
 
 const retiredKeys = looseStruct({
 	configuration: looseStruct({
 		streams: looseStruct({
-			main: looseStruct({ promote: looseStruct({ workflow: looseStruct({}) }) }),
+			main: looseStruct({ release: looseStruct({ workflow: looseStruct({}) }) }),
 		}),
 	}),
 });
@@ -602,7 +602,7 @@ function withRetiredKeys(document: unknown): Decoded<typeof retiredKeys> {
 	const parsed = decodeSync(retiredKeys, document);
 	parsed.configuration.retired = true;
 	parsed.configuration.streams.main.retired = true;
-	parsed.configuration.streams.main.promote.workflow.retired = true;
+	parsed.configuration.streams.main.release.workflow.retired = true;
 	parsed.findings = [{ code: 'retired-check', severity: 'warning', message: 'A check this version removed' }];
 	return parsed;
 }
@@ -622,7 +622,7 @@ test('stored rows and journal entries with keys this version does not know still
 			alias: 'npm-token',
 			repositoryId: repository.id,
 			repository: repository.name,
-			operation: 'promote',
+			operation: 'release',
 			workflow: 'publish.yml',
 			ref: 'refs/heads/main',
 			delivery: 'runtime',
@@ -713,7 +713,7 @@ test('the parser and schema agree on tag prefixes with directories', () => {
 		streams: {
 			main: {
 				versionSource: { kind: 'tags', prefix },
-				promote: { workflow: { file: 'publish.yml', refs: { phase: 'version', prefix } } },
+				release: { workflow: { file: 'publish.yml', refs: { phase: 'version', prefix } } },
 			},
 		},
 	});
@@ -748,7 +748,7 @@ test('distribution refs require signed immutable version publication in every co
 			...(immutable === undefined ? {} : { immutable }),
 			distribution: { files: ['dist/main.mjs'], ancestry: 'ours' },
 		};
-		const document = { streams: { main: { promote: { workflow: { file: 'publish.yml', refs: policy } } } } };
+		const document = { streams: { main: { release: { workflow: { file: 'publish.yml', refs: policy } } } } };
 		expect(Result.isSuccess(parseRepositoryConfiguration(document))).toBe(valid);
 		expect(safeDecode(configurationSchema, document).success).toBe(valid);
 		expect(safeDecode(refPolicyValue, { ...policy, prefix: 'v', aliases: [] }).success).toBe(valid);
@@ -760,10 +760,10 @@ test('distribution refs require signed immutable version publication in every co
 		immutable: true,
 		distribution: { files: ['dist/main.mjs', 'dist/main.mjs'], ancestry: 'ours' },
 	};
-	const document = { streams: { main: { promote: { workflow: { file: 'publish.yml', refs: repeated } } } } };
+	const document = { streams: { main: { release: { workflow: { file: 'publish.yml', refs: repeated } } } } };
 	const decoded = safeDecode(configurationSchema, document);
 	expect(decoded.success ? [] : schemaIssues(decoded.error).map(issueMessage)).toContain(
-		'streams.main.promote.workflow.refs.distribution.files: Distribution files must be a nonempty unique list',
+		'streams.main.release.workflow.refs.distribution.files: Distribution files must be a nonempty unique list',
 	);
 });
 
@@ -782,43 +782,43 @@ test('the parser and schema agree on job gates', () => {
 	const document = (needsJobs: unknown, mode = 'observe') => ({
 		streams: {
 			main: {
-				promote: { workflow: { file: 'publish.yml' } },
+				release: { workflow: { file: 'publish.yml' } },
 				needs: { 'pkg:cargo/cli': ['pkg:cargo/core'] },
 				workflows: {
-					release: { file: 'release.yml', mode, ref: 'refs/tags/v*', needs: ['promote'] },
-					crates: { file: 'crates.yml', needs: ['release'], needsJobs },
+					'observe-release': { file: 'release.yml', mode, ref: 'refs/tags/v*', needs: ['release'] },
+					crates: { file: 'crates.yml', needs: ['observe-release'], needsJobs },
 				},
 			},
 		},
 	});
 	for (
 		const [value, valid] of [
-			[document({ release: ['plan', 'build_all', 'Assemble-1'] }), true],
-			[document({ promote: ['plan'] }), false],
-			[document({ release: ['plan'] }, 'dispatch'), false],
-			[document({ release: [] }), false],
-			[document({ release: ['1plan'] }), false],
+			[document({ 'observe-release': ['plan', 'build_all', 'Assemble-1'] }), true],
+			[document({ release: ['plan'] }), false],
+			[document({ 'observe-release': ['plan'] }, 'dispatch'), false],
+			[document({ 'observe-release': [] }), false],
+			[document({ 'observe-release': ['1plan'] }), false],
 		] as const
 	) {
 		expect(Result.isSuccess(parseRepositoryConfiguration(value))).toBe(valid);
 		expect(safeDecode(configurationSchema, value).success).toBe(valid);
 	}
-	const parsed = decodeSync(configurationSchema, document({ release: ['plan'] }));
+	const parsed = decodeSync(configurationSchema, document({ 'observe-release': ['plan'] }));
 	const encoded = decodeSync(storedConfiguration, parsed).streams.main;
-	expect(encoded?.workflows.crates?.needsJobs).toEqual({ release: ['plan'] });
+	expect(encoded?.workflows.crates?.needsJobs).toEqual({ 'observe-release': ['plan'] });
 	expect(encoded?.needs).toEqual({ 'pkg:cargo/cli': ['pkg:cargo/core'] });
-	const legacy = parseRepositoryConfiguration(document({ release: ['plan'] }));
+	const legacy = parseRepositoryConfiguration(document({ 'observe-release': ['plan'] }));
 	if (Result.isFailure(legacy)) throw new Error('The parser rejected a valid job gate');
 });
 
 test('the configuration schema checks operation dependencies, schedules and WinGet settings', () => {
 	const document = (workflows: Record<string, unknown>, winget?: unknown) => ({
-		streams: { main: { promote: { workflow: { file: 'publish.yml' } }, workflows } },
+		streams: { main: { release: { workflow: { file: 'publish.yml' } }, workflows } },
 		...(winget === undefined ? {} : { winget }),
 	});
 	for (
 		const [value, valid] of [
-			[document({ build: { file: 'build.yml', needs: ['promote'] } }), true],
+			[document({ build: { file: 'build.yml', needs: ['release'] } }), true],
 			[document({ build: { file: 'build.yml', needs: ['missing'] } }), false],
 			[document({ a: { file: 'a.yml', needs: ['b'] }, b: { file: 'b.yml', needs: ['a'] } }), false],
 			[document({ nightly: { file: 'nightly.yml', schedule: '0 6 * * 1' } }), true],

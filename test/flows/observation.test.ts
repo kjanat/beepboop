@@ -47,7 +47,7 @@ function npmRelease(name: string, version: string, on: string, run = 'npm publis
 function observedOnly(choices: SetupChoices): SetupChoices {
 	return {
 		...choices,
-		streams: choices.streams.map(({ prepare: _prepare, promote: _promote, ...stream }) => ({
+		streams: choices.streams.map(({ prepare: _prepare, release: _release, ...stream }) => ({
 			...stream,
 			...(stream.observe ? { observe: stream.observe.map(({ needs: _needs, ...binding }) => binding) } : {}),
 		})),
@@ -97,12 +97,12 @@ test('an adopted prefixed tag family is observed with its version and publicatio
 	const repository = npmRelease('widget', '1.2.0', "{ push: { tags: ['widget-v*'] } }");
 	const { plan, reopened } = await adopt(repository, true);
 	const binding = {
-		name: 'release',
+		name: 'observe-release',
 		file: 'release.yml',
 		ref: 'refs/tags/widget-v*',
 		publications: ['pkg:npm/widget'],
 	};
-	expect(plan.choices.streams[0]?.observe).toEqual([{ ...binding, needs: ['promote'] }]);
+	expect(plan.choices.streams[0]?.observe).toEqual([{ ...binding, needs: ['release'] }]);
 	expect(reopened.choices.streams[0]?.observe).toEqual([binding]);
 	world.npm.publish('widget', '1.2.0');
 	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
@@ -118,7 +118,7 @@ test('a manually dispatched release takes its version from the manifest', async 
 	const repository = npmRelease('cli', '2.0.0', '{ workflow_dispatch: {} }');
 	const { plan } = await adopt(repository);
 	expect(plan.choices.streams[0]?.observe).toEqual([
-		{ name: 'release', file: 'release.yml', publications: ['pkg:npm/cli'] },
+		{ name: 'observe-release', file: 'release.yml', publications: ['pkg:npm/cli'] },
 	]);
 	world.npm.publish('cli', '2.0.0');
 	const [dispatched] = await observe(repository, 'workflow_dispatch', 'main');
@@ -175,11 +175,11 @@ test('a workflow with tag and dispatch triggers is observed once, on its tags', 
 	const { plan } = await adopt(repository);
 	expect(plan.choices.streams[0]?.observe).toEqual([
 		{
-			name: 'release',
+			name: 'observe-release',
 			file: 'release.yml',
 			ref: 'refs/tags/widget-v*',
 			publications: ['pkg:npm/widget'],
-			needs: ['promote'],
+			needs: ['release'],
 		},
 	]);
 });
@@ -222,7 +222,7 @@ test('a manual dispatch of a branch publisher verifies its publications', async 
 	const repository = npmRelease('branch', '3.0.0', '{ push: { branches: [main] }, workflow_dispatch: {} }');
 	const { plan } = await adopt(repository);
 	expect(plan.choices.streams[0]?.observe).toEqual([
-		{ name: 'release', file: 'release.yml', ref: 'refs/heads/main', publications: ['pkg:npm/branch'] },
+		{ name: 'observe-release', file: 'release.yml', ref: 'refs/heads/main', publications: ['pkg:npm/branch'] },
 	]);
 	world.npm.publish('branch', '3.0.0');
 	const [execution] = await observe(repository, 'workflow_dispatch', 'main');
@@ -289,7 +289,9 @@ test('an observe binding on an exact tag keeps the tag version', async () => {
 	await pin(repository, plan, 'refs/tags/widget-v1.2.0');
 	world.npm.publish('widget', '1.2.0');
 	repository.refs.set('tags/widget-v1.2.0', world.github.head(repository));
-	const [execution] = await observe(repository, 'push', 'widget-v1.2.0');
+	const execution = (await observe(repository, 'push', 'widget-v1.2.0')).find(entry =>
+		entry.operation === 'observe-release'
+	);
 	expect(execution?.version).toBe('1.2.0');
 	expect(execution?.publications.map(publication => [publication.id, publication.outcome])).toEqual([
 		['pkg:npm/widget', 'succeeded'],
@@ -779,7 +781,7 @@ test('a workflow_run run on a prefixed tag matches its tag binding', async () =>
 	});
 	const { plan } = await adopt(repository);
 	expect(plan.choices.streams[0]?.observe).toEqual([
-		{ name: 'release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: [], needs: ['promote'] },
+		{ name: 'observe-release', file: 'release.yml', ref: 'refs/tags/widget-v*', publications: [], needs: ['release'] },
 		{ name: 'publish', file: 'publish.yml', ref: 'refs/tags/widget-v*', publications: ['pkg:npm/widget'] },
 	]);
 	world.npm.publish('widget', '1.2.0');
@@ -831,7 +833,7 @@ test('a tag push on a workflow with tag and branch triggers is recorded once', a
 		conclusion: 'success',
 		attempt: 1,
 	});
-	expect(executions.map(execution => [execution.operation, execution.version])).toEqual([['release', '1.2.0']]);
+	expect(executions.map(execution => [execution.operation, execution.version])).toEqual([['observe-release', '1.2.0']]);
 });
 
 test('a branch push is not classified as a tag by a tag glob', async () => {
@@ -920,7 +922,7 @@ test('a publisher on a non-default branch is observed on that branch', async () 
 	const repository = npmRelease('snapshots', '1.0.0', '{ push: { branches: [release] } }', 'npm publish --tag next');
 	const { plan } = await adopt(repository);
 	expect(plan.choices.streams[0]?.observe).toEqual([
-		{ name: 'release', file: 'release.yml', ref: 'refs/heads/release', publications: [] },
+		{ name: 'observe-release', file: 'release.yml', ref: 'refs/heads/release', publications: [] },
 	]);
 	const [execution] = await observe(repository, 'push', 'release');
 	expect(execution?.stream).toBe(plan.choices.streams[0]?.name);
@@ -958,12 +960,12 @@ test('editing an adopted stream clears publications and leaves observation', asy
 			observe: stream.observe.map(binding => ({ ...binding, publications: [] })),
 		}],
 	});
-	expect((await stored()).streams[stream.name]?.workflows?.release).toEqual({
+	expect((await stored()).streams[stream.name]?.workflows?.['observe-release']).toEqual({
 		file: 'release.yml',
 		mode: 'observe',
 		ref: 'refs/tags/widget-v*',
 		publications: [],
-		needs: ['promote'],
+		needs: ['release'],
 	});
 	const { observe: _observe, versionSource: _versionSource, ...managed } = stream;
 	await apply({
@@ -976,9 +978,9 @@ test('editing an adopted stream clears publications and leaves observation', asy
 				commands: 'npm install',
 				publicationSteps: {},
 			},
-			promote: {
+			release: {
 				file: 'publish.yml',
-				job: 'promote',
+				job: 'release',
 				triggers: 'review',
 				commands: 'npm publish',
 				publicationSteps: {},
@@ -1020,20 +1022,20 @@ test('each adopted tag family gets its own release starter', async () => {
 	expect(plan.choices.streams.map(stream => ({
 		name: stream.name,
 		prepare: stream.prepare?.file,
-		promote: stream.promote && { file: stream.promote.file, tagPrefix: stream.promote.tagPrefix },
+		release: stream.release && { file: stream.release.file, tagPrefix: stream.release.tagPrefix },
 		observe: stream.observe?.map(binding => ({ ref: binding.ref, needs: binding.needs })),
 	}))).toEqual([
 		{
 			name: 'alpha',
 			prepare: 'prepare-release.yml',
-			promote: { file: 'release-alpha-2.yml', tagPrefix: 'alpha-v' },
-			observe: [{ ref: 'refs/tags/alpha-v*', needs: ['promote'] }],
+			release: { file: 'release-alpha-2.yml', tagPrefix: 'alpha-v' },
+			observe: [{ ref: 'refs/tags/alpha-v*', needs: ['release'] }],
 		},
 		{
 			name: 'beta',
 			prepare: 'prepare-release-2.yml',
-			promote: { file: 'release-beta.yml', tagPrefix: 'beta-v' },
-			observe: [{ ref: 'refs/tags/beta-v*', needs: ['promote'] }],
+			release: { file: 'release-beta.yml', tagPrefix: 'beta-v' },
+			observe: [{ ref: 'refs/tags/beta-v*', needs: ['release'] }],
 		},
 	]);
 });
@@ -1065,7 +1067,7 @@ test('an observed run records only the publications its binding lists', async ()
 			packages: ['pkg:npm/a', 'pkg:npm/b'],
 			required: ['pkg:npm/a', 'pkg:npm/b'],
 			versioning: 'independent',
-			observe: [{ name: 'release', file: 'release.yml', publications: ['pkg:npm/a'] }],
+			observe: [{ name: 'observe-release', file: 'release.yml', publications: ['pkg:npm/a'] }],
 		}],
 	};
 	await applyChoices(api, repository.name, choices);

@@ -61,18 +61,18 @@ export function streamSummary(
 	const delegated = new Set(
 		stream.operations?.filter(entry => !entry.backfill).flatMap(entry => entry.publications) ?? [],
 	);
-	const promote = stream.promote;
-	if (promote) {
+	const releaseWorkflow = stream.release;
+	if (releaseWorkflow) {
 		const own = stream.packages.filter(id => !observed.has(id) && !delegated.has(id));
 		const registered = own.filter(id => packages.get(id)?.manager !== 'go');
-		const tags = promote.tagPrefix
+		const tags = releaseWorkflow.tagPrefix
 			? [
-				`${promote.tagPrefix}<version>`,
+				`${releaseWorkflow.tagPrefix}<version>`,
 				...[...new Set([...own, ...(stream.companionModules ?? [])])].flatMap(id => {
 					const pkg = packages.get(id);
 					const source = pkg?.manager === 'go' ? pkg.versionSource : undefined;
 					const prefix = source === undefined ? '' : tagPrefix(source) ?? '';
-					return prefix && prefix !== promote.tagPrefix ? [`${prefix}<version>`] : [];
+					return prefix && prefix !== releaseWorkflow.tagPrefix ? [`${prefix}<version>`] : [];
 				}),
 			]
 			: [];
@@ -81,7 +81,7 @@ export function streamSummary(
 			...(tags.length ? [`pushes the ${tags.length === 1 ? 'tag' : 'tags'} ${listed(tags)}`] : []),
 		];
 		lines.push(
-			`When a release publishes, ${named(promote.file)} ${
+			`When a release publishes, ${named(releaseWorkflow.file)} ${
 				steps.length ? steps.join(', then ') : 'runs the publishing commands'
 			}.`,
 		);
@@ -140,7 +140,7 @@ export function streamSummary(
 				commands.length ? `runs ${listed(commands.map(command => `\`${command}\``))}` : 'runs its existing jobs'
 			} in the version PR.`,
 		);
-	} else if (stream.promote && stream.packages.length) {
+	} else if (stream.release && stream.packages.length) {
 		lines.push(
 			stream.bump === 'commit' ? 'Beepboop pushes the version commit itself.' : 'Beepboop opens the version PR itself.',
 		);

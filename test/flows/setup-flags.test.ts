@@ -67,7 +67,7 @@ function tool() {
 		'js/LICENSE': 'MIT\n',
 	});
 }
-const promote = ['--promote-file', 'release-tool.yml'];
+const release = ['--release-file', 'release-tool.yml'];
 
 const silent: PromptEngine = {
 	promptOne(config) {
@@ -205,35 +205,41 @@ const cases: {
 		value: [{}, { CARGO_REGISTRY_TOKEN: 'crates-io' }, { builds: [build], targets: ['linux-amd64'] }],
 	},
 	{
-		flags: ['promote-file', 'promote-job', 'promote-existing-triggers', 'promote-commands', 'promote-tag-prefix'],
+		flags: ['release-file', 'release-job', 'release-existing-triggers', 'release-commands', 'release-tag-prefix'],
 		args: [
-			'--promote-file',
+			'--release-file',
 			'publish-tool.yml',
-			'--promote-job',
+			'--release-job',
 			'ship',
-			'--promote-existing-triggers',
+			'--release-existing-triggers',
 			'replace-with-dispatch',
-			'--promote-commands',
+			'--release-commands',
 			'cargo publish',
-			'--promote-tag-prefix',
+			'--release-tag-prefix',
 			'tool-v',
 		],
 		read: c => {
-			const promote = main(c).promote;
-			return [promote?.file, promote?.job, promote?.triggers, promote?.commands, promote?.tagPrefix];
+			const releaseWorkflow = main(c).release;
+			return [
+				releaseWorkflow?.file,
+				releaseWorkflow?.job,
+				releaseWorkflow?.triggers,
+				releaseWorkflow?.commands,
+				releaseWorkflow?.tagPrefix,
+			];
 		},
 		value: ['publish-tool.yml', 'ship', 'dispatchOnly', 'cargo publish', 'tool-v'],
 	},
 	{
-		flags: ['promote-publication-steps', 'promote-credentials'],
-		args: ['--promote-publication-steps', '{}', '--promote-credentials', '{"CARGO_REGISTRY_TOKEN":"crates-io"}'],
-		read: c => [main(c).promote?.publicationSteps, main(c).promote?.credentials],
+		flags: ['release-publication-steps', 'release-credentials'],
+		args: ['--release-publication-steps', '{}', '--release-credentials', '{"CARGO_REGISTRY_TOKEN":"crates-io"}'],
+		read: c => [main(c).release?.publicationSteps, main(c).release?.credentials],
 		value: [{}, { CARGO_REGISTRY_TOKEN: 'crates-io' }],
 	},
 	{
 		flags: ['binary', 'target'],
 		args: ['--binary', 'tool', '--target', 'linux-amd64', '--target', 'windows-amd64'],
-		read: c => main(c).promote?.binaries,
+		read: c => main(c).release?.binaries,
 		value: { builds: [build], targets: ['linux-amd64', 'windows-amd64'] },
 	},
 	{
@@ -248,7 +254,7 @@ test('every setup flag sets its field in the previewed plan', async () => {
 	tool();
 	const proposal = await preview([]);
 	for (const entry of cases) {
-		const plan = await preview([...(entry.args.includes('--promote-file') ? [] : promote), ...entry.args]);
+		const plan = await preview([...(entry.args.includes('--release-file') ? [] : release), ...entry.args]);
 		expect([entry.flags, entry.read(plan.choices)]).toEqual([entry.flags, entry.value]);
 		expect(entry.read(proposal.choices)).not.toEqual(entry.value);
 	}
@@ -268,12 +274,6 @@ const legacyCases: typeof cases = [
 		read: c => main(c).prepare?.triggers,
 		value: 'dispatchOnly',
 	},
-	{
-		flags: ['promote-triggers'],
-		args: ['--promote-triggers', 'dispatchOnly'],
-		read: c => main(c).promote?.triggers,
-		value: 'dispatchOnly',
-	},
 ];
 
 test('each earlier flag name still sets its field and warns about its current name', async () => {
@@ -285,10 +285,9 @@ test('each earlier flag name still sets its field and warns about its current na
 		bump: 'version-lands',
 		approval: 'publish-when',
 		'prepare-triggers': 'prepare-existing-triggers',
-		'promote-triggers': 'promote-existing-triggers',
 	};
 	for (const entry of legacyCases) {
-		const result = await app.execute(['adopt', 'octo/tool', '--json', ...promote, ...entry.args], {
+		const result = await app.execute(['adopt', 'octo/tool', '--json', ...release, ...entry.args], {
 			isTTY: false,
 			env: {},
 		});
@@ -308,10 +307,10 @@ test('every setup schema field has a declared adopt flag', () => {
 	expect(Object.keys(workflowFlagKinds).sort()).toEqual([...workflowFields].sort());
 	const paths = setupFlagPaths.map(entry => entry.path);
 	for (const field of choicesFields) expect(paths).toContain(field);
-	for (const field of streamFields.filter(field => field !== 'prepare' && field !== 'promote')) {
+	for (const field of streamFields.filter(field => field !== 'prepare' && field !== 'release')) {
 		expect(paths).toContain(field);
 	}
-	for (const role of ['prepare', 'promote']) {
+	for (const role of ['prepare', 'release']) {
 		for (const field of workflowFields) expect(paths).toContain(`${role}.${field}`);
 	}
 	for (const name of ['adopt', 'repositories']) {
@@ -339,18 +338,18 @@ test('setup flags reject values outside their enums and invalid JSON', async () 
 	const unknown = await app.execute(['adopt', 'octo/tool', '--package', 'nope'], { isTTY: false, env: {} });
 	expect(unknown.exitCode).not.toBe(0);
 	expect(unknown.stderr.join('')).toContain('--package nope is not a discovered package');
-	const binary = await app.execute(['adopt', 'octo/tool', ...promote, '--binary', 'other'], { isTTY: false, env: {} });
+	const binary = await app.execute(['adopt', 'octo/tool', ...release, '--binary', 'other'], { isTTY: false, env: {} });
 	expect(binary.exitCode).not.toBe(0);
 	expect(binary.stderr.join('')).toContain('--binary other is not a binary of main');
-	const workflowless = await app.execute(['adopt', 'octo/tool', '--promote-job', 'ship'], { isTTY: false, env: {} });
+	const workflowless = await app.execute(['adopt', 'octo/tool', '--release-job', 'ship'], { isTTY: false, env: {} });
 	expect(workflowless.exitCode).not.toBe(0);
-	expect(workflowless.stderr.join('')).toContain('--promote-file: Missing key');
-	const prefix = await app.execute(['adopt', 'octo/tool', ...promote, '--promote-tag-prefix', 'bad prefix'], {
+	expect(workflowless.stderr.join('')).toContain('--release-file: Missing key');
+	const prefix = await app.execute(['adopt', 'octo/tool', ...release, '--release-tag-prefix', 'bad prefix'], {
 		isTTY: false,
 		env: {},
 	});
 	expect(prefix.exitCode).not.toBe(0);
-	expect(prefix.stderr.join('')).toContain('--promote-tag-prefix');
+	expect(prefix.stderr.join('')).toContain('--release-tag-prefix');
 });
 
 test('flags given with --choices override only their fields', async () => {
@@ -385,7 +384,7 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 		[
 			'adopt',
 			'octo/tool',
-			...promote,
+			...release,
 			'--start-from',
 			'action',
 			'--version-lands',
@@ -408,7 +407,7 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 				main: mutableStruct({
 					startFrom: mutableArray(looseStruct({ via: Schema.String, workflow: Schema.String })),
 					prepare: looseStruct({ versionLands: Schema.String }),
-					promote: looseStruct({ publishWhen: Schema.String }),
+					release: looseStruct({ publishWhen: Schema.String }),
 				}),
 			}),
 		}),
@@ -416,13 +415,13 @@ test('a fully flagged adopt in a terminal asks no question and opens the setup P
 	);
 	expect(configuration.streams.main.startFrom).toEqual([{ via: 'action', workflow: 'start-release.yml' }]);
 	expect(configuration.streams.main.prepare.versionLands).toBe('via-direct-commit');
-	expect(configuration.streams.main.promote.publishWhen).toBe('version-pr-merged');
+	expect(configuration.streams.main.release.publishWhen).toBe('version-pr-merged');
 	world.github.merge(repository, 1);
 	const again = await app.execute(
 		[
 			'adopt',
 			'octo/tool',
-			...promote,
+			...release,
 			'--start-from',
 			'action',
 			'--version-lands',
@@ -445,7 +444,7 @@ test('flagged adopt saves a reviewable plan and stops on blockers', async () => 
 	const saved = await app.execute([
 		'adopt',
 		'octo/tool',
-		...promote,
+		...release,
 		'--version-lands',
 		'via-direct-commit',
 		'--output',
@@ -473,7 +472,7 @@ test('flagged adopt saves a reviewable plan and stops on blockers', async () => 
 
 test('fields given by no flag stay unanswered in the setup PR', async () => {
 	const repository = tool();
-	const result = await app.execute(['adopt', 'octo/tool', ...promote, '--version-lands', 'via-direct-commit'], {
+	const result = await app.execute(['adopt', 'octo/tool', ...release, '--version-lands', 'via-direct-commit'], {
 		prompter: silent,
 		isTTY: true,
 		color: false,
@@ -487,10 +486,10 @@ test('fields given by no flag stay unanswered in the setup PR', async () => {
 		world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}',
 	);
 	const stream = decodeSync(
-		mutableStruct({ streams: mutableStruct({ main: looseStruct({ promote: looseStruct({}) }) }) }),
+		mutableStruct({ streams: mutableStruct({ main: looseStruct({ release: looseStruct({}) }) }) }),
 		configuration,
 	).streams.main;
-	expect(stream.promote).not.toHaveProperty('approval');
+	expect(stream.release).not.toHaveProperty('approval');
 	expect(stream).not.toHaveProperty('start');
 });
 
@@ -524,7 +523,7 @@ test('completion scripts list every setup flag and the values of each single-val
 				['publish-when', publishWhens],
 				['version-pr-merge', versionPrMerges],
 				['prepare-existing-triggers', existingTriggerChoices],
-				['promote-existing-triggers', existingTriggerChoices],
+				['release-existing-triggers', existingTriggerChoices],
 			] as const
 		) {
 			expect([shell, flag, offered(shell, flag)]).toEqual([shell, flag, [...values]]);
@@ -659,7 +658,7 @@ async function refused(args: string[], message: string) {
 
 test('setup flags name what they cannot resolve', async () => {
 	tool();
-	const proposal = await preview(promote);
+	const proposal = await preview(release);
 	const file = join(directory, 'two.json');
 	await Bun.write(
 		file,
@@ -675,7 +674,7 @@ test('setup flags name what they cannot resolve', async () => {
 		['octo/tool', '--choices', broken, '--version-lands', 'via-direct-commit'],
 		`--choices ${broken}: streams:`,
 	);
-	await refused(['octo/tool', ...promote, '--target', 'linux-amd64'], '--target needs --binary');
+	await refused(['octo/tool', ...release, '--target', 'linux-amd64'], '--target needs --binary');
 	await refused(['octo/tool', '--actions-revision', 'latest'], '--actions-revision:');
 	world.github.create('octo/twin', {
 		'Cargo.toml': '[package]\nname = "twin"\nversion = "1.0.0"\nedition = "2024"\n',
@@ -694,13 +693,13 @@ test('a flagged new workflow needs commands Beepboop cannot generate and a job i
 			targets: [{ pkg: 'widget-linux-x64' }],
 		}),
 	});
-	await refused(['octo/generated', '--promote-file', 'release.yml'], 'Give them with --promote-commands');
+	await refused(['octo/generated', '--release-file', 'release.yml'], 'Give them with --release-commands');
 	const commanded = await app.execute(
-		['adopt', 'octo/generated', '--json', '--promote-file', 'release.yml', '--promote-commands', './publish.sh'],
+		['adopt', 'octo/generated', '--json', '--release-file', 'release.yml', '--release-commands', './publish.sh'],
 		{ isTTY: false, env: {} },
 	);
 	expect(commanded.exitCode).toBe(0);
-	expect(decodeSync(previewed, JSON.parse(commanded.stdout.join(''))).choices.streams[0]?.promote).toMatchObject({
+	expect(decodeSync(previewed, JSON.parse(commanded.stdout.join(''))).choices.streams[0]?.release).toMatchObject({
 		file: 'release.yml',
 		job: 'publish',
 		commands: './publish.sh',
@@ -710,13 +709,13 @@ test('a flagged new workflow needs commands Beepboop cannot generate and a job i
 		'.github/workflows/ship.yml':
 			'name: Ship\non: workflow_dispatch\njobs:\n  checks:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n  ship:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm publish\n',
 	});
-	await refused(['octo/packages', '--promote-file', 'ship.yml'], '--promote-job names the job in ship.yml');
+	await refused(['octo/packages', '--release-file', 'ship.yml'], '--release-job names the job in ship.yml');
 	const shipped = await app.execute(
-		['adopt', 'octo/packages', '--json', '--promote-file', 'ship.yml', '--promote-job', 'ship'],
+		['adopt', 'octo/packages', '--json', '--release-file', 'ship.yml', '--release-job', 'ship'],
 		{ isTTY: false, env: {} },
 	);
 	expect(shipped.exitCode).toBe(0);
-	expect(decodeSync(previewed, JSON.parse(shipped.stdout.join(''))).choices.streams[0]?.promote).toMatchObject({
+	expect(decodeSync(previewed, JSON.parse(shipped.stdout.join(''))).choices.streams[0]?.release).toMatchObject({
 		file: 'ship.yml',
 		job: 'ship',
 		commands: 'beepboop publish',

@@ -1,5 +1,6 @@
 import type { Status, Tone } from '@/contract/views';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import type { Readiness } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import type { DeliveryState, NotificationDelivery } from '@/notifications/notification.ts';
@@ -101,8 +102,8 @@ export function releaseStatus(release: ReturnType<typeof releaseSummaries>[numbe
 export function runLabel(operation: string): string {
 	return operation === 'prepare'
 		? 'Preparation run'
-		: operation === 'promote'
-		? 'Publication run'
+		: operation === releaseOperation
+		? 'Release run'
 		: `${operation} run`;
 }
 

@@ -1,4 +1,5 @@
 import type { RepositoryRecord } from '@/domain/inventory.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { readiness } from '@/domain/repository';
 
 export function workflowChoices(stored: RepositoryRecord) {
@@ -9,7 +10,7 @@ export function workflowChoices(stored: RepositoryRecord) {
 		const bindings = {
 			...configuration.workflows,
 			...(configuration.prepare.workflow ? { prepare: configuration.prepare.workflow } : {}),
-			...(configuration.promote.workflow ? { promote: configuration.promote.workflow } : {}),
+			...(configuration.release.workflow ? { [releaseOperation]: configuration.release.workflow } : {}),
 		};
 		return Object.entries(bindings).map(([operation, workflow]) => ({
 			stream,

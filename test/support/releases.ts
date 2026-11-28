@@ -33,23 +33,23 @@ export async function executions(api: Api): Promise<Execution[]> {
 	return listed.body.map(decodeExecutionV1);
 }
 
-export function promotionsOf<T extends { operation: string }>(listed: T[]): T[] {
-	return listed.filter(execution => execution.operation === 'promote');
+export function releasesOf<T extends { operation: string }>(listed: T[]): T[] {
+	return listed.filter(execution => execution.operation === 'release');
 }
 
-export async function promotions(api: Api): Promise<Execution[]> {
-	return promotionsOf(await executions(api));
+export async function releaseExecutions(api: Api): Promise<Execution[]> {
+	return releasesOf(await executions(api));
 }
 
 export async function only(api: Api, operation: string): Promise<Execution> {
 	return one((await executions(api)).filter(execution => execution.operation === operation), `${operation} execution`);
 }
 
-export async function approvePromotion(
+export async function approveRelease(
 	api: Api,
 	sourceSha: string,
-): Promise<{ promotion: Execution; approved: Reply }> {
-	const promotion = await only(api, 'promote');
-	const approved = await api('/api/executions/approve', { id: promotion.id, sourceSha });
-	return { promotion, approved };
+): Promise<{ releaseExecution: Execution; approved: Reply }> {
+	const releaseExecution = await only(api, 'release');
+	const approved = await api('/api/executions/approve', { id: releaseExecution.id, sourceSha });
+	return { releaseExecution, approved };
 }

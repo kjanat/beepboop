@@ -29,7 +29,7 @@ export const streamSchema = looseStruct({
 		bump: Schema.optional(versionBump),
 		versionPrMerge: Schema.optional(versionPrMerge),
 	}),
-	promote: looseStruct({
+	release: looseStruct({
 		approval: Schema.Literals(['required', 'merge', 'push']),
 		workflow: Schema.optional(mutableStruct({ file: Schema.String })),
 	}),
@@ -96,7 +96,7 @@ interface ReleasePreview {
 export function printPreview(out: Out, look: Look, preview: ReleasePreview): void {
 	const { repository, stream: selected, config: stream, summary, plan, release } = preview;
 	const { started, pending, direct, committing, merging } = preview;
-	const policy = stream.promote.approval;
+	const policy = stream.release.approval;
 	const after = committing
 		? `After Beepboop commits it to ${repository.defaultBranch}`
 		: 'After the version PR merges';

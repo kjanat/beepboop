@@ -79,44 +79,52 @@ test('answered packages already at the target still refuse it', () => {
 test.each([
 	['table header', '[workspace.package] # shared fields\n  version = "0.1.1"  # current', '"0.1.1"', '"0.1.2"'],
 	['dotted key', "  package . version    = '0.1.1'  # current", "'0.1.1'", "'0.1.2'"],
-])('plans a Cargo workspace version using a %s without rewriting neighboring fields', async (_, assignment, prior, next) => {
-	const before = [
-		'[package]',
-		'name = "tool"',
-		'version = { workspace = true }',
-		'[workspace]',
-		'members = []',
-		...assignment.split('\n'),
-		'[workspace.metadata]',
-		'version = "0.1.1" # unrelated',
-		'',
-	].join('\r\n');
-	const snapshot: Snapshot = {
-		repository: { id: 1, name: 'example/tool', defaultBranch: 'main' },
-		sha: 'a'.repeat(40),
-		files: { 'Cargo.toml': before },
-		paths: ['Cargo.toml'],
-	};
-	const inventory = discover(snapshot);
-	expect(inventory.diagnostics.some(diagnostic => diagnostic.code === 'invalid-manifest')).toBe(false);
-	expect(inventory.packages.map(pkg => pkg.versionSource)).toEqual(['Cargo.toml#workspace.package.version']);
-	const [pkg] = inventory.packages;
-	if (!pkg) throw new Error('missing Cargo package');
+])(
+	'plans a Cargo workspace version using a %s without rewriting neighboring fields',
+	async (_, assignment, prior, next) => {
+		const before = [
+			'[package]',
+			'name = "tool"',
+			'version = { workspace = true }',
+			'[workspace]',
+			'members = []',
+			...assignment.split('\n'),
+			'[workspace.metadata]',
+			'version = "0.1.1" # unrelated',
+			'',
+		].join('\r\n');
+		const snapshot: Snapshot = {
+			repository: { id: 1, name: 'example/tool', defaultBranch: 'main' },
+			sha: 'a'.repeat(40),
+			files: { 'Cargo.toml': before },
+			paths: ['Cargo.toml'],
+		};
+		const inventory = discover(snapshot);
+		expect(inventory.diagnostics.some(diagnostic => diagnostic.code === 'invalid-manifest')).toBe(false);
+		expect(inventory.packages.map(pkg => pkg.versionSource)).toEqual(['Cargo.toml#workspace.package.version']);
+		const [pkg] = inventory.packages;
+		if (!pkg) throw new Error('missing Cargo package');
 
-	const prepared = await Effect.runPromise(planRelease(snapshot, {
-		...inventory,
-		packages: [{ ...pkg, publicationStatus: 'missing' }],
-	}, { version: '0.1.1' }));
-	expect(prepared.edits).toEqual([]);
+		const prepared = await Effect.runPromise(
+			planRelease(
+				snapshot,
+				{ ...inventory, packages: [{ ...pkg, publicationStatus: 'missing' }] },
+				{ version: '0.1.1' },
+			),
+		);
+		expect(prepared.edits).toEqual([]);
 
-	const bumped = await Effect.runPromise(planRelease(snapshot, {
-		...inventory,
-		packages: [{ ...pkg, publicationStatus: 'published', published: '0.1.1' }],
-	}, { bump: 'patch' }));
-	expect(bumped.version).toBe('0.1.2');
-	expect(bumped.edits).toEqual([{ path: 'Cargo.toml', before, after: before.replace(prior, next) }]);
-});
-
+		const bumped = await Effect.runPromise(
+			planRelease(
+				snapshot,
+				{ ...inventory, packages: [{ ...pkg, publicationStatus: 'published', published: '0.1.1' }] },
+				{ bump: 'patch' },
+			),
+		);
+		expect(bumped.version).toBe('0.1.2');
+		expect(bumped.edits).toEqual([{ path: 'Cargo.toml', before, after: before.replace(prior, next) }]);
+	},
+);
 
 test('a version-like line inside TOML text cannot stand in for the workspace field', async () => {
 	const before = [

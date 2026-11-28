@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { textSchema } from '@/kernel/schema/result.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableStruct } from '@/kernel/schema/structs.ts';
@@ -54,10 +55,10 @@ export function gatedRelease<T extends { operation: string; stream: string; stat
 	executions: readonly T[],
 	stream: string,
 ): T | undefined {
-	const promotions = executions
-		.filter(execution => execution.operation === 'promote' && execution.stream === stream)
+	const releaseExecutions = executions
+		.filter(execution => execution.operation === releaseOperation && execution.stream === stream)
 		.sort((left, right) => right.createdAt - left.createdAt);
-	const newest = promotions[0];
-	return promotions.find(execution => waiting.includes(execution.state))
+	const newest = releaseExecutions[0];
+	return releaseExecutions.find(execution => waiting.includes(execution.state))
 		?? (newest?.state === 'failed' ? newest : undefined);
 }

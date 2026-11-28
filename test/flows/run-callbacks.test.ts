@@ -3,7 +3,7 @@ import { discoveredWidget } from '@root/test/support/client.ts';
 import { botId, ownerId } from '@root/test/support/github.ts';
 import { bearer } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
-import { approvePromotion, only, prepareRelease } from '@root/test/support/releases.ts';
+import { approveRelease, only, prepareRelease } from '@root/test/support/releases.ts';
 import { passChecks } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -29,9 +29,9 @@ test('run callbacks refuse a managed preparation and a run that is not bound to 
 	passChecks(repository, merged.sha);
 	await world.push(repository);
 	await world.wait(1_000);
-	await approvePromotion(api, merged.sha);
+	await approveRelease(api, merged.sha);
 	await world.wait(16_000);
-	const promotion = await only(api, 'promote');
+	const releaseExecution = await only(api, 'release');
 	const ref = `refs/heads/${repository.defaultBranch}`;
 	const stranger: RunIdentity = {
 		repositoryId: repository.id,
@@ -59,7 +59,7 @@ test('run callbacks refuse a managed preparation and a run that is not bound to 
 		refusal(coordinator.publishReport(id, stranger, { executionId: id, purl, outcome: 'published' })),
 	];
 	expect(await Promise.all(callbacks(preparation.id))).toEqual(Array(8).fill('Operation is not a workflow'));
-	expect(await Promise.all(callbacks(promotion.id))).toEqual([
+	expect(await Promise.all(callbacks(releaseExecution.id))).toEqual([
 		'Workflow binding mismatch',
 		'Preparation run identity mismatch',
 		'Report identity mismatch',
@@ -69,5 +69,5 @@ test('run callbacks refuse a managed preparation and a run that is not bound to 
 		'Publication identity mismatch',
 		'Publication identity mismatch',
 	]);
-	expect(await only(api, 'promote')).toEqual(promotion);
+	expect(await only(api, 'release')).toEqual(releaseExecution);
 });

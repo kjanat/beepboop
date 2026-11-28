@@ -37,7 +37,7 @@ jobs:
         with:
           execution-id: \${{ inputs.beepboop_execution_id }}
           stream: ${stream}
-          operation: promote
+          operation: release
 ${steps}`;
 }
 
@@ -107,7 +107,7 @@ export function widgetConfiguration(approval: 'required' | 'merge' | 'push' = 'r
 				mustPublish: ['pkg:npm/widget'],
 				credentials: ['npm-token'],
 				prepare: { strategy: 'managed' },
-				promote: {
+				release: {
 					publishWhen: publishWhenNames[approval],
 					workflow: { file: 'publish.yml', publications: ['pkg:npm/widget'] },
 				},
@@ -116,12 +116,12 @@ export function widgetConfiguration(approval: 'required' | 'merge' | 'push' = 'r
 	}, '\t');
 }
 
-const promotedConfiguration = looseStruct({
-	streams: looseStruct({ main: looseStruct({ promote: looseStruct({ workflow: looseStruct({}) }) }) }),
+const releasedConfiguration = looseStruct({
+	streams: looseStruct({ main: looseStruct({ release: looseStruct({ workflow: looseStruct({}) }) }) }),
 });
 
 export function editableConfiguration() {
-	return decodeSync(promotedConfiguration, JSON.parse(widgetConfiguration()));
+	return decodeSync(releasedConfiguration, JSON.parse(widgetConfiguration()));
 }
 
 export function widget(github: FakeGitHub, options: WidgetOptions = {}): Repository {

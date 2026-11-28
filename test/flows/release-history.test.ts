@@ -24,7 +24,7 @@ function execution(id: string, version = '1.0.0') {
 					versioning: 'workspace',
 					concurrency: 'queue',
 					prepare: { version: 'manual' },
-					promote: { approval: 'required' },
+					release: { approval: 'required' },
 					workflows: {},
 					credentials: [],
 					channels: { stable: 'latest', prerelease: 'next' },

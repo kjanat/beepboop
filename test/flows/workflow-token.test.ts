@@ -66,7 +66,7 @@ test('the token check sees the run title and workflow of the execution', () => {
 		eventId: 'manual',
 		configuration: { extends: [], managers: ['npm'], subscriptions: [], streams: {} },
 		publications: [],
-		operation: 'promote',
+		operation: 'release',
 		presetShas: {},
 		dependencies: [],
 		attempts: 1,

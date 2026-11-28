@@ -7,6 +7,7 @@ import type { PackageTagPage } from '@/contract/views';
 import { packageId, publicationIdentity, publishablePackages } from '@/domain/package-identity.ts';
 import type { RefPlan, RefState } from '@/domain/refs.ts';
 import { tagObjectId } from '@/domain/refs.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { semVer, tagFor } from '@/domain/version.ts';
 import {
 	comparisonSchema,
@@ -69,7 +70,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 		plan: RefPlan,
 		refs: RefState[],
 	) => Effect.Effect<string | undefined, DomainError>;
-	readonly promoted: (execution: Execution) => Effect.Effect<boolean, DomainError>;
+	readonly releaseCompleted: (execution: Execution) => Effect.Effect<boolean, DomainError>;
 	readonly modulePrefixes: (execution: Execution) => Effect.Effect<string[], DomainError>;
 	readonly versionTagged: (execution: Execution) => Effect.Effect<boolean, DomainError>;
 	readonly tagProblem: (execution: Execution, registries?: boolean) => Effect.Effect<string | undefined, DomainError>;
@@ -109,15 +110,15 @@ export class RefPublication extends Context.Service<RefPublication, {
 				);
 			});
 
-			const promoted = (execution: Execution): Effect.Effect<boolean, DomainError> => {
-				if (execution.operation === 'promote') return Effect.succeed(true);
+			const releaseCompleted = (execution: Execution): Effect.Effect<boolean, DomainError> => {
+				if (execution.operation === releaseOperation) return Effect.succeed(true);
 				const visited = new Set<string>();
 				const approved = (current: Execution): Effect.Effect<boolean, DomainError> =>
 					Effect.gen(function*() {
 						if (visited.has(current.id)) return false;
 						visited.add(current.id);
 						if (current.state !== 'succeeded' || current.sourceSha !== execution.sourceSha) return false;
-						if (current.operation === 'promote') return true;
+						if (current.operation === releaseOperation) return true;
 						for (const dependency of current.dependencies) {
 							if (yield* approved(yield* executions.get(dependency))) return true;
 						}
@@ -187,7 +188,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 				const version = release.version;
 				if (!version || !conflicts.length || conflicts.some(tag => tag.name !== primary)) return [];
 				const releases = (yield* executions.all).filter(execution =>
-					execution.operation === 'promote' && execution.stream === release.stream
+					execution.operation === releaseOperation && execution.stream === release.stream
 					&& execution.version === version && execution.id !== release.id
 				);
 				const shipped = releases.some(execution =>
@@ -203,7 +204,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 						!retiredStates.includes(execution.state)
 						|| (restartId !== undefined && restartId !== execution.id)
 						|| !execution.publications.some(publication =>
-							publication.id === 'refs:promote' && publication.outcome === 'succeeded'
+							publication.id === `refs:${releaseOperation}` && publication.outcome === 'succeeded'
 						)
 					) continue;
 					for (const change of execution.refPlan?.changes ?? []) {
@@ -382,8 +383,8 @@ export class RefPublication extends Context.Service<RefPublication, {
 				const policy = workflow.refs;
 				const version = execution.version;
 				if (!policy || !version) return yield* precondition('No configured ref operation');
-				if (!(yield* promoted(execution))) {
-					return yield* precondition('Ref operation requires completed promotion');
+				if (!(yield* releaseCompleted(execution))) {
+					return yield* precondition('Ref operation requires a completed release');
 				}
 				const gateway = automation.gateway;
 				const complete = request._tag === 'CompleteRefs';
@@ -557,7 +558,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 			return RefPublication.of({
 				refs: publishRefs,
 				distributionProblem,
-				promoted,
+				releaseCompleted,
 				modulePrefixes,
 				versionTagged: Effect.fnUntraced(function*(execution: Execution) {
 					const policy = execution.workflow?.refs;
@@ -569,7 +570,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 				tagProblem: Effect.fnUntraced(function*(execution: Execution, registries = false) {
 					const policy = execution.workflow?.refs;
 					const version = safeDecode(semVer, execution.version);
-					if (execution.operation !== 'promote' || !policy || !version.success) return undefined;
+					if (execution.operation !== releaseOperation || !policy || !version.success) return undefined;
 					const refs = yield* automation.gateway.tagRefs(execution.repository, execution.repositoryId);
 					const conflict = tagConflict(
 						policy,
@@ -614,7 +615,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 					if (!configured) return yield* precondition(`Unknown stream ${stream}`);
 					const references = configured.packageTags ?? [];
 					if (!references.length) return yield* precondition(`Stream ${stream} names no packageTags`);
-					const policy = configured.promote.workflow?.refs;
+					const policy = configured.release.workflow?.refs;
 					if (policy?.phase !== 'version') {
 						return yield* precondition(`Stream ${stream} pushes no version tag, so its packages get no tags`);
 					}
@@ -638,20 +639,20 @@ export class RefPublication extends Context.Service<RefPublication, {
 				}),
 				tagPackagesLater: Effect.fnUntraced(function*({ execution, previous }: ExecutionCommitted) {
 					if (execution.state !== 'succeeded' || previous?.state === 'succeeded') return;
-					const promotion = execution.operation === 'promote'
+					const releaseExecution = execution.operation === releaseOperation
 						? execution
 						: execution.version === undefined
 						? undefined
 						: (yield* executions.all).find(other =>
-							other.operation === 'promote' && other.state === 'succeeded' && other.stream === execution.stream
+							other.operation === releaseOperation && other.state === 'succeeded' && other.stream === execution.stream
 							&& other.version === execution.version
 						);
-					const references = promotion?.configuration.streams[promotion.stream]?.packageTags;
-					const policy = promotion?.workflow?.refs;
-					const version = promotion?.version;
-					if (!promotion || !references?.length || policy?.phase !== 'version' || !version) return;
-					const release: Release = { version, commit: promotion.sourceSha };
-					const frozen = promotion.packageTags;
+					const references = releaseExecution?.configuration.streams[releaseExecution.stream]?.packageTags;
+					const policy = releaseExecution?.workflow?.refs;
+					const version = releaseExecution?.version;
+					if (!releaseExecution || !references?.length || policy?.phase !== 'version' || !version) return;
+					const release: Release = { version, commit: releaseExecution.sourceSha };
+					const frozen = releaseExecution.packageTags;
 					const work = Effect.gen(function*() {
 						const packages = frozen
 							? []

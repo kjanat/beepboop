@@ -591,7 +591,7 @@ function scriptEffects(
 				seen.add(key);
 				const text = segment(source, match[2], true, path);
 				effects.push(...commandEffects(text, path, here));
-				if (/^(?:promote|aliases?|float|latest)$/.test(match[2] ?? '')) {
+				if (/^(?:aliases?|float|latest)$/.test(match[2] ?? '')) {
 					effects.push({ kind: 'alias', source: path, text: match[0].trim() });
 				}
 				runs.push(text);
@@ -745,7 +745,7 @@ function stepEffects(
 ): { effects: StepEffect[]; runs: string[]; action?: string } {
 	const uses = typeof step.uses === 'string' ? step.uses : undefined;
 	const label = typeof step.name === 'string' ? step.name : '';
-	const alias: StepEffect[] = /\b(?:promote|move|update|floating)\b.*\b(?:alias(?:es)?|tags?|latest)\b/i.test(label)
+	const alias: StepEffect[] = /\b(?:move|update|floating)\b.*\b(?:alias(?:es)?|tags?|latest)\b/i.test(label)
 		? [{ kind: 'alias', source, text: label }]
 		: [];
 	if (

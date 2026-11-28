@@ -313,7 +313,7 @@ async function independent() {
 					packages: ['pkg:npm/widget', 'pkg:npm/gadget'],
 					mustPublish: ['pkg:npm/widget', 'pkg:npm/gadget'],
 					prepare: { strategy: 'managed' },
-					promote: {
+					release: {
 						publishWhen: 'approved-in-beepboop',
 						workflow: { file: 'publish.yml', publications: ['pkg:npm/widget', 'pkg:npm/gadget'] },
 					},
@@ -329,7 +329,7 @@ async function independent() {
 			groups: [
 				{ id: 'widget', packages: ['pkg:npm/widget'], version: { bump: 'minor' } },
 			],
-			operations: [{ id: 'promote', group: 'widget' }],
+			operations: [{ id: 'release', group: 'widget' }],
 		}),
 	);
 	return { repository, plan };
@@ -377,7 +377,7 @@ test('releases plan-set, prepare-set and start show the release set with spinner
 	expect(started.stdout.join('')).toMatch(
 		/^id {12}repository {3}stream {2}operation {2}version {2}commit {8}state\s*\n/,
 	);
-	expect(started.stdout.join('')).toContain('octo/widget  main    promote    1.1.0    ');
+	expect(started.stdout.join('')).toContain('octo/widget  main    release    1.1.0    ');
 	const json = await runCli([...startArgs, '--json']);
 	expect(Array.isArray(JSON.parse(json.stdout.join('')))).toBe(true);
 	const piped = await app.execute(startArgs, { isTTY: false, env: {} });

@@ -46,7 +46,7 @@ async function repository() {
 					packageTags: ['pkg:npm/widget'],
 					required: ['pkg:npm/widget'],
 					prepare: { strategy: 'managed' },
-					promote: {
+					release: {
 						approval: 'required',
 						workflow: {
 							file: 'publish.yml',

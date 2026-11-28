@@ -17,7 +17,7 @@ export type PreparationRoute =
 export type ReleaseCapability =
 	| { kind: 'observes'; triggers: ReleaseTrigger[] }
 	| { kind: 'unpublishable' }
-	| { kind: 'promotes'; workflow: string; automatic: boolean }
+	| { kind: 'releases'; workflow: string; automatic: boolean }
 	| { kind: 'prepares'; through: PreparationRoute; lands: 'pr' | 'commit' };
 function dispatched(binding: WorkflowBinding | undefined): binding is WorkflowBinding {
 	return binding !== undefined && binding.mode !== 'observe';
@@ -27,8 +27,8 @@ export function releaseCapability(stream: Stream, inventory: Inventory): Release
 	const bindings = [...operations(stream)];
 	const publisher = stream.versioning === 'independent'
 		? bindings.find(([name, binding]) => name !== 'prepare' && dispatched(binding))?.[1]
-		: dispatched(stream.promote.workflow)
-		? stream.promote.workflow
+		: dispatched(stream.release.workflow)
+		? stream.release.workflow
 		: undefined;
 	if (!publisher) {
 		const triggers = bindings.flatMap(([, binding]) =>
@@ -51,9 +51,9 @@ export function releaseCapability(stream: Stream, inventory: Inventory): Release
 	}
 	if (workflow) return { kind: 'prepares', through: { kind: 'workflow', file: workflow.file }, lands };
 	return {
-		kind: 'promotes',
+		kind: 'releases',
 		workflow: publisher.file,
-		automatic: stream.promote.approval === 'push' || streamStartRefusal('', stream) === undefined,
+		automatic: stream.release.approval === 'push' || streamStartRefusal('', stream) === undefined,
 	};
 }
 
@@ -71,8 +71,8 @@ export function startRefusal(
 
 export function releasable(
 	capability: ReleaseCapability,
-): capability is Extract<ReleaseCapability, { kind: 'promotes' | 'prepares' }> {
-	return capability.kind === 'promotes' || capability.kind === 'prepares';
+): capability is Extract<ReleaseCapability, { kind: 'releases' | 'prepares' }> {
+	return capability.kind === 'releases' || capability.kind === 'prepares';
 }
 
 function listed(items: readonly string[], last: string): string {
@@ -91,7 +91,7 @@ export function capabilitySentence(name: string, capability: ReleaseCapability):
 			} starts a release of ${name}. Beepboop records the run and starts no release of this stream.`;
 		case 'unpublishable':
 			return `${name} has no publishing workflow. Add one in release setup.`;
-		case 'promotes':
+		case 'releases':
 			return `${name} has no version to write. The release goes straight to ${capability.workflow} and ${
 				capability.automatic
 					? 'publishes once the commit is verified and its checks pass'

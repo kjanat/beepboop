@@ -40,7 +40,7 @@ function releases(repository: RepositoryRecord) {
 		? Object.entries(streamReleases(repository))
 		: [];
 }
-const starts = (kind: string) => kind === 'promotes' || kind === 'prepares';
+const starts = (kind: string) => kind === 'releases' || kind === 'prepares';
 function starting(repository: RepositoryRecord) {
 	return releases(repository).find(([, release]) => starts(release.kind))?.[0];
 }

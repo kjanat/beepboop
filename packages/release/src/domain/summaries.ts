@@ -1,6 +1,7 @@
 import { operations } from '@/domain/configuration/schema.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { matchesPackage, matchesPublication, selectorKey } from '@/domain/package-identity.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { compare, semVer } from '@/domain/version.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import type { Publication } from '@/publication/publication.ts';
@@ -14,7 +15,7 @@ export const activeStates: readonly ExecutionState[] = ['running', 'ready', 'dis
 
 export function publishesAutomatically(run: Execution): boolean {
 	return run.state === 'awaiting-approval'
-		&& (run.configuration.streams[run.stream]?.promote.approval === 'push' || run.approvedBy !== undefined);
+		&& (run.configuration.streams[run.stream]?.release.approval === 'push' || run.approvedBy !== undefined);
 }
 
 export const checksPolicy = 'Releases once the commit is verified and its checks pass';
@@ -66,7 +67,7 @@ function publishing(
 	const stream = latest.configuration.streams[latest.stream];
 	if (
 		!stream || latest.state !== 'succeeded'
-		|| !runs.some(run => run.operation === 'promote' && run.state === 'succeeded')
+		|| !runs.some(run => run.operation === releaseOperation && run.state === 'succeeded')
 		|| publications.some(publication => publication.outcome === 'failed' || publication.outcome === 'uncertain')
 	) return false;
 	const owners = [...operations(stream)].filter(([operation]) =>

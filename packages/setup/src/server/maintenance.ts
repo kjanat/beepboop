@@ -312,7 +312,7 @@ export function setupMissing(raw: unknown, saved: SetupChoices): boolean {
 		|| saved.streams.some(stream => {
 			const current = object(streams[stream.name]);
 			return lacking(object(current.prepare).workflow, stream.prepare?.file)
-				|| lacking(object(current.promote).workflow, stream.promote?.file)
+				|| lacking(object(current.release).workflow, stream.release?.file)
 				|| (stream.operations ?? []).some(entry => lacking(object(current.workflows)[entry.name], entry.file));
 		});
 }

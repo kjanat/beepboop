@@ -24,13 +24,13 @@ test('an opted-in backfill dispatches current workflow code for a published hist
 	const current = world.github.push(repository, {
 		'package.json': JSON.stringify({ private: true, workspaces: ['packages/*'] }),
 		'packages/widget/package.json': npmManifest('widget', '1.1.0'),
-		'.github/workflows/backfill.yml': publishWorkflow.replace('operation: promote', 'operation: backfill'),
+		'.github/workflows/backfill.yml': publishWorkflow.replace('operation: release', 'operation: backfill'),
 		'.github/beepboop.json': JSON.stringify({
 			managers: ['npm', 'workflow'],
 			streams: {
 				main: {
 					packages: ['pkg:npm/widget'],
-					promote: { workflow: { file: 'publish.yml' } },
+					release: { workflow: { file: 'publish.yml' } },
 					workflows: {
 						backfill: { ...backfill, backfill: true },
 						recovery: { ...backfill, backfill: true },
@@ -48,8 +48,8 @@ test('an opted-in backfill dispatches current workflow code for a published hist
 		const ready = yield* requireReady(yield* service.catalog.refresh(repository.name, repository.id));
 		const execution = yield* createExecution(ready, {
 			stream: 'main',
-			operation: 'promote',
-			eventId: 'promotion',
+			operation: 'release',
+			eventId: 'releaseExecution',
 			sourceSha: commit,
 			version: '1.0.0',
 		});

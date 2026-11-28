@@ -142,7 +142,7 @@ test('large begin contexts travel through a file and the packed prepare process 
 test('publishing a GitHub release succeeds when later release and tag reads are unavailable', async () => {
 	let published = false;
 	const confirmations: string[] = [];
-	const { promotionId, refsCompletion } = await packedRelease(
+	const { releaseExecutionId, refsCompletion } = await packedRelease(
 		world,
 		async () => {
 			world.network.serve('api.github.com', async request => {
@@ -159,8 +159,8 @@ test('publishing a GitHub release succeeds when later release and tag reads are 
 		undefined,
 		true,
 	);
-	const result = await only(bearer(world, await world.cliSession()), 'promote');
-	expect(result.id).toBe(promotionId);
+	const result = await only(bearer(world, await world.cliSession()), 'release');
+	expect(result.id).toBe(releaseExecutionId);
 	expect(result.state).toBe('succeeded');
 	expect(published).toBe(true);
 	expect(confirmations).toEqual([]);
@@ -170,7 +170,7 @@ test('publishing a GitHub release succeeds when later release and tag reads are 
 for (const outcome of [429, 422, 'reset', 204] as const) {
 	test(`dispatch recovery distinguishes ${outcome} from an accepted write`, async () => {
 		const { discoveredWidget } = await import('@root/test/support/client.ts');
-		const { prepareRelease, approvePromotion } = await import('@root/test/support/releases.ts');
+		const { prepareRelease, approveRelease } = await import('@root/test/support/releases.ts');
 		const { passChecks } = await import('@root/test/support/repositories.ts');
 		const session = await world.cliSession();
 		const repository = await discoveredWidget(world, session);
@@ -196,16 +196,16 @@ for (const outcome of [429, 422, 'reset', 204] as const) {
 			}
 			return world.github.handle(request);
 		});
-		await approvePromotion(api, merged.sha);
+		await approveRelease(api, merged.sha);
 		await world.wait(16_000);
 		expect(requests).toBe(1);
-		const first = await only(api, 'promote');
+		const first = await only(api, 'release');
 		expect(first.state).toBe(outcome === 429 ? 'ready' : outcome === 422 ? 'failed' : 'dispatching');
 		await world.wait(61_000);
 		expect(requests).toBe(1);
 		await world.wait(121_000);
 		expect(requests).toBe(outcome === 429 ? 2 : 1);
-		expect((await only(api, 'promote')).state).toBe(
+		expect((await only(api, 'release')).state).toBe(
 			outcome === 429 ? 'running' : outcome === 422 ? 'failed' : 'uncertain',
 		);
 	});
@@ -288,7 +288,7 @@ test('an automatic WinGet submission that fails to plan leaves an audit entry', 
 		defaultBranch: repository.defaultBranch,
 		sha: world.github.head(repository),
 		configuration: decodeSync(configurationSchema, {
-			streams: { main: { promote: { workflow: { file: 'publish.yml' } } } },
+			streams: { main: { release: { workflow: { file: 'publish.yml' } } } },
 			winget: { config: 'winget.json', automatic: true },
 		}),
 		presetShas: {},

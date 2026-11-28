@@ -3,6 +3,7 @@ import { managerSpec } from '@/domain/catalog.ts';
 import { matchesPublication } from '@/domain/package-identity.ts';
 import { packageLabel } from '@/domain/package-label';
 import { rerunnable, stoppedByGates } from '@/domain/release-gates.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { startLabels } from '@/domain/release-start.ts';
 import { versionPrMergeSentences } from '@/domain/setup-terms.ts';
 import { defaultTagPolicy, semVer, tagFor } from '@/domain/version.ts';
@@ -56,7 +57,7 @@ function releaseLink(run: Execution): { tag: string; href: string } | undefined 
 		?? run.publications.find(publication =>
 			publication.manager === 'github-release' && publication.outcome === 'succeeded'
 		)?.version
-		?? (parsed.success && (run.workflow?.refs || run.operation === 'promote')
+		?? (parsed.success && (run.workflow?.refs || run.operation === releaseOperation)
 			? tagFor(run.workflow?.refs ?? defaultTagPolicy, parsed.data)
 			: undefined);
 	return tag ? { tag, href: githubHref(run.repository, 'releases', 'tag', tag) } : undefined;
@@ -107,7 +108,7 @@ export function runCard(run: Execution, now: number) {
 		release: releaseLink(run),
 		retryable: Boolean(run.workflow) && retiredStates.includes(run.state)
 			&& !(run.operation === 'prepare' && !run.plan && !run.managed),
-		checksStop: run.operation === 'promote' && stoppedByGates(run.reason)
+		checksStop: run.operation === releaseOperation && stoppedByGates(run.reason)
 			&& (run.state === 'awaiting-approval'
 				|| (run.state === 'failed' && run.attempts === 0 && run.approvedAt === undefined)),
 		rerunnable: rerunnable(run.reason),

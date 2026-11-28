@@ -36,7 +36,7 @@ function execution(id: string, fields: Partial<Execution> = {}): Execution {
 						versioning: 'workspace',
 						concurrency: 'queue',
 						prepare: { version: 'manual' },
-						promote: { approval: 'required' },
+						release: { approval: 'required' },
 						workflows: {},
 						credentials: [],
 						channels: { stable: 'latest', prerelease: 'next' },

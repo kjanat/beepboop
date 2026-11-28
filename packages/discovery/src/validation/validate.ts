@@ -5,6 +5,7 @@ import { operations as operationsOf } from '@/domain/configuration/schema.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, parseReleaseIdentity, publishablePackages } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { tagPrefix } from '@/domain/version-tags.ts';
 import type { Diagnostic, DiagnosticSubject } from '@/kernel/errors/diagnostics.ts';
 
@@ -25,7 +26,7 @@ function releaseDispatches(stream: Stream): Set<string> {
 		for (const dependency of binding.needs ?? []) visit(dependency);
 	};
 	visit('prepare');
-	visit('promote');
+	visit(releaseOperation);
 	for (const [name, binding] of operations) if (binding.each === 'package') visit(name);
 	return dispatched;
 }
@@ -137,7 +138,7 @@ export function validateAgainst(
 				);
 			}
 		}
-		if (stream.packageTags?.length && stream.promote.workflow?.refs?.phase !== 'version') {
+		if (stream.packageTags?.length && stream.release.workflow?.refs?.phase !== 'version') {
 			report(
 				'warning',
 				'package-tag',

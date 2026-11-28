@@ -17,7 +17,7 @@ const run: Target = {
 	repository: 'kjanat/git-remote-refs',
 	version: '0.1.1',
 	configuration: decodeSync(configurationSchema, JSON.parse(widgetConfiguration())),
-	operation: 'promote',
+	operation: 'release',
 	stream: 'main',
 	publications: [],
 };
@@ -53,7 +53,7 @@ test('the selected publication owns the environment link even when the workflow 
 	});
 });
 
-test('unknown and multiple destinations do not accidentally promote the first link to the environment URL', () => {
+test('unknown and multiple destinations do not accidentally release the first link to the environment URL', () => {
 	for (const id of [go, 'workflow:smoke']) {
 		expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, publications: [crate, id] } })).toEqual({
 			publicationUrls: { [crate]: crateUrl, ...(id === go ? { [go]: goUrl } : {}) },
@@ -72,11 +72,11 @@ test('tag prefixes including the empty prefix use the frozen execution policy', 
 		const github = `https://github.com/kjanat/git-remote-refs/releases/tag/${prefix}0.1.1`;
 		const tag = `https://github.com/kjanat/git-remote-refs/tree/${prefix}0.1.1`;
 		expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, refs, publications: [release] } })).toEqual({
-			publicationUrls: { [release]: github, 'refs:promote': tag },
+			publicationUrls: { [release]: github, 'refs:release': tag },
 			publicationUrl: github,
 		});
 		expect(plannedPublicationUrls({ ...run, workflow: { ...workflow, refs } })).toEqual({
-			publicationUrls: { 'refs:promote': tag },
+			publicationUrls: { 'refs:release': tag },
 			publicationUrl: tag,
 		});
 	}
@@ -137,7 +137,7 @@ test('a per-package execution only selects its assigned package from a broad bin
 });
 
 test('an explicitly selected ref uses the same alias as the workflow for a release with build metadata', () => {
-	const id = 'refs:promote';
+	const id = 'refs:release';
 	const refs = { ...policy, phase: 'aliases' as const, aliases: ['minor' as const], prefix: 'cli/v' };
 	const execution = { ...run, version: '2.10.0+ci.9', workflow: { ...workflow, refs, publications: [id] } };
 	const url = 'https://github.com/kjanat/git-remote-refs/tree/cli/v2.10';

@@ -156,8 +156,8 @@ test('interactive adoption gives a release group added after the proposal its ow
 	});
 	expect([result.exitCode, result.stderr.join('')]).toEqual([0, '']);
 	const streams = JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding')!).streams;
-	expect(streams.main.promote.workflow.refs.prefix).toBe('v');
-	expect(streams.beta.promote.workflow.refs.prefix).toBe('beta-v');
+	expect(streams.main.release.workflow.refs.prefix).toBe('v');
+	expect(streams.beta.release.workflow.refs.prefix).toBe('beta-v');
 });
 
 test('interactive distribution adoption preserves reviewed assets and new commands in an integrated job', async () => {
@@ -173,7 +173,7 @@ test('interactive distribution adoption preserves reviewed assets and new comman
 					packages: [],
 					versioning: 'none',
 					versionSource: { kind: 'tags', prefix: 'v' },
-					promote: {
+					release: {
 						workflow: {
 							file: 'publish.yml',
 							setup: { job: 'publish', commands: '', tagPrefix: 'v' },
@@ -184,7 +184,7 @@ test('interactive distribution adoption preserves reviewed assets and new comman
 						aliases: {
 							file: 'action-aliases.yml',
 							ref: 'main',
-							needs: ['promote'],
+							needs: ['release'],
 							publications: [],
 							refs: { phase: 'aliases', aliases: ['major', 'minor'] },
 						},
@@ -215,8 +215,8 @@ test('interactive distribution adoption preserves reviewed assets and new comman
 	const prompt = session.prompts.find(prompt => prompt.message.startsWith('Distribution files,'));
 	expect(prompt?.kind).toBe('input');
 	const config = JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/setup-update')!);
-	expect(config.streams.main.promote.workflow.refs.distribution.files).toEqual(files);
-	expect(config.streams.main.promote.workflow.setup.commands).toContain('bun run build');
+	expect(config.streams.main.release.workflow.refs.distribution.files).toEqual(files);
+	expect(config.streams.main.release.workflow.setup.commands).toContain('bun run build');
 });
 
 test('adopt enrolls a repository, reviews generated files and only opens a PR after confirmation', async () => {
@@ -294,16 +294,16 @@ test('Cargo adoption generates one workflow and advanced renaming keeps the shar
 	expect(source).toContain('uses: kjanat/beepboop/actions/publish@v1');
 	expect(source).toContain(`credentials: '{"CARGO_REGISTRY_TOKEN":"crates-io"}'`);
 	expect(source).toContain("inputs.beepboop_operation == 'prepare'");
-	expect(source).toContain("inputs.beepboop_operation == 'publish'");
+	expect(source).toContain("inputs.beepboop_operation == 'release'");
 	expect(world.github.file(repository, '.github/workflows/release-my-crate.yml', 'automation/onboarding'))
 		.toBeUndefined();
 	const binding = mutableStruct({ workflow: mutableStruct({ file: Schema.String }) });
 	const config = decodeSync(
-		mutableStruct({ streams: mutableStruct({ main: mutableStruct({ prepare: binding, promote: binding }) }) }),
+		mutableStruct({ streams: mutableStruct({ main: mutableStruct({ prepare: binding, release: binding }) }) }),
 		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
 	);
 	expect(config.streams.main.prepare.workflow.file).toBe('my-release.yml');
-	expect(config.streams.main.promote.workflow.file).toBe('my-release.yml');
+	expect(config.streams.main.release.workflow.file).toBe('my-release.yml');
 	const refreshed = await run(['adopt', repository.name], [false, 'new', '', 'same', '', false, true]);
 	expect(refreshed.exitCode).toBe(0);
 	expect(repository.pulls).toHaveLength(1);
@@ -453,7 +453,7 @@ test('scripted adoption previews choices and applies only the saved review, refu
 				packages: ['pkg:npm/widget'],
 				required: ['pkg:npm/widget'],
 				versioning: 'workspace',
-				promote: { file: 'release.yml', commands: 'npm publish' },
+				release: { file: 'release.yml', commands: 'npm publish' },
 			}],
 		}),
 	);
@@ -510,7 +510,7 @@ const bindingsChoices = {
 		required: ['pkg:cargo/lint-core', 'pkg:cargo/lint'],
 		versioning: 'workspace',
 		observe: [{
-			name: 'release',
+			name: 'observe-release',
 			file: 'release.yml',
 			ref: 'refs/tags/lint-v*',
 			publications: ['pkg:npm/%40octo/lint'],
@@ -522,7 +522,7 @@ const bindingsChoices = {
 			commands: 'cargo update --workspace\ncargo test --workspace --locked',
 			publicationSteps: {},
 		},
-		promote: {
+		release: {
 			file: 'release-crates.yml',
 			job: 'publish',
 			triggers: 'review',
@@ -668,7 +668,7 @@ test('one adopt in a terminal shows the proposal, asks once and opens the setup 
 			lintSummary.slice(1).join('\n').replaceAll(' @octo/lint', ' `@octo/lint`')
 		}\n- Start a release with \`beepboop release\` in a checkout or from the dashboard.`,
 	);
-	expect(body).toContain('  - Publication: `release-lint.yml` (job `promote`), new in this PR\n');
+	expect(body).toContain('  - Publication: `release-lint.yml` (job `release`), new in this PR\n');
 	expect(body).toContain(
 		'- `prepare-release.yml`, `release-lint.yml` and `publish-crates.yml`: this PR creates them, and only Beepboop dispatches them.',
 	);
@@ -759,7 +759,7 @@ test('a closed setup PR drops its choices and a bare preview proposes afresh', a
 	if (pull) pull.state = 'closed';
 	const fresh = await bare();
 	expect(fresh?.versionFiles).toBeUndefined();
-	expect(fresh?.promote?.tagPrefix).toBe('lint-v');
+	expect(fresh?.release?.tagPrefix).toBe('lint-v');
 });
 
 test('a plan with choice fields this CLI does not know asks for an upgrade and sends nothing', async () => {
@@ -825,7 +825,7 @@ for (const scripted of [true, false]) {
 				packages: ['pkg:npm/widget'],
 				required: ['pkg:npm/widget'],
 				versioning: 'workspace',
-				promote: { file: 'release.yml', job: 'publish', commands: 'npm publish' },
+				release: { file: 'release.yml', job: 'publish', commands: 'npm publish' },
 			}],
 		});
 		const before = structuredClone(repository.pulls);
@@ -852,7 +852,7 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 			packages: ['pkg:cargo/crate-a'],
 			required: ['pkg:cargo/crate-a'],
 			versioning: 'workspace',
-			promote: { file: 'release.yml', job: 'publish', commands: "cargo publish --package 'crate-a' --locked" },
+			release: { file: 'release.yml', job: 'publish', commands: "cargo publish --package 'crate-a' --locked" },
 		}],
 	});
 	const unchanged = await run(
@@ -873,13 +873,13 @@ test('saved Cargo commands are kept for the same packages and regenerated after 
 		mutableStruct({
 			streams: mutableStruct({
 				main: mutableStruct({
-					promote: mutableStruct({ workflow: mutableStruct({ publications: mutableArray(Schema.String) }) }),
+					release: mutableStruct({ workflow: mutableStruct({ publications: mutableArray(Schema.String) }) }),
 				}),
 			}),
 		}),
 		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
 	);
-	expect(configured.streams.main.promote.workflow.publications).toEqual([
+	expect(configured.streams.main.release.workflow.publications).toEqual([
 		'pkg:cargo/crate-b',
 		'github-release:octo/crates',
 	]);
@@ -898,7 +898,7 @@ test('changing publishing-step mappings regenerates commands for the newly unmap
 			packages: ['pkg:npm/package-a', 'pkg:npm/package-b'],
 			required: ['pkg:npm/package-a', 'pkg:npm/package-b'],
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file: 'ship.yml',
 				job: 'ship',
 				commands: '(cd packages/b && npm publish --access public)',
@@ -1018,16 +1018,16 @@ test('an inferred stream gets a Beepboop release workflow that starts its existi
 						Schema.String,
 						mutableStruct({ mode: Schema.String, file: Schema.String, needs: mutableArray(Schema.String) }),
 					),
-					promote: mutableStruct({ workflow: looseStruct({ file: Schema.String }) }),
+					release: mutableStruct({ workflow: looseStruct({ file: Schema.String }) }),
 				}),
 			}),
 		}),
 		JSON.parse(world.github.file(repository, '.github/beepboop.json', 'automation/onboarding') ?? '{}'),
 	);
 	expect(Object.values(config.streams.main.workflows)).toEqual([
-		expect.objectContaining({ mode: 'observe', file: 'release.yml', needs: ['promote'] }),
+		expect.objectContaining({ mode: 'observe', file: 'release.yml', needs: ['release'] }),
 	]);
-	expect(config.streams.main.promote.workflow.file).toBe('release-main.yml');
+	expect(config.streams.main.release.workflow.file).toBe('release-main.yml');
 	expect(world.github.file(repository, '.github/workflows/release-main.yml', 'automation/onboarding')).toContain(
 		'kjanat/beepboop/actions/publish-refs@v1',
 	);
@@ -1094,7 +1094,7 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 	for (const field of ['versionSource', 'versionFiles', 'companionModules', 'needs', 'operations']) {
 		expect(messages).toContain(`main: ${field} as JSON (empty leaves it out)`);
 	}
-	expect(messages).toContain('main: promote credentials as JSON (empty leaves it out)');
+	expect(messages).toContain('main: release credentials as JSON (empty leaves it out)');
 	expect(result.stdout.join('')).toContain('tool leaves out Windows: tool depends on nix, which build only for Unix.');
 	const workflow = world.github.file(repository, '.github/workflows/release-tool.yml', 'automation/onboarding') ?? '';
 	expect(workflow).toContain('build-tool:');
@@ -1108,19 +1108,19 @@ test('interactive setup asks for each proposed binary, its targets and every adv
 			mutableStruct({
 				streams: mutableStruct({
 					main: mutableStruct({
-						promote: mutableStruct({ workflow: mutableStruct({ setup: mutableStruct({ tagPrefix: Schema.String }) }) }),
+						release: mutableStruct({ workflow: mutableStruct({ setup: mutableStruct({ tagPrefix: Schema.String }) }) }),
 					}),
 				}),
 			}),
 			configuration,
-		).streams.main.promote.workflow.setup.tagPrefix,
+		).streams.main.release.workflow.setup.tagPrefix,
 	).toBe('tool-v');
 	expect(configuration).toMatchObject({
 		streams: {
 			main: {
 				startFrom: [{ via: 'action', workflow: 'start-release.yml' }],
 				prepare: { versionPrMerge: 'merge' },
-				promote: {
+				release: {
 					workflow: {
 						setup: { binaries: { targets: ['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64'] } },
 					},

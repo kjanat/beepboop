@@ -245,8 +245,12 @@ export class AutomationCoordinator extends DurableObject<CoordinatorBindings> {
 			{},
 		);
 	}
-	promotions(stream: string, version: string): Promise<Execution[]> {
-		return this.run(ExecutionControl.use(control => control.promotions(stream, version)), 'coordinator.promotions', {});
+	releaseExecutions(stream: string, version: string): Promise<Execution[]> {
+		return this.run(
+			ExecutionControl.use(control => control.releaseExecutions(stream, version)),
+			'coordinator.releaseExecutions',
+			{},
+		);
 	}
 	reindex(repositoryId: number): Promise<number> {
 		return this.serial(ExecutionControl.use(control => control.reindex(repositoryId)), 'coordinator.reindex', {

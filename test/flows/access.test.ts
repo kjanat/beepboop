@@ -95,7 +95,7 @@ test('a suspended repository refuses releases and returns only where GitHub rest
 	const begin = await bearer(
 		world,
 		await world.runToken({ repository, runId: 9, sha: world.github.head(repository), file: 'publish.yml' }),
-	)('/api/workflow/begin', { stream: 'main', operation: 'promote' });
+	)('/api/workflow/begin', { stream: 'main', operation: 'release' });
 	expect(refusal(begin)).toEqual({ status: 403, error: 'Repository is not enrolled or has been suspended' });
 	expect(readiness(await stored(repository))).toEqual({ kind: 'suspended', since: suspendedAt });
 	expect(await badge()).toBe('warn App access unavailable');

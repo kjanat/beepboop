@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import type { Grant } from '@/credentials/grant.ts';
 import { requestGrant } from '@/credentials/grant.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -16,8 +17,8 @@ export function configuredGrant(repository: ReadyRepository, input: unknown): Ef
 		const operation = yield* field(data.operation);
 		const workflow = operation === 'prepare'
 			? stream.prepare.workflow
-			: operation === 'promote'
-			? stream.promote.workflow
+			: operation === releaseOperation
+			? stream.release.workflow
 			: stream.workflows[operation];
 		if (!workflow) return yield* precondition('Choose a configured workflow');
 		const alias = yield* field(data.alias);

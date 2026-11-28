@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       beepboop_execution_id:
-        description: Approved Beepboop promotion execution
+        description: Approved Beepboop release execution
         required: true
         type: string
       beepboop_title:
@@ -28,7 +28,7 @@ jobs:
         with:
           execution-id: ${{ inputs.beepboop_execution_id }}
           stream: cli
-          operation: promote
+          operation: release
       - name: Checkout approved source
         uses: actions/checkout@v7
         with: { ref: "${{ fromJSON(steps.release.outputs.context).sourceSha }}", persist-credentials: false }

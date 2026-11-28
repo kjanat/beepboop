@@ -10,7 +10,7 @@ import type { Selection } from '@/setup/editing/commands.ts';
 import { ledgerCommand } from '@/setup/editing/commands.ts';
 import type { SetupPlan, SetupWorkflow, TriggerHandover, Versioning } from '@/setup/types.ts';
 
-export type Role = 'prepare' | 'promote';
+export type Role = 'prepare' | 'release';
 
 export function packageCandidates(plan: SetupPlan): Selection['packages'] {
 	return plan.inventory.packages.flatMap((pkg, index) => {

@@ -56,7 +56,7 @@ export const workflowDiscoverer: DiscovererOf<'workflow'> = {
 				localActions,
 				dispatchInputs: Object.keys(object(object(object(trigger).workflow_dispatch).inputs)),
 				publication: !evidence.prepares
-					&& (evidence.publishes || evidence.reports || /\b(?:publish|release|deploy|promotion|promote)\b/i.test(
+					&& (evidence.publishes || evidence.reports || /\b(?:publish|release|deploy)\b/i.test(
 						String(workflow.name ?? path),
 					)),
 			});

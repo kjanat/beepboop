@@ -1,11 +1,12 @@
 import type { WorkflowBinding } from '@/domain/configuration/schema.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 
 export function backfillRefusal(
 	operation: string,
 	binding?: Pick<WorkflowBinding, 'backfill' | 'ref'>,
 	defaultBranch?: string,
 ): string | undefined {
-	if (!binding?.backfill || operation === 'prepare' || operation === 'promote') {
+	if (!binding?.backfill || operation === 'prepare' || operation === releaseOperation) {
 		return 'Select an operation enabled for backfills in repository configuration';
 	}
 	if (binding.ref && defaultBranch && binding.ref !== defaultBranch && binding.ref !== `refs/heads/${defaultBranch}`) {

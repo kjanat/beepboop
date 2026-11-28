@@ -19,6 +19,7 @@ import { parseReleaseIdentity } from '@/domain/package-identity.ts';
 import { presetReferencePattern } from '@/domain/preset.ts';
 import { purl } from '@/domain/purl/index.ts';
 import { refPolicyValue } from '@/domain/refs.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { releaseStart, releaseStarts, versionBump } from '@/domain/release-start.ts';
 import {
 	approvalOfPublishWhen,
@@ -95,7 +96,7 @@ export const streamValue = mutableStruct({
 		bump: Schema.optional(versionBump),
 		versionPrMerge: Schema.optional(Schema.Literals(versionPrMerges)),
 	}),
-	promote: mutableStruct({
+	release: mutableStruct({
 		approval: Schema.Literals(['required', 'merge', 'push']),
 		workflow: Schema.optional(bindingValue),
 	}),
@@ -141,7 +142,7 @@ export const configurationValue = mutableStruct({
 	subscriptions: mutableArray(subscriptionValue),
 });
 
-export const reservedOperations = ['prepare', 'promote'] as const;
+export const reservedOperations = ['prepare', releaseOperation] as const;
 export type ReservedOperation = (typeof reservedOperations)[number];
 const identifier = Schema.String.check(matchesPattern(identifierPattern));
 
@@ -328,6 +329,11 @@ function bindingSchema() {
 function streamSchema() {
 	const binding = bindingSchema();
 	const workflows = mutableRecord(identifier, binding);
+	const releaseInput = strictStruct({
+		publishWhen: Schema.optional(publishWhen).annotate({ description: publishWhenDescription }),
+		approval: Schema.optional(Schema.Literals(['required', 'merge', 'push'])).annotate({ deprecated: true }),
+		workflow: Schema.optional(binding),
+	});
 	const shape = strictStruct({
 		versionScope: Schema.optional(versionScope).annotate({ description: versionScopeDescription }),
 		versioning: Schema.optional(Schema.Literals(['workspace', 'independent', 'none'])).annotate({ deprecated: true }),
@@ -347,11 +353,7 @@ function streamSchema() {
 			bump: Schema.optional(versionBump).annotate({ deprecated: true }),
 			versionPrMerge: Schema.optional(versionPrMerge).annotate({ description: versionPrMergeDescription }),
 		}).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-		promote: strictStruct({
-			publishWhen: Schema.optional(publishWhen).annotate({ description: publishWhenDescription }),
-			approval: Schema.optional(Schema.Literals(['required', 'merge', 'push'])).annotate({ deprecated: true }),
-			workflow: Schema.optional(binding),
-		}).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+		release: releaseInput.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 		startFrom: Schema.optional(releaseStarts),
 		start: Schema.optional(releaseStarts).annotate({ deprecated: true }),
 		workflows: withValidation(workflows, (value, ctx) => {
@@ -378,38 +380,41 @@ function streamSchema() {
 			Schema.withDecodingDefault(Effect.succeed('queue')),
 		),
 	});
-	return mapped(shape, Schema.toType(streamValue), stream => ({
-		...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
-		...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
-		...(stream.packages === undefined ? {} : { packages: stream.packages }),
-		...(stream.companionModules === undefined ? {} : { companionModules: stream.companionModules }),
-		...(stream.packageTags === undefined ? {} : { packageTags: stream.packageTags }),
-		versioning: stream.versionScope ? versioningOfVersionScope[stream.versionScope] : stream.versioning ?? 'workspace',
-		concurrency: stream.concurrency,
-		prepare: {
-			...(stream.prepare.strategy === undefined ? {} : { strategy: stream.prepare.strategy }),
-			version: 'manual' as const,
-			...(stream.prepare.workflow ? { workflow: stream.prepare.workflow } : {}),
-			...(stream.prepare.versionLands
-				? { bump: bumpOfVersionLands[stream.prepare.versionLands] }
-				: stream.prepare.bump
-				? { bump: stream.prepare.bump }
-				: {}),
-			...(stream.prepare.versionPrMerge ? { versionPrMerge: stream.prepare.versionPrMerge } : {}),
-		},
-		promote: {
-			approval: stream.promote.publishWhen
-				? approvalOfPublishWhen[stream.promote.publishWhen]
-				: stream.promote.approval ?? 'required',
-			...(stream.promote.workflow ? { workflow: stream.promote.workflow } : {}),
-		},
-		...(stream.startFrom ?? stream.start ? { start: stream.startFrom ?? stream.start } : {}),
-		workflows: stream.workflows,
-		required: stream.mustPublish ?? stream.required ?? [],
-		...(stream.needs === undefined ? {} : { needs: stream.needs }),
-		credentials: stream.credentials,
-		channels: { stable: stream.channels.stable, prerelease: stream.channels.prerelease },
-	}), value => value).annotate({ identifier: 'stream' });
+	return mapped(shape, Schema.toType(streamValue), stream => {
+		const release = stream.release;
+		return {
+			...(stream.versionFiles === undefined ? {} : { versionFiles: stream.versionFiles }),
+			...(stream.versionSource ? { versionSource: stream.versionSource } : {}),
+			...(stream.packages === undefined ? {} : { packages: stream.packages }),
+			...(stream.companionModules === undefined ? {} : { companionModules: stream.companionModules }),
+			...(stream.packageTags === undefined ? {} : { packageTags: stream.packageTags }),
+			versioning: stream.versionScope
+				? versioningOfVersionScope[stream.versionScope]
+				: stream.versioning ?? 'workspace',
+			concurrency: stream.concurrency,
+			prepare: {
+				...(stream.prepare.strategy === undefined ? {} : { strategy: stream.prepare.strategy }),
+				version: 'manual' as const,
+				...(stream.prepare.workflow ? { workflow: stream.prepare.workflow } : {}),
+				...(stream.prepare.versionLands
+					? { bump: bumpOfVersionLands[stream.prepare.versionLands] }
+					: stream.prepare.bump
+					? { bump: stream.prepare.bump }
+					: {}),
+				...(stream.prepare.versionPrMerge ? { versionPrMerge: stream.prepare.versionPrMerge } : {}),
+			},
+			release: {
+				approval: release.publishWhen ? approvalOfPublishWhen[release.publishWhen] : release.approval ?? 'required',
+				...(release.workflow ? { workflow: release.workflow } : {}),
+			},
+			...(stream.startFrom ?? stream.start ? { start: stream.startFrom ?? stream.start } : {}),
+			workflows: stream.workflows,
+			required: stream.mustPublish ?? stream.required ?? [],
+			...(stream.needs === undefined ? {} : { needs: stream.needs }),
+			credentials: stream.credentials,
+			channels: { stable: stream.channels.stable, prerelease: stream.channels.prerelease },
+		};
+	}, value => value).annotate({ identifier: 'stream' });
 }
 
 const subscriptionCommon = { id: identifier, source: nonempty, stream: nonempty, operation: nonempty };
@@ -474,7 +479,7 @@ export function operations(stream: Stream): ReadonlyMap<string, WorkflowBinding>
 	const result = new Map<string, WorkflowBinding>(Object.entries(stream.workflows));
 	for (const name of reservedOperations) result.delete(name);
 	if (stream.prepare.workflow) result.set('prepare', stream.prepare.workflow);
-	if (stream.promote.workflow) result.set('promote', stream.promote.workflow);
+	if (stream.release.workflow) result.set(releaseOperation, stream.release.workflow);
 	return result;
 }
 
@@ -501,7 +506,7 @@ function graph(stream: Stream, path: (string | number)[], ctx: ValidationContext
 	);
 	if (cyclic) return;
 	const approved = (name: string): boolean =>
-		name === 'promote' || (operationsOf.get(name)?.needs ?? []).some(approved);
+		name === releaseOperation || (operationsOf.get(name)?.needs ?? []).some(approved);
 	for (const [name, operation] of operationsOf) {
 		for (const needed of operation.needs ?? []) {
 			if (operationsOf.get(needed)?.backfill) {
@@ -531,7 +536,7 @@ function graph(stream: Stream, path: (string | number)[], ctx: ValidationContext
 			}
 		}
 		if (operation.refs && !approved(name)) {
-			issue(ctx, 'unknown-reference', 'Ref publication must run after the publishing workflow (promote)', [
+			issue(ctx, 'unknown-reference', 'Ref publication must run after the release workflow', [
 				...where(name),
 				'refs',
 			]);

@@ -48,7 +48,7 @@ const streamHelp: Record<StreamField, string> = {
 	actionRelease: '',
 	observe: '',
 	prepare: '',
-	promote: '',
+	release: '',
 	versionSource: 'Read versions from tags, for example {"kind": "tags", "prefix": "v"}.',
 	versionFiles: 'Other files that carry the version, each with a path, a format and a key.',
 	companionModules: companionModulesSentence,
@@ -224,7 +224,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 				packages: chosen.packages.filter(pkg => !observed.some(entry => entry.publications.includes(pkg.id))),
 			};
 		};
-		const publishing = workflow(body, 'promote', plan, published, value.promote);
+		const publishing = workflow(body, 'release', plan, published, value.release);
 		const preparing = workflow(body, 'prepare', plan, selection, value.prepare, publishing);
 		action?.addEventListener('change', () => {
 			publishing.refresh();
@@ -242,7 +242,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 			preparing.refresh();
 		});
 		const kept = (role: string | undefined) =>
-			!observing.checked || role === 'prepare' && !!value.prepare || role === 'promote' && !!value.promote;
+			!observing.checked || role === 'prepare' && !!value.prepare || role === 'release' && !!value.release;
 		const pickers = () => [...body.querySelectorAll<HTMLFieldSetElement>('fieldset[data-workflow-role]')];
 		const showPickers = () => {
 			for (const picker of pickers()) {
@@ -312,7 +312,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 						),
 					}));
 				const observed = observing.checked && value.observe?.length ? value.observe : undefined;
-				if (observed && !value.promote) {
+				if (observed && !value.release) {
 					const unchecked = observed.every(entry => entry.publications.length === 0);
 					const unobserved = packages.filter(id =>
 						!observed.some(entry => entry.publications.includes(id)) && !(unchecked && value.packages.includes(id))
@@ -333,7 +333,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 					return yield* Result.fail(new Refused({ message: 'Select at least one package to release.' }));
 				}
 				const prepare = kept('prepare') ? yield* preparing.read() : undefined;
-				const promote = kept('promote') ? yield* publishing.read() : undefined;
+				const releaseWorkflow = kept('release') ? yield* publishing.read() : undefined;
 				return yield* checked({
 					name: name.value,
 					packages,
@@ -345,7 +345,7 @@ function editor(form: HTMLFormElement, plan: SetupPlan) {
 						: packages,
 					versioning: policy,
 					...(prepare ? { prepare } : {}),
-					...(promote ? { promote } : {}),
+					...(releaseWorkflow ? { release: releaseWorkflow } : {}),
 					...(observed ? { observe: watched(observed) } : {}),
 				});
 			})

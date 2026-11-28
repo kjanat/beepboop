@@ -49,7 +49,7 @@ function planned(
 		packages: [],
 		requiresPreparation,
 		diagnostics: requiresPreparation
-			? ['Preparation workflow must regenerate lockfiles before promotion']
+			? ['Preparation workflow must regenerate lockfiles before the release']
 			: edits.length
 			? []
 			: [alreadyPrepared(version, snapshot.sha)],
@@ -59,5 +59,5 @@ function planned(
 export function alreadyPrepared(version: string, commit: string): string {
 	return `Commit ${
 		commit.slice(0, 12)
-	} already carries ${version}. Preparing creates its promotion without a pull request.`;
+	} already carries ${version}. Preparing creates its release without a pull request.`;
 }

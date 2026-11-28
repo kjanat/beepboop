@@ -41,7 +41,7 @@ export const streamFlagKinds = {
 	observe: 'json',
 	needs: 'json',
 	prepare: 'workflow',
-	promote: 'workflow',
+	release: 'workflow',
 	operations: 'json',
 } as const satisfies Record<StreamField, FlagKind>;
 export const workflowFlagKinds = {
@@ -66,8 +66,8 @@ const fixedNames: Readonly<Record<string, readonly string[]>> = {
 	bump: ['version-lands', 'bump'],
 	approval: ['publish-when', 'approval'],
 	'prepare.triggers': ['prepare-existing-triggers', 'prepare-triggers'],
-	'promote.triggers': ['promote-existing-triggers', 'promote-triggers'],
-	'promote.binaries': ['binary', 'target'],
+	'release.triggers': ['release-existing-triggers'],
+	'release.binaries': ['binary', 'target'],
 };
 const deprecatedNames = new Set([
 	'required',
@@ -76,7 +76,6 @@ const deprecatedNames = new Set([
 	'bump',
 	'approval',
 	'prepare-triggers',
-	'promote-triggers',
 ]);
 const currentValues: Readonly<Record<string, Readonly<Record<string, string>>>> = {
 	versioning: versioningOfVersionScope,
@@ -88,7 +87,7 @@ function internal(field: string, value: unknown): unknown {
 	const values = currentValues[field];
 	return typeof value === 'string' && values && Object.hasOwn(values, value) ? values[value] : value;
 }
-const roles = ['prepare', 'promote'] as const;
+const roles = ['prepare', 'release'] as const;
 
 export interface SetupFlagPath {
 	path: string;
@@ -110,7 +109,7 @@ export const setupFlagPaths: readonly SetupFlagPath[] = [
 		const kind = streamFlagKinds[field];
 		if (kind !== 'workflow') return [named(field, kind)];
 		return workflowFields.map(entry =>
-			named(`${field}.${entry}`, field === 'promote' && entry === 'binaries' ? 'binaries' : workflowFlagKinds[entry])
+			named(`${field}.${entry}`, field === 'release' && entry === 'binaries' ? 'binaries' : workflowFlagKinds[entry])
 		);
 	}),
 ];
@@ -174,7 +173,7 @@ function packageIds(plan: SetupPlan, flag: string, names: readonly string[]): Ef
 
 function flagOf(path: readonly PropertyKey[]): string {
 	const [field, entry] = path.map(String);
-	const nested = entry && (field === 'prepare' || field === 'promote') ? `${field}.${entry}` : field ?? '';
+	const nested = entry && (field === 'prepare' || field === 'release') ? `${field}.${entry}` : field ?? '';
 	const found = setupFlagPaths.find(candidate => candidate.path === nested);
 	return found
 		? found.names.filter(name => !deprecatedNames.has(name)).map(name => `--${name}`).join(' and ')
@@ -189,7 +188,7 @@ function binaries(
 	targets: readonly string[] | undefined,
 ): Effect.Effect<{ builds: BinaryBuild[]; targets: string[] }, CLIError> {
 	return Effect.gen(function*() {
-		const existing = stream.promote?.binaries;
+		const existing = stream.release?.binaries;
 		const candidates = (plan.binaryCandidates ?? []).filter(candidate => packages.includes(candidate.package));
 		const chosen = builds
 			? yield* Effect.forEach(builds, name => {
@@ -212,14 +211,14 @@ function binaries(
 		if (!chosen) {
 			return yield* Effect.fail(failure('--target needs --binary', 'BINARY_REQUIRED'));
 		}
-		const offered = offeredBinaries(plan, packages, stream.promote);
+		const offered = offeredBinaries(plan, packages, stream.release);
 		return {
 			builds: chosen,
 			targets: targets
 				? [...targets]
 				: binaryTargetDefaults(
 					chosen.map(build => offered.find(entry => entry.build.name === build.name) ?? { build }),
-					stream.promote,
+					stream.release,
 				),
 		};
 	});
@@ -228,7 +227,7 @@ function binaries(
 function generated(
 	plan: SetupPlan,
 	stream: string,
-	role: 'prepare' | 'promote',
+	role: 'prepare' | 'release',
 	packages: readonly string[],
 	given: Record<string, unknown>,
 ): Effect.Effect<Record<string, unknown>, CLIError> {
@@ -316,7 +315,7 @@ export function applySetupFlags(
 			const entered: Record<string, unknown> = { ...current };
 			const roleEntries: Record<string, Record<string, unknown> | undefined> = {
 				prepare: current.prepare ? { ...current.prepare } : undefined,
-				promote: current.promote ? { ...current.promote } : undefined,
+				release: current.release ? { ...current.release } : undefined,
 			};
 			for (const entry of streamPaths) {
 				if (entry.kind === 'stream' || entry.kind === 'binaries') continue;
@@ -339,12 +338,12 @@ export function applySetupFlags(
 			}
 			const builds = strings('binary'), targets = strings('target');
 			if (builds || targets) {
-				if (!roleEntries.promote) {
+				if (!roleEntries.release) {
 					return yield* Effect.fail(
-						failure('--binary and --target need a publishing workflow', 'PROMOTE_REQUIRED', 'Add --promote-file'),
+						failure('--binary and --target need a release workflow', 'RELEASE_REQUIRED', 'Add --release-file'),
 					);
 				}
-				roleEntries.promote.binaries = yield* binaries(plan, current, packages, builds, targets);
+				roleEntries.release.binaries = yield* binaries(plan, current, packages, builds, targets);
 			}
 			for (const role of roles) {
 				const next = roleEntries[role];

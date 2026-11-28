@@ -272,7 +272,7 @@ function packageRows(plan: SetupPlan, ids: readonly string[], required: readonly
 	});
 }
 function targetRows(plan: SetupPlan, stream: SetupPlan['choices']['streams'][number], look: Look) {
-	const release = stream.promote?.binaries;
+	const release = stream.release?.binaries;
 	return (release?.builds ?? []).flatMap(build =>
 		release?.targets.map(target => ({
 			binary: look.pkg(build.name),

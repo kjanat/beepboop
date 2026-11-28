@@ -5,7 +5,7 @@ import { botId } from '@root/test/support/github.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { packedRelease } from '@root/test/support/packed-release.ts';
 import { loggedErrors } from '@root/test/support/process.ts';
-import { approvePromotion, prepareRelease } from '@root/test/support/releases.ts';
+import { approveRelease, prepareRelease } from '@root/test/support/releases.ts';
 import { passChecks } from '@root/test/support/repositories.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
@@ -132,7 +132,7 @@ test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () =
 	passChecks(repository, merged.sha);
 	await world.push(repository);
 	await world.wait(1_000);
-	const { promotion } = await approvePromotion(api, merged.sha);
+	const { releaseExecution } = await approveRelease(api, merged.sha);
 	await world.wait(16_000);
 	const run = repository.runs.at(-1);
 	if (!run) throw new Error('No dispatched run');
@@ -145,7 +145,7 @@ test('a Beepboop-dispatched run gets a token while D1 holds no rows', async () =
 		world,
 		'token',
 		{ repository, runId: run.id, sha: run.headSha, file: 'publish.yml', actorId: botId },
-		{ EXECUTION_ID: promotion.id, PERMISSIONS: '{"contents":"write"}' },
+		{ EXECUTION_ID: releaseExecution.id, PERMISSIONS: '{"contents":"write"}' },
 	);
 	expect(issued.outputs.token).toStartWith('ghs_');
 	expect(world.db.queries.filter(query => !query.writes)).toEqual([]);
@@ -254,7 +254,7 @@ test('a poisoned execution is quarantined while the rest of the journal advances
 
 test('packed refs complete from the journal after the execution row is gone', async () => {
 	let seen = -1;
-	const { promotionId } = await packedRelease(world, async () => {
+	const { releaseExecutionId } = await packedRelease(world, async () => {
 		await world.db.prepare('DELETE FROM executions').run();
 		seen = decodeSync(
 			mutableStruct({ n: Schema.Finite }),
@@ -264,7 +264,7 @@ test('packed refs complete from the journal after the execution row is gone', as
 	expect(seen).toBe(0);
 	const restored = decodeSync(
 		mutableStruct({ document: Schema.String }),
-		await world.db.prepare('SELECT document FROM executions WHERE id=?').bind(promotionId).first(),
+		await world.db.prepare('SELECT document FROM executions WHERE id=?').bind(releaseExecutionId).first(),
 	);
 	const publication = decodeSync(
 		mutableStruct({
@@ -272,16 +272,16 @@ test('packed refs complete from the journal after the execution row is gone', as
 		}),
 		JSON.parse(restored.document),
 	);
-	expect(publication.publications.some(entry => entry.id === 'refs:promote' && entry.outcome === 'succeeded')).toBe(
+	expect(publication.publications.some(entry => entry.id === 'refs:release' && entry.outcome === 'succeeded')).toBe(
 		true,
 	);
 }, 30_000);
 
 test('reindex preserves a quarantined unreadable execution without blocking healthy rows or later release batches', async () => {
-	const { repository, promotionId } = await packedRelease(world);
+	const { repository, releaseExecutionId } = await packedRelease(world);
 	const coordinator = world.coordinator(repository),
 		storage = world.coordinators.instance(String(repository.id)).storage;
-	const source = await coordinator.execution(promotionId);
+	const source = await coordinator.execution(releaseExecutionId);
 	if (!source) throw new Error('Missing completed execution');
 	const corrupt = { id: '000-poisoned', repositoryId: repository.id, state: 'failed', updatedAt: 1 };
 	await storage.put('execution:000-poisoned', corrupt);

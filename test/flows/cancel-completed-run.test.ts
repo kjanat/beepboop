@@ -24,7 +24,7 @@ async function fixture(state: 'running' | 'blocked' | 'verifying' | 'failed' | '
 	const source = world.github.head(repository);
 	const execution = await world.run(createExecution(ready, {
 		stream: 'main',
-		operation: 'promote',
+		operation: 'release',
 		eventId: 'cancel',
 		sourceSha: source,
 		version: '1.0.0',

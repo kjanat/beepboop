@@ -13,10 +13,10 @@ eachWorld(created => {
 	world = created;
 });
 
-async function promotion(enqueue = true, sharedPrerequisite = false) {
+async function releaseExecution(enqueue = true, sharedPrerequisite = false) {
 	const config = editableConfiguration();
 	config.streams.main.workflows = {
-		npm: { file: 'npm.yml', needs: sharedPrerequisite ? ['promote', 'build'] : ['promote'] },
+		npm: { file: 'npm.yml', needs: sharedPrerequisite ? ['release', 'build'] : ['release'] },
 		...(sharedPrerequisite ? { build: { file: 'build.yml' }, unrelated: { file: 'lint.yml' } } : {}),
 		'github-release': { file: 'release.yml', needs: sharedPrerequisite ? ['npm', 'build'] : ['npm'] },
 	};
@@ -36,7 +36,7 @@ async function promotion(enqueue = true, sharedPrerequisite = false) {
 	const execution = await world.run(
 		createExecution(ready, {
 			stream: 'main',
-			operation: 'promote',
+			operation: 'release',
 			eventId: `release:1.0.0:${stored.sha}`,
 			sourceSha: stored.sha,
 			version: '1.0.0',
@@ -75,7 +75,7 @@ async function executions(repository: Repository) {
 }
 
 test('a completed release dispatches its dependent workflow', async () => {
-	const { repository, execution } = await promotion();
+	const { repository, execution } = await releaseExecution();
 	await world.wait(20_000);
 	const child = (await executions(repository)).find(run => run.operation === 'npm');
 	if (!child) throw new Error('Expected npm execution');
@@ -97,7 +97,7 @@ test('a completed release dispatches its dependent workflow', async () => {
 });
 
 test('an old release creates its missing continuation only on targeted recovery', async () => {
-	const { repository, execution, coordinator, storage } = await promotion();
+	const { repository, execution, coordinator, storage } = await releaseExecution();
 	const initial = await executions(repository);
 	const npm = initial.find(run => run.operation === 'npm');
 	const github = initial.find(run => run.operation === 'github-release');
@@ -116,7 +116,7 @@ test('an old release creates its missing continuation only on targeted recovery'
 });
 
 test('an interrupted plan leaves no runnable operations and can be retried', async () => {
-	const { coordinator, execution, repository, storage } = await promotion(false);
+	const { coordinator, execution, repository, storage } = await releaseExecution(false);
 	const put = storage.put.bind(storage);
 	const failure = spyOn(storage, 'put').mockImplementation(async (key, value) => {
 		if (typeof key === 'string') return put(key, value);
@@ -127,13 +127,13 @@ test('an interrupted plan leaves no runnable operations and can be retried', asy
 	failure.mockRestore();
 	expect(await executions(repository)).toHaveLength(0);
 	await coordinator.enqueue(execution);
-	expect((await executions(repository)).map(run => run.operation).sort()).toEqual(['github-release', 'npm', 'promote']);
+	expect((await executions(repository)).map(run => run.operation).sort()).toEqual(['github-release', 'npm', 'release']);
 });
 
 test('a shared prerequisite is planned once and unrelated workflows stay out of the release', async () => {
-	const { repository } = await promotion(true, true);
+	const { repository } = await releaseExecution(true, true);
 	const planned = await executions(repository);
-	expect(planned.map(run => run.operation).sort()).toEqual(['build', 'github-release', 'npm', 'promote']);
+	expect(planned.map(run => run.operation).sort()).toEqual(['build', 'github-release', 'npm', 'release']);
 	const build = planned.find(run => run.operation === 'build');
 	if (!build) throw new Error('Expected shared build');
 	for (const run of planned.filter(run => ['npm', 'github-release'].includes(run.operation))) {
@@ -142,7 +142,7 @@ test('a shared prerequisite is planned once and unrelated workflows stay out of 
 });
 
 test('a held release uses workflow metadata from its frozen configuration commit', async () => {
-	const { execution, repository, coordinator } = await promotion(false);
+	const { execution, repository, coordinator } = await releaseExecution(false);
 	const stream = execution.configuration.streams.main;
 	const npm = stream?.workflows.npm;
 	if (!npm) throw new Error('Expected npm workflow');
@@ -157,8 +157,8 @@ test('a held release uses workflow metadata from its frozen configuration commit
 	expect(member?.workflow?.file).toBe(npm.file);
 });
 
-test('a new promotion supersedes pending members but recovering an older plan preserves newer members', async () => {
-	const { execution, repository, coordinator, storage, app } = await promotion(false);
+test('a new release supersedes pending members but recovering an older plan preserves newer members', async () => {
+	const { execution, repository, coordinator, storage, app } = await releaseExecution(false);
 	const stream = execution.configuration.streams.main;
 	if (!stream) throw new Error('Expected main stream');
 	stream.concurrency = 'supersede-pending';
@@ -168,7 +168,7 @@ test('a new promotion supersedes pending members but recovering an older plan pr
 	const ready = await world.run(requireReady(stored));
 	const next = await world.run(createExecution(ready, {
 		stream: 'main',
-		operation: 'promote',
+		operation: 'release',
 		sourceSha: execution.sourceSha,
 		version: '1.0.1',
 		eventId: `release:1.0.1:${execution.sourceSha}`,
@@ -176,7 +176,7 @@ test('a new promotion supersedes pending members but recovering an older plan pr
 	next.configuration = execution.configuration;
 	await coordinator.enqueue(next);
 	const runs = await executions(repository);
-	for (const member of first.filter(run => run.operation !== 'promote')) {
+	for (const member of first.filter(run => run.operation !== 'release')) {
 		expect(runs.find(run => run.id === member.id)?.state).toBe('cancelled');
 	}
 	const missing = first.find(run => run.operation === 'npm');
@@ -186,6 +186,6 @@ test('a new promotion supersedes pending members but recovering an older plan pr
 	await coordinator.recover(execution.id, 'reconcile', 'admin');
 	const recovered = await executions(repository);
 	expect(recovered.some(run => run.id === missing.id)).toBe(true);
-	expect(recovered.filter(run => run.eventId === next.eventId && run.operation !== 'promote').map(run => run.state))
+	expect(recovered.filter(run => run.eventId === next.eventId && run.operation !== 'release').map(run => run.state))
 		.toEqual(['ready', 'ready']);
 });

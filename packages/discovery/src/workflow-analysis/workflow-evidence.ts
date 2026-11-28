@@ -4,6 +4,7 @@ import { workflowEvents } from '@/discovery/release-graph/calls.ts';
 import { actionRole } from '@/discovery/workflow-analysis/beepboop-action.ts';
 import { jobNeeds } from '@/discovery/workflow-analysis/job-gate.ts';
 import { ownedBinaryJob } from '@/discovery/workflow-analysis/owned-binary-job.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
@@ -88,9 +89,9 @@ function evidenceOf(file: string, document: Record<string, unknown>): WorkflowEv
 		}
 	}
 	const reports = (role: WorkflowEvidence['roles'][number]) =>
-		role.operation === 'promote' && result.reportingJobs.includes(role.job);
+		role.operation === releaseOperation && result.reportingJobs.includes(role.job);
 	result.roles = result.roles.filter(role =>
-		role.operation !== 'promote' || reports(role)
+		role.operation !== releaseOperation || reports(role)
 		|| !result.roles.some(other => other.stream === role.stream && reports(other))
 	);
 	return result;

@@ -57,7 +57,7 @@ test('a new distribution workflow builds the action and publishes selected npm p
 	});
 	expect(plan.blockers).toEqual([]);
 	const workflow = parse(plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after);
-	const steps = workflow.jobs.promote.steps;
+	const steps = workflow.jobs.release.steps;
 	const build = steps.findIndex((step: { run?: string }) => step.run?.includes('bun run build'));
 	const publish = steps.findIndex((step: { uses?: string }) => step.uses?.includes('/actions/publish@'));
 	expect(build).toBeGreaterThanOrEqual(0);
@@ -74,9 +74,9 @@ test('manual publication workflows inherit their configured ref prefix and recei
 			required: [],
 			versioning: 'none',
 			actionRelease: { kind: 'source' },
-			promote: {
+			release: {
 				file: 'release.yml',
-				job: 'promote',
+				job: 'release',
 				commands: '',
 				triggers: 'dispatchOnly',
 				publicationSteps: {},
@@ -86,13 +86,13 @@ test('manual publication workflows inherit their configured ref prefix and recei
 	});
 	const files = { ...source.files, ...Object.fromEntries(first.edits.map(edit => [edit.path, edit.after])) };
 	const config = JSON.parse(files['.github/beepboop.json']!);
-	delete config.streams.main.promote.workflow.setup;
-	config.streams.main.promote.workflow.refs = { phase: 'version', prefix: 'tool-v', signed: true };
+	delete config.streams.main.release.workflow.setup;
+	config.streams.main.release.workflow.refs = { phase: 'version', prefix: 'tool-v', signed: true };
 	delete config.streams.main.workflows;
 	files['.github/beepboop.json'] = JSON.stringify(config);
 	delete files['.github/workflows/action-aliases.yml'];
 	const workflow = parse(files['.github/workflows/release.yml']!);
-	workflow.jobs.promote.steps = workflow.jobs.promote.steps.filter((step: { uses?: string }) =>
+	workflow.jobs.release.steps = workflow.jobs.release.steps.filter((step: { uses?: string }) =>
 		!/\/actions\/(?:publish-refs|publish-release|token)@/.test(step.uses ?? '')
 	);
 	files['.github/workflows/release.yml'] = stringify(workflow);
@@ -103,12 +103,12 @@ test('manual publication workflows inherit their configured ref prefix and recei
 			required: [],
 			versioning: 'none',
 			actionRelease: { kind: 'source' },
-			promote: { file: 'release.yml', job: 'promote', commands: '', triggers: 'dispatchOnly', publicationSteps: {} },
+			release: { file: 'release.yml', job: 'release', commands: '', triggers: 'dispatchOnly', publicationSteps: {} },
 		}],
 	});
 	expect(plan.blockers).toEqual([]);
 	const next = JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')!.after).streams.main;
-	expect(next.promote.workflow.refs.prefix).toBe('tool-v');
+	expect(next.release.workflow.refs.prefix).toBe('tool-v');
 	expect(next.workflows.aliases.refs.prefix).toBe('tool-v');
 	const content = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after;
 	expect(content).toContain('/actions/publish-refs@');
@@ -132,7 +132,7 @@ test('an identical build before the reviewed checkout does not satisfy distribut
 	});
 	const files = { ...source.files, ...Object.fromEntries(first.edits.map(edit => [edit.path, edit.after])) };
 	const workflow = parse(files['.github/workflows/release.yml']!);
-	const steps = workflow.jobs.promote.steps;
+	const steps = workflow.jobs.release.steps;
 	const [build] = steps.splice(steps.findIndex((step: { run?: string }) => step.run?.includes('bun run build')), 1);
 	const reviewed = steps.findIndex((step: { with?: { ref?: string } }) => step.with?.ref?.includes('sourceSha'));
 	steps.splice(reviewed, 0, build);
@@ -146,7 +146,7 @@ test('an identical build before the reviewed checkout does not satisfy distribut
 	const plan = await preview(snapshot(files), first.choices);
 	expect(plan.blockers).toEqual([]);
 	const nextSteps =
-		parse(plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after).jobs.promote.steps;
+		parse(plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after).jobs.release.steps;
 	const checkout = nextSteps.findIndex((step: { with?: { ref?: string } }) => step.with?.ref?.includes('sourceSha'));
 	const refs = nextSteps.findIndex((step: { uses?: string }) => step.uses?.includes('/actions/publish-refs@'));
 	expect(nextSteps.slice(checkout + 1, refs).some((step: { run?: string }) => step.run?.includes('bun run build')))
@@ -188,7 +188,7 @@ test('composite and Docker actions can adopt immutable patch releases and depend
 		});
 		expect(plan.blockers).toEqual([]);
 		const config = JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')!.after);
-		expect(config.streams.main.promote.workflow.refs).toEqual({
+		expect(config.streams.main.release.workflow.refs).toEqual({
 			phase: 'version',
 			prefix: 'v',
 			signed: true,
@@ -196,7 +196,7 @@ test('composite and Docker actions can adopt immutable patch releases and depend
 		});
 		expect(config.streams.main.versionSource).toEqual({ kind: 'tags', prefix: 'v' });
 		expect(config.streams.main.workflows.aliases).toMatchObject({
-			needs: ['promote'],
+			needs: ['release'],
 			refs: { phase: 'aliases', aliases: ['major', 'minor'] },
 		});
 		const release = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after;
@@ -223,7 +223,7 @@ test('an action-only stream retains its selected prefix across patch, minor and 
 	expect(plan.blockers).toEqual([]);
 	const stream = JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')!.after).streams.tool;
 	expect(stream.versionSource.prefix).toBe('tool-v');
-	expect(stream.promote.workflow.refs.prefix).toBe('tool-v');
+	expect(stream.release.workflow.refs.prefix).toBe('tool-v');
 	expect(stream.workflows.aliases.refs.prefix).toBe('tool-v');
 	expect(stream.workflows.aliases.refs.aliases).toEqual(['major', 'minor']);
 });
@@ -239,7 +239,7 @@ test('adopting action aliases blocks an unrelated aliases operation without repl
 	const ownerAliases = {
 		file: 'owner-other.yml',
 		ref: 'main',
-		needs: ['promote'],
+		needs: ['release'],
 		publications: [],
 		refs: { phase: 'aliases', prefix: 'custom-', aliases: ['major'] },
 	};
@@ -277,7 +277,7 @@ test('switching an existing managed source action to distribution inserts the ch
 							commands: 'true',
 							publicationSteps: {},
 						},
-						promote: {
+						release: {
 							file: 'release.yml',
 							job: 'publish',
 							triggers: 'dispatchOnly' as const,
@@ -298,12 +298,12 @@ test('switching an existing managed source action to distribution inserts the ch
 			streams: [{
 				...first.choices.streams[0]!,
 				actionRelease: { kind: 'distribution', files: ['main.mjs'] },
-				promote: { ...first.choices.streams[0]!.promote!, commands },
+				release: { ...first.choices.streams[0]!.release!, commands },
 			}],
 		});
 		expect(plan.blockers).toEqual([]);
 		const workflow = parse(plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after);
-		const steps = workflow.jobs[shared ? 'publish' : 'promote'].steps;
+		const steps = workflow.jobs[shared ? 'publish' : 'release'].steps;
 		const build = steps.findIndex((step: { run?: string }) => step.run?.trim() === commands);
 		const refs = steps.findIndex((step: { uses?: string }) => step.uses?.includes('/publish-refs@'));
 		expect(build).toBeGreaterThanOrEqual(0);
@@ -336,14 +336,14 @@ test('distribution adoption publishes the reviewed file list and builds using pa
 	const plan = await preview(source, choices);
 	expect(plan.blockers).toEqual([]);
 	const config = JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')!.after);
-	expect(config.streams.main.promote.workflow.refs).toMatchObject({
+	expect(config.streams.main.release.workflow.refs).toMatchObject({
 		immutable: true,
 		signed: true,
 		distribution: { files, ancestry: 'ours' },
 	});
 	const content = plan.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after;
 	const workflow = parse(content);
-	const steps = workflow.jobs.promote.steps;
+	const steps = workflow.jobs.release.steps;
 	expect(steps.find((step: { uses?: string }) => step.uses?.includes('oven-sh/setup-bun@'))).toEqual({
 		uses: 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6',
 	});
@@ -390,12 +390,12 @@ test('distribution adoption publishes the reviewed file list and builds using pa
 		streams: [{
 			...refreshed.choices.streams[0]!,
 			actionRelease: { kind: 'source' },
-			promote: { ...refreshed.choices.streams[0]!.promote!, commands: '' },
+			release: { ...refreshed.choices.streams[0]!.release!, commands: '' },
 		}],
 	});
 	expect(switched.blockers).toEqual([]);
 	const switchedWorkflow = parse(switched.edits.find(edit => edit.path === '.github/workflows/release.yml')!.after);
-	const switchedRefs = switchedWorkflow.jobs.promote.steps.find((step: { uses?: string }) =>
+	const switchedRefs = switchedWorkflow.jobs.release.steps.find((step: { uses?: string }) =>
 		step.uses?.includes('/publish-refs@')
 	);
 	expect(switchedRefs.with.files).toBeUndefined();
@@ -427,10 +427,10 @@ test('a new stream beside a configured one gets its own default prefix', async (
 			required: [],
 			versioning: 'none',
 			actionRelease: { kind: 'source' },
-			promote: { file: 'tools.yml', job: 'promote', commands: '', triggers: 'dispatchOnly', publicationSteps: {} },
+			release: { file: 'tools.yml', job: 'release', commands: '', triggers: 'dispatchOnly', publicationSteps: {} },
 		}],
 	});
 	const streams = JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')!.after).streams;
-	expect(streams.main.promote.workflow.refs.prefix).toBe('v');
-	expect(streams.tools.promote.workflow.refs.prefix).toBe('tools-v');
+	expect(streams.main.release.workflow.refs.prefix).toBe('v');
+	expect(streams.tools.release.workflow.refs.prefix).toBe('tools-v');
 });

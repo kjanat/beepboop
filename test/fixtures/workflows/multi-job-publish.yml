@@ -40,7 +40,7 @@ jobs:
         with:
           execution-id: ${{ inputs.beepboop_execution_id }}
           stream: git-remote-refs
-          operation: promote
+          operation: release
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -96,7 +96,7 @@ jobs:
         with:
           execution-id: ${{ inputs.beepboop_execution_id }}
           stream: git-remote-refs
-          operation: promote
+          operation: release
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -156,7 +156,7 @@ jobs:
         with:
           execution-id: ${{ inputs.beepboop_execution_id }}
           stream: git-remote-refs
-          operation: promote
+          operation: release
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -218,7 +218,7 @@ jobs:
         with:
           execution-id: ${{ inputs.beepboop_execution_id }}
           stream: git-remote-refs
-          operation: promote
+          operation: release
 
       - uses: kjanat/beepboop/actions/token@v1
         id: token

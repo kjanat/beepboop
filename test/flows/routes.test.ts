@@ -208,7 +208,7 @@ test('elevated routes check the request before they spend the security-key proof
 			alias: 'unlisted',
 			repositoryId: repository.id,
 			stream: 'main',
-			operation: 'promote',
+			operation: 'release',
 			delivery: 'runtime',
 		},
 	}, send));
@@ -224,7 +224,7 @@ test('elevated routes check the request before they spend the security-key proof
 			alias: 'npm-token',
 			repositoryId: repository.id,
 			stream: 'main',
-			operation: 'promote',
+			operation: 'release',
 			delivery: 'repository',
 		},
 	}, send));
@@ -438,7 +438,7 @@ test('the Actions request builders produce bodies the server parses', async () =
 	const environment = {
 		EXECUTION_ID: 'e1',
 		STREAM: 'main',
-		OPERATION: 'promote',
+		OPERATION: 'release',
 		RELEASE_VERSION: '1.2.3',
 		PREPARED_FILE: prepared,
 		PUBLICATIONS: JSON.stringify([

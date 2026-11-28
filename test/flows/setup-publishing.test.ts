@@ -213,7 +213,7 @@ test('missing workflow-write permission preserves safe setup previews without sw
 	expect(plan.blockers.some(message => message.includes('Workflows: write'))).toBe(true);
 	const observed = {
 		...plan.choices,
-		streams: plan.choices.streams.map(({ prepare: _prepare, promote: _promote, ...stream }) => ({
+		streams: plan.choices.streams.map(({ prepare: _prepare, release: _release, ...stream }) => ({
 			...stream,
 			...(stream.observe ? { observe: stream.observe.map(({ needs: _needs, ...binding }) => binding) } : {}),
 		})),
@@ -227,7 +227,7 @@ test('missing workflow-write permission preserves safe setup previews without sw
 			packages: ['pkg:cargo/tool'],
 			required: ['pkg:cargo/tool'],
 			versioning: 'workspace',
-			promote: {
+			release: {
 				file: 'managed.yml',
 				job: 'publish',
 				triggers: 'review',

@@ -7,6 +7,7 @@ import { planHookUpdates } from '@/discovery/managers/precommit.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, publishablePackages } from '@/domain/package-identity.ts';
 import type { RefState } from '@/domain/refs.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import type { StartChannel } from '@/domain/release-start.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { semver } from '@/domain/semver.ts';
@@ -106,8 +107,8 @@ function taggedRestart(
 		if (packages.length !== publishablePackages(repository.inventory.packages, stream.packages).length) {
 			return yield* precondition('A restart must include the original release stream');
 		}
-		const promotions = yield* service.coordinators.promotions(repository.id, name, version);
-		const stopped = promotions.filter(execution =>
+		const releaseExecutions = yield* service.coordinators.releaseExecutions(repository.id, name, version);
+		const stopped = releaseExecutions.filter(execution =>
 			(execution.state === 'failed' || execution.state === 'cancelled')
 			&& execution.eventId === `release:${version}:${execution.sourceSha}` && releaseCommit(execution) === tag.commit
 		);
@@ -130,7 +131,7 @@ function taggedRestart(
 			edits: [],
 			packages,
 			requiresPreparation: false,
-			diagnostics: [`Restart stopped promotion ${restart.id} on its original commit`],
+			diagnostics: [`Restart stopped release ${restart.id} on its original commit`],
 		};
 		return { selection, selected, plan, planId: yield* planIdentity(plan, repository), restart };
 	});
@@ -299,20 +300,20 @@ export function beginRelease(
 		if (!plan.edits.length && !plan.requiresPreparation) {
 			const claim = yield* service.tagClaims(repository, name, stream, plan.version, plan.sourceSha);
 			if (claim.conflict) return yield* precondition(`${conflictMessage(claim.conflict)}. Release a new version.`);
-			const promotion = yield* createExecution(repository, {
+			const releaseExecution = yield* createExecution(repository, {
 				stream: name,
-				operation: 'promote',
+				operation: releaseOperation,
 				eventId: `release:${plan.version}:${plan.sourceSha}`,
 				sourceSha: plan.sourceSha,
 				version: plan.version,
 			});
-			promotion.initiatedBy = actor;
-			if (claim.reclaims.length) promotion.reclaims = claim.reclaims;
+			releaseExecution.initiatedBy = actor;
+			if (claim.reclaims.length) releaseExecution.reclaims = claim.reclaims;
 			if (started) {
-				promotion.approvedBy = 'start';
-				promotion.started = started;
+				releaseExecution.approvedBy = 'start';
+				releaseExecution.started = started;
 			}
-			const queued = yield* service.enqueue(repository, promotion);
+			const queued = yield* service.enqueue(repository, releaseExecution);
 			yield* service.store.audit(actor, 'release.prepare', queued.id);
 			return queued;
 		}

@@ -69,7 +69,7 @@ function completeTaggedStream(
 	taken: string[],
 	names: Set<string>,
 ): { completed: Stream; independent: Stream[] } | undefined {
-	if (stream.prepare || stream.promote) return;
+	if (stream.prepare || stream.release) return;
 	const refs = [
 		...new Set(
 			(stream.observe ?? []).flatMap(entry =>
@@ -172,7 +172,7 @@ function completeTaggedStream(
 		...rest,
 		...(version === undefined && versionSource ? { versionSource } : {}),
 		...(starter
-			? { observe: (stream.observe ?? []).map(entry => entry === starter ? { ...entry, needs: ['promote'] } : entry) }
+			? { observe: (stream.observe ?? []).map(entry => entry === starter ? { ...entry, needs: ['release'] } : entry) }
 			: {}),
 		...(Object.keys(needs).length ? { needs } : {}),
 		packages: [...stream.packages, ...added],
@@ -190,9 +190,9 @@ function completeTaggedStream(
 			: {}),
 		...(starter
 			? {
-				promote: {
+				release: {
 					file: unusedFile(`release-${stream.name}`, taken),
-					job: 'promote',
+					job: 'release',
 					triggers: 'review',
 					commands: '',
 					publicationSteps: {},
@@ -211,7 +211,7 @@ function completeTaggedStream(
 					}
 					: {}),
 			}
-			: { promote: { file: unusedFile('release-crates', taken), ...publish, tagPrefix } }),
+			: { release: { file: unusedFile('release-crates', taken), ...publish, tagPrefix } }),
 	};
 	const independent = modules.filter(released).map(({ pkg, prefix }): Stream => {
 		const base = slug(prefix.replace(/\/?v$/, '')) || 'go';
@@ -233,7 +233,7 @@ function completeTaggedStream(
 				commands: within(pkg.manifest, 'go mod tidy -diff'),
 				publicationSteps: {},
 			},
-			promote: {
+			release: {
 				file: unusedFile(`release-${name}`, taken),
 				triggers: 'review',
 				commands: '',

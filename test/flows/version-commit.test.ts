@@ -4,7 +4,7 @@ import type { Repository } from '@root/test/support/github.ts';
 import type { Api } from '@root/test/support/http.ts';
 import { bearer, text } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
-import { prepareRelease, promotions } from '@root/test/support/releases.ts';
+import { prepareRelease, releaseExecutions } from '@root/test/support/releases.ts';
 import {
 	editableConfiguration,
 	licenseText,
@@ -33,11 +33,11 @@ function taggedConfiguration(approval: Approval, lint = false) {
 		...main,
 		credentials: [],
 		prepare: { strategy: 'managed', versionLands: 'via-version-pr' },
-		promote: {
-			...main.promote,
+		release: {
+			...main.release,
 			publishWhen: publishWhenNames[approval],
 			workflow: {
-				...main.promote.workflow,
+				...main.release.workflow,
 				refs: { phase: 'version', prefix: 'v' },
 				...(lint ? { needs: ['lint'] } : {}),
 			},
@@ -112,20 +112,20 @@ function refPlan(planned: { outputs: Record<string, string | undefined> }) {
 	}));
 }
 
-async function publishTagged(repository: Repository, api: Api, promotion: Execution) {
+async function publishTagged(repository: Repository, api: Api, releaseExecution: Execution) {
 	const run = one(
-		repository.runs.filter(entry => entry.inputs.beepboop_execution_id === promotion.id),
+		repository.runs.filter(entry => entry.inputs.beepboop_execution_id === releaseExecution.id),
 		'release run',
 	);
 	run.status = 'in_progress';
 	const identity = runIdentity(repository, run, 'publish.yml');
-	await begin(world, identity, promotion.id, promotion.stream, 'promote');
-	const planned = refPlan(await runAction(world, 'refs-plan', identity, { EXECUTION_ID: promotion.id }));
+	await begin(world, identity, releaseExecution.id, releaseExecution.stream, 'release');
+	const planned = refPlan(await runAction(world, 'refs-plan', identity, { EXECUTION_ID: releaseExecution.id }));
 	for (const change of planned) repository.refs.set(`tags/${change.name}`, change.commit);
-	await runAction(world, 'refs-complete', identity, { EXECUTION_ID: promotion.id });
+	await runAction(world, 'refs-complete', identity, { EXECUTION_ID: releaseExecution.id });
 	world.npm.publish('widget', '1.0.1');
 	await runAction(world, 'report', identity, {
-		EXECUTION_ID: promotion.id,
+		EXECUTION_ID: releaseExecution.id,
 		PUBLICATIONS: JSON.stringify([
 			{ id: 'pkg:npm/widget', manager: 'npm', name: 'widget', version: '1.0.1', outcome: 'succeeded' },
 		]),
@@ -142,18 +142,18 @@ for (const approval of ['merge', 'required', 'push'] as const) {
 		const { repository, api, merged } = await squashedVersionPr(approval);
 		passChecks(repository, merged.sha);
 		await pushed(repository);
-		const promotion = one(await promotions(api), 'promotion');
-		expect(promotion.sourceSha).toBe(merged.sha);
+		const releaseExecution = one(await releaseExecutions(api), 'releaseExecution');
+		expect(releaseExecution.sourceSha).toBe(merged.sha);
 		if (approval === 'required') {
-			expect([promotion.state, promotion.approvedBy, dispatched(repository)]).toEqual([
+			expect([releaseExecution.state, releaseExecution.approvedBy, dispatched(repository)]).toEqual([
 				'awaiting-approval',
 				undefined,
 				[],
 			]);
 		} else {
-			expect([promotion.approvedBy, dispatched(repository)]).toEqual([
+			expect([releaseExecution.approvedBy, dispatched(repository)]).toEqual([
 				approval === 'merge' ? 'merge' : undefined,
-				[promotion.id],
+				[releaseExecution.id],
 			]);
 		}
 	});
@@ -165,7 +165,7 @@ test('a commit after the merged version PR leaves one release, which publishes a
 	await pushed(repository);
 	const later = moveOn(repository);
 	await pushed(repository);
-	const waiting = one(await promotions(api), 'promotion');
+	const waiting = one(await releaseExecutions(api), 'releaseExecution');
 	expect([waiting.sourceSha, waiting.state, waiting.approvedBy, dispatched(repository)]).toEqual([
 		merged.sha,
 		'awaiting-approval',
@@ -178,7 +178,7 @@ test('a commit after the merged version PR leaves one release, which publishes a
 	const { run, planned } = await publishTagged(repository, api, waiting);
 	expect(run.headSha).toBe(later.sha);
 	expect(planned).toEqual([{ name: 'v1.0.1', commit: merged.sha }]);
-	expect((await promotions(api)).map(entry => [entry.id, entry.sourceSha, entry.state])).toEqual([
+	expect((await releaseExecutions(api)).map(entry => [entry.id, entry.sourceSha, entry.state])).toEqual([
 		[waiting.id, merged.sha, 'succeeded'],
 	]);
 	expect(repository.refs.get('tags/v1.0.1')).toBe(merged.sha);
@@ -190,7 +190,7 @@ test('publishing the version commit in Beepboop works after the default branch m
 	await pushed(repository);
 	const later = moveOn(repository);
 	await pushed(repository);
-	const waiting = one(await promotions(api), 'promotion');
+	const waiting = one(await releaseExecutions(api), 'releaseExecution');
 	expect([waiting.sourceSha, waiting.state]).toEqual([merged.sha, 'awaiting-approval']);
 	const approved = await api('/api/executions/approve', { id: waiting.id, sourceSha: merged.sha });
 	expect(approved.status).toBe(200);
@@ -198,7 +198,10 @@ test('publishing the version commit in Beepboop works after the default branch m
 	expect(dispatched(repository)).toEqual([waiting.id]);
 	const { run } = await publishTagged(repository, api, waiting);
 	expect(run.headSha).toBe(later.sha);
-	expect((await promotions(api)).map(entry => [entry.sourceSha, entry.state])).toEqual([[merged.sha, 'succeeded']]);
+	expect((await releaseExecutions(api)).map(entry => [entry.sourceSha, entry.state])).toEqual([[
+		merged.sha,
+		'succeeded',
+	]]);
 	expect(repository.refs.get('tags/v1.0.1')).toBe(merged.sha);
 });
 
@@ -215,7 +218,7 @@ test('releasing a version the default branch already carries pins the version co
 	expect([plan.status, text(plan.body, 'sourceSha')]).toEqual([200, merged.sha]);
 	expect(prepared.status).toBe(200);
 	expect(world.github.head(repository)).toBe(later.sha);
-	expect((await promotions(api)).map(entry => entry.sourceSha)).toEqual([merged.sha]);
+	expect((await releaseExecutions(api)).map(entry => entry.sourceSha)).toEqual([merged.sha]);
 });
 
 test('a pushed version commit publishes itself although a later commit landed before its checks passed', async () => {
@@ -225,13 +228,16 @@ test('a pushed version commit publishes itself although a later commit landed be
 	await pushed(repository);
 	moveOn(repository);
 	await pushed(repository);
-	const waiting = one(await promotions(api), 'promotion');
+	const waiting = one(await releaseExecutions(api), 'releaseExecution');
 	expect([waiting.sourceSha, dispatched(repository)]).toEqual([version.sha, []]);
 	passChecks(repository, version.sha);
 	await world.wait(60_000);
 	expect(dispatched(repository)).toEqual([waiting.id]);
 	await publishTagged(repository, api, waiting);
-	expect((await promotions(api)).map(entry => [entry.sourceSha, entry.state])).toEqual([[version.sha, 'succeeded']]);
+	expect((await releaseExecutions(api)).map(entry => [entry.sourceSha, entry.state])).toEqual([[
+		version.sha,
+		'succeeded',
+	]]);
 	expect(repository.refs.get('tags/v1.0.1')).toBe(version.sha);
 });
 
@@ -247,7 +253,7 @@ test('a later commit that edits the manifest gets its own release, which superse
 	);
 	passChecks(repository, edited.sha);
 	await pushed(repository);
-	const bySource = async () => new Map((await promotions(api)).map(entry => [entry.sourceSha, entry]));
+	const bySource = async () => new Map((await releaseExecutions(api)).map(entry => [entry.sourceSha, entry]));
 	const both = await bySource();
 	const earlier = both.get(version.sha), current = both.get(edited.sha);
 	if (!earlier || !current) throw new Error('Expected a release for each commit');
@@ -272,7 +278,7 @@ test('a later commit that raises the version again refuses the earlier version c
 	const raised = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.2') }, 'Release 1.0.2');
 	passChecks(repository, raised.sha);
 	await pushed(repository);
-	const listed = await promotions(api);
+	const listed = await releaseExecutions(api);
 	expect(listed.map(entry => [entry.sourceSha, entry.version]).sort()).toEqual(
 		[[version.sha, '1.0.1'], [raised.sha, '1.0.2']].sort(),
 	);
@@ -296,7 +302,7 @@ test('a later commit that adds the missing license file gets its own release, an
 	const licensed = world.github.push(repository, { LICENSE: licenseText }, 'Add the license');
 	passChecks(repository, licensed.sha);
 	await pushed(repository);
-	const bySource = new Map((await promotions(api)).map(entry => [entry.sourceSha, entry]));
+	const bySource = new Map((await releaseExecutions(api)).map(entry => [entry.sourceSha, entry]));
 	const earlier = bySource.get(version.sha), current = bySource.get(licensed.sha);
 	if (!earlier || !current) throw new Error('Expected a release for each commit');
 	const refused = await api('/api/executions/approve', { id: earlier.id, sourceSha: version.sha });
@@ -320,7 +326,7 @@ test('a manifest edit after the merged version PR waits for you to publish it an
 	await pushed(repository);
 	passChecks(repository, merged.sha);
 	await world.wait(60_000);
-	const bySource = new Map((await promotions(api)).map(entry => [entry.sourceSha, entry]));
+	const bySource = new Map((await releaseExecutions(api)).map(entry => [entry.sourceSha, entry]));
 	const current = bySource.get(edited.sha);
 	expect([current?.state, current?.approvedBy]).toEqual(['awaiting-approval', undefined]);
 	expect([bySource.get(merged.sha)?.state, bySource.get(merged.sha)?.reason]).toEqual([
@@ -345,7 +351,7 @@ test('a reverted manifest edit lets the version commit publish and retires the e
 	const reverted = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.1') }, 'Drop keywords');
 	passChecks(repository, reverted.sha);
 	await pushed(repository);
-	const bySource = async () => new Map((await promotions(api)).map(entry => [entry.sourceSha, entry]));
+	const bySource = async () => new Map((await releaseExecutions(api)).map(entry => [entry.sourceSha, entry]));
 	const listed = await bySource();
 	const earlier = listed.get(version.sha), later = listed.get(edited.sha);
 	if (!earlier || !later) throw new Error('Expected a release for each manifest');
@@ -361,11 +367,14 @@ test('a cancelled release of the version does not hold it for a later commit', a
 	const version = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.1') }, 'Release 1.0.1');
 	passChecks(repository, version.sha);
 	await pushed(repository);
-	const cancelled = one(await promotions(api), 'promotion');
+	const cancelled = one(await releaseExecutions(api), 'releaseExecution');
 	expect((await api('/api/executions/cancel', { id: cancelled.id })).status).toBe(200);
 	const later = moveOn(repository);
 	await pushed(repository);
-	const current = one((await promotions(api)).filter(entry => entry.state !== 'cancelled'), 'open promotion');
+	const current = one(
+		(await releaseExecutions(api)).filter(entry => entry.state !== 'cancelled'),
+		'open releaseExecution',
+	);
 	expect(current.sourceSha).toBe(later.sha);
 });
 
@@ -380,7 +389,7 @@ test('a commit that GitHub cannot compare with an earlier release still gets a r
 			: world.github.handle(request));
 	const later = moveOn(repository);
 	await pushed(repository);
-	expect((await promotions(api)).map(entry => entry.sourceSha).sort()).toEqual([version.sha, later.sha].sort());
+	expect((await releaseExecutions(api)).map(entry => entry.sourceSha).sort()).toEqual([version.sha, later.sha].sort());
 });
 
 test('a change to a reusable workflow that the release workflow calls gets its own release', async () => {
@@ -403,7 +412,7 @@ test('a change to a reusable workflow that the release workflow calls gets its o
 	);
 	passChecks(repository, changed.sha);
 	await pushed(repository);
-	const listed = new Map((await promotions(api)).map(entry => [entry.sourceSha, entry]));
+	const listed = new Map((await releaseExecutions(api)).map(entry => [entry.sourceSha, entry]));
 	const earlier = listed.get(version.sha);
 	if (!earlier || !listed.has(changed.sha)) throw new Error('Expected a release for each workflow');
 	const refused = await api('/api/executions/approve', { id: earlier.id, sourceSha: version.sha });
@@ -417,12 +426,15 @@ test('a cancelled release of a merged version PR does not hold the version for a
 	const { repository, api, merged } = await squashedVersionPr('required');
 	passChecks(repository, merged.sha);
 	await pushed(repository);
-	const cancelled = one(await promotions(api), 'promotion');
+	const cancelled = one(await releaseExecutions(api), 'releaseExecution');
 	expect(cancelled.sourceSha).toBe(merged.sha);
 	expect((await api('/api/executions/cancel', { id: cancelled.id })).status).toBe(200);
 	const later = moveOn(repository);
 	await pushed(repository);
-	const current = one((await promotions(api)).filter(entry => entry.state !== 'cancelled'), 'open promotion');
+	const current = one(
+		(await releaseExecutions(api)).filter(entry => entry.state !== 'cancelled'),
+		'open releaseExecution',
+	);
 	expect([current.sourceSha, current.state]).toEqual([later.sha, 'awaiting-approval']);
 });
 
@@ -431,7 +443,7 @@ test('a later commit that stops publishing a package of the release refuses the 
 	const version = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.1') }, 'Release 1.0.1');
 	passChecks(repository, version.sha);
 	await pushed(repository);
-	const waiting = one(await promotions(api), 'promotion');
+	const waiting = one(await releaseExecutions(api), 'releaseExecution');
 	const hidden = world.github.push(
 		repository,
 		{ 'package.json': npmManifest('widget', '1.0.1', { private: true }) },
@@ -451,7 +463,7 @@ test('a later change to the release configuration refuses the earlier version co
 	const version = world.github.push(repository, { 'package.json': npmManifest('widget', '1.0.1') }, 'Release 1.0.1');
 	passChecks(repository, version.sha);
 	await pushed(repository);
-	const waiting = one(await promotions(api), 'promotion');
+	const waiting = one(await releaseExecutions(api), 'releaseExecution');
 	const reconfigured = world.github.push(
 		repository,
 		{ '.github/beepboop.json': taggedConfiguration('push') },
@@ -461,7 +473,7 @@ test('a later change to the release configuration refuses the earlier version co
 	await pushed(repository);
 	const refused = await api('/api/executions/approve', { id: waiting.id, sourceSha: version.sha });
 	expect(refused.status).toBe(422);
-	const current = one((await promotions(api)).filter(entry => entry.id !== waiting.id), 'new promotion');
+	const current = one((await releaseExecutions(api)).filter(entry => entry.id !== waiting.id), 'new releaseExecution');
 	expect(current.sourceSha).toBe(reconfigured.sha);
 });
 
@@ -470,7 +482,7 @@ test('a prerequisite of a kept release still starts after the default branch mov
 	passChecks(repository, merged.sha);
 	moveOn(repository);
 	await pushed(repository);
-	const waiting = one(await promotions(api), 'promotion');
+	const waiting = one(await releaseExecutions(api), 'releaseExecution');
 	expect([waiting.sourceSha, waiting.dependencies.length]).toEqual([merged.sha, 1]);
 	expect(dispatched(repository)).toEqual(waiting.dependencies);
 });

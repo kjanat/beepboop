@@ -9,7 +9,7 @@ import { bearer, text } from '@root/test/support/http.ts';
 import { cargoMetadata, crateChecksum, crateListing, packCrate, publishWith } from '@root/test/support/ledger.ts';
 import { one } from '@root/test/support/lists.ts';
 import { crateResponse, pypiResponse } from '@root/test/support/registries.ts';
-import { approvePromotion, executions, prepareRelease } from '@root/test/support/releases.ts';
+import { approveRelease, executions, prepareRelease } from '@root/test/support/releases.ts';
 import {
 	crateMetadata,
 	licenseText,
@@ -209,20 +209,20 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		commands: 'cargo update --workspace\ncargo test --workspace --locked',
 		publicationSteps: {},
 	});
-	expect(stream.promote).toEqual({
+	expect(stream.release).toEqual({
 		file: 'release-lint.yml',
-		job: 'promote',
+		job: 'release',
 		triggers: 'review',
 		commands: '',
 		publicationSteps: {},
 		tagPrefix: 'lint-v',
 	});
 	expect(stream.observe).toEqual([{
-		name: 'release',
+		name: 'observe-release',
 		file: 'release.yml',
 		ref: 'refs/tags/lint-v*',
 		publications: ['pkg:npm/%40octo/lint', 'pkg:pypi/lint-py', 'pkg:github/octo/lint'],
-		needs: ['promote'],
+		needs: ['release'],
 	}]);
 	expect(stream.operations).toEqual([{
 		name: 'crates',
@@ -231,7 +231,7 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		commands: ledgerCommand,
 		publicationSteps: {},
 		credentials: { CARGO_REGISTRY_TOKEN: 'crates-io' },
-		needs: ['release'],
+		needs: ['observe-release'],
 		publications: ['pkg:cargo/lint-core', 'pkg:cargo/lint'],
 	}]);
 	const module = 'pkg:golang/github.com/octo/lint/go', github = 'pkg:github/octo/lint';
@@ -249,7 +249,7 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 				Schema.String,
 				looseStruct({
 					needs: mutableRecord(Schema.String, mutableArray(Schema.String)),
-					promote: looseStruct({ workflow: looseStruct({ publications: mutableArray(Schema.String) }) }),
+					release: looseStruct({ workflow: looseStruct({ publications: mutableArray(Schema.String) }) }),
 					workflows: mutableRecord(Schema.String, looseStruct({ needs: Schema.optional(mutableArray(Schema.String)) })),
 				}),
 			),
@@ -257,9 +257,9 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		JSON.parse(plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? '{}'),
 	);
 	expect(configured.streams[stream.name]?.needs).toEqual(stream.needs);
-	expect(configured.streams[stream.name]?.promote.workflow.publications).toEqual([module]);
-	expect(configured.streams[stream.name]?.workflows.release?.needs).toEqual(['promote']);
-	expect(configured.streams[stream.name]?.workflows.crates?.needs).toEqual(['release']);
+	expect(configured.streams[stream.name]?.release.workflow.publications).toEqual([module]);
+	expect(configured.streams[stream.name]?.workflows['observe-release']?.needs).toEqual(['release']);
+	expect(configured.streams[stream.name]?.workflows.crates?.needs).toEqual(['observe-release']);
 	const stepIds = (file: string, job: string) =>
 		decodeSync(
 			mutableStruct({
@@ -271,7 +271,7 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 			parse(plan.edits.find(edit => edit.path === `.github/workflows/${file}`)?.after ?? ''),
 		)
 			.jobs[job]?.steps.flatMap(step => step.id?.startsWith('beepboop_') ? [step.id] : []);
-	expect(stepIds('release-lint.yml', 'promote')).toEqual(['beepboop_token', 'beepboop_refs']);
+	expect(stepIds('release-lint.yml', 'release')).toEqual(['beepboop_token', 'beepboop_refs']);
 	expect(stepIds('publish-crates.yml', 'crates')).toEqual(['beepboop_publish']);
 	const source = (file: string) => plan.edits.find(edit => edit.path === `.github/workflows/${file}`)?.after ?? '';
 	expect(
@@ -342,8 +342,8 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		passChecks(repository, released);
 		expect((await world.push(repository)).status).toBe(202);
 		await world.wait(1_000);
-		const { promotion, approved } = await approvePromotion(api, released);
-		expect(promotion.state).toBe('awaiting-approval');
+		const { releaseExecution, approved } = await approveRelease(api, released);
+		expect(releaseExecution.state).toBe('awaiting-approval');
 		expect(text(approved.body, 'state')).toBe('ready');
 		await world.wait(16_000);
 
@@ -353,17 +353,17 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 		};
 		const outcome = (state: string) => ({ outcome: state, required: true, version: '1.1.0' });
 		const tags = runOf('release-lint.yml');
-		await begin(world, tags.identity, promotion.id, stream.name, 'promote');
-		const planned = await runAction(world, 'refs-plan', tags.identity, { EXECUTION_ID: promotion.id });
+		await begin(world, tags.identity, releaseExecution.id, stream.name, 'release');
+		const planned = await runAction(world, 'refs-plan', tags.identity, { EXECUTION_ID: releaseExecution.id });
 		const changes = decodeSync(refPlan, JSON.parse(planned.outputs.result ?? '')).changes;
 		expect(changes.map(change => change.name)).toEqual(['lint-v1.1.0', 'go/v1.1.0']);
 		for (const [index, change] of changes.entries()) {
 			world.github.recordTag(repository, change.name, String(index + 1).repeat(40), change.commit, true);
 		}
-		await runAction(world, 'refs-complete', tags.identity, { EXECUTION_ID: promotion.id });
+		await runAction(world, 'refs-complete', tags.identity, { EXECUTION_ID: releaseExecution.id });
 		published.set('go@v1.1.0', 'module');
 		await runAction(world, 'report', tags.identity, {
-			EXECUTION_ID: promotion.id,
+			EXECUTION_ID: releaseExecution.id,
 			PUBLICATIONS: JSON.stringify([
 				{ id: module, manager: 'go', name: 'github.com/octo/lint/go', ...outcome('succeeded') },
 			]),
@@ -453,12 +453,12 @@ test('one approval pushes the tags, then the tag workflow publishes, then the cr
 			).sort();
 		expect(journaled.map(entry => [entry.operation, entry.state]).sort()).toEqual([
 			['crates', 'succeeded'],
+			['observe-release', 'succeeded'],
 			['prepare', 'succeeded'],
-			['promote', 'succeeded'],
 			['release', 'succeeded'],
 		]);
-		expect(outcomes('promote')).toEqual([[module, '1.1.0', 'succeeded']]);
-		expect(outcomes('release')).toEqual([
+		expect(outcomes('release')).toEqual([[module, '1.1.0', 'succeeded']]);
+		expect(outcomes('observe-release')).toEqual([
 			['pkg:github/octo/lint', 'lint-v1.1.0', 'succeeded'],
 			['pkg:npm/%40octo/lint', '1.1.0', 'succeeded'],
 			['pkg:pypi/lint-py', '1.1.0', 'succeeded'],
@@ -497,7 +497,7 @@ test('a Go module with its own released tags becomes its own stream', async () =
 			commands: "(cd 'sdk' && go mod tidy -diff)",
 			publicationSteps: {},
 		},
-		promote: { file: 'release-sdk.yml', triggers: 'review', commands: '', publicationSteps: {}, tagPrefix: 'sdk/v' },
+		release: { file: 'release-sdk.yml', triggers: 'review', commands: '', publicationSteps: {}, tagPrefix: 'sdk/v' },
 	});
 	expect(plan.edits.map(edit => edit.path)).toEqual(expect.arrayContaining([
 		'.github/workflows/prepare-sdk.yml',
@@ -663,7 +663,7 @@ async function stagedRelease() {
 	const [stream] = plan.choices.streams;
 	if (!stream) throw new Error('No proposed stream');
 	expect(stream.operations?.map(entry => [entry.name, entry.needs, entry.needsJobs])).toEqual([
-		['crates', ['release'], { release: ['plan', 'build', 'assemble'] }],
+		['crates', ['observe-release'], { 'observe-release': ['plan', 'build', 'assemble'] }],
 	]);
 	expect(streamSummary(stream, plan)).toContain(
 		'After the plan, build and assemble jobs of release.yml succeed, publish-crates.yml (new) publishes lint-core and lint to crates.io.',
@@ -674,7 +674,7 @@ async function stagedRelease() {
 	const applied = await applySetup(api, repository.name, plan, plan.choices);
 	expect(applied.status).toBe(200);
 	expect(one(repository.pulls, 'setup pull request').body).toContain(
-		'  - After jobs `plan`, `build`, `assemble` of `release`: `publish-crates.yml`',
+		'  - After jobs `plan`, `build`, `assemble` of `observe-release`: `publish-crates.yml`',
 	);
 	const merged = world.github.merge(repository, 1);
 	passChecks(repository, merged.sha);
@@ -689,8 +689,8 @@ async function stagedRelease() {
 		JSON.parse(world.github.file(repository, '.github/beepboop.json') ?? '{}'),
 	);
 	expect(configured.streams[stream.name]?.workflows.crates).toMatchObject({
-		needs: ['release'],
-		needsJobs: { release: ['plan', 'build', 'assemble'] },
+		needs: ['observe-release'],
+		needsJobs: { 'observe-release': ['plan', 'build', 'assemble'] },
 	});
 	repository.refs.set('tags/lint-v1.0.0', merged.sha);
 	const run: Repository['runs'][number] = {
@@ -717,9 +717,9 @@ async function stagedRelease() {
 	await notify('in_progress');
 	await world.wait(2_000);
 	const crateRuns = () => repository.runs.filter(entry => entry.path === '.github/workflows/publish-crates.yml');
-	const unpromoted = async () => (await executions(api)).filter(entry => entry.operation !== 'promote');
+	const unreleasedRuns = async () => (await executions(api)).filter(entry => entry.operation !== 'release');
 	expect(crateRuns()).toEqual([]);
-	return { repository, run, notify, crateRuns, executions: unpromoted };
+	return { repository, run, notify, crateRuns, executions: unreleasedRuns };
 }
 
 test('the crates start once the build jobs pass while npm still runs', async () => {
@@ -751,7 +751,7 @@ test('the crates start once the build jobs pass while npm still runs', async () 
 	expect(crateRuns()).toHaveLength(1);
 	expect((await executions()).map(entry => [entry.operation, entry.state]).sort()).toEqual([
 		['crates', 'running'],
-		['release', 'failed'],
+		['observe-release', 'failed'],
 	]);
 }, 60_000);
 
@@ -771,7 +771,7 @@ test('the crates never start when a build job fails', async () => {
 	await notify('completed');
 	await world.wait(16_000);
 	expect(crateRuns()).toEqual([]);
-	expect((await executions()).map(entry => [entry.operation, entry.state])).toEqual([['release', 'failed']]);
+	expect((await executions()).map(entry => [entry.operation, entry.state])).toEqual([['observe-release', 'failed']]);
 }, 60_000);
 
 test('a completed run starts the crates when its build jobs passed, after tracking gave up', async () => {
@@ -799,7 +799,7 @@ test('a completed run starts the crates when its build jobs passed, after tracki
 	expect(crateRuns()).toHaveLength(1);
 	expect((await executions()).map(entry => [entry.operation, entry.state]).sort()).toEqual([
 		['crates', 'running'],
-		['release', 'failed'],
+		['observe-release', 'failed'],
 	]);
 }, 60_000);
 
@@ -869,7 +869,7 @@ for (const scenario of ['observed', 'unobserved', 'renamed'] as const) {
 			]);
 			await world.wait(16_000);
 			const listed = await executions(api);
-			expect(listed.filter(entry => entry.operation === 'promote')).toEqual([]);
+			expect(listed.filter(entry => entry.operation === 'release')).toEqual([]);
 			if (!observed) {
 				expect(listed).toEqual([]);
 				return;

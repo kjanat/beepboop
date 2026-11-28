@@ -935,8 +935,8 @@ describe('release streams', () => {
 		expect(chain.choices[0]?.observe).toEqual([
 			{ name: 'ci', file: 'ci.yml', ref: 'refs/tags/v*', publications: [] },
 			{ name: 'ci-2', file: 'ci.yml', ref: 'refs/heads/main', publications: [] },
-			{ name: 'release', file: 'release.yml', ref: 'refs/tags/v*', publications: ['pkg:npm/tool'] },
-			{ name: 'release-2', file: 'release.yml', ref: 'refs/heads/main', publications: [] },
+			{ name: 'observe-release', file: 'release.yml', ref: 'refs/tags/v*', publications: ['pkg:npm/tool'] },
+			{ name: 'observe-release-2', file: 'release.yml', ref: 'refs/heads/main', publications: [] },
 			{ name: 'crates', file: 'crates.yml', ref: 'refs/tags/v*', publications: ['pkg:cargo/tool'] },
 			{ name: 'crates-2', file: 'crates.yml', ref: 'refs/heads/main', publications: [] },
 		]);
@@ -3096,15 +3096,15 @@ describe('adoption PR', () => {
 			required: [],
 			versionSource: { kind: 'tags', prefix: 'v' },
 			observe: [{
-				name: 'release',
+				name: 'observe-release',
 				file: 'release.yml',
 				ref: 'refs/tags/v*',
 				publications: ['pkg:github/kjanat/dprint-plugin-svg'],
-				needs: ['promote'],
+				needs: ['release'],
 			}],
-			promote: {
+			release: {
 				file: 'release-main.yml',
-				job: 'promote',
+				job: 'release',
 				triggers: 'review',
 				commands: '',
 				publicationSteps: {},

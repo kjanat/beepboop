@@ -10,6 +10,7 @@ import { beginJobId, begunSource, ownedBinaryJob } from '@/discovery/workflow-an
 import { jobObstacles } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
+import { releaseOperation } from '@/domain/release-operation.ts';
 import { hostedRunners } from '@/domain/runners.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -59,11 +60,8 @@ export interface WorkflowCredentials {
 	credentials: WorkflowCredential[];
 	unresolved: string[];
 }
-export function dispatchedOperation(operation: string): string {
-	return operation === 'promote' ? 'publish' : operation;
-}
 function operationGate(operation: string): string {
-	return expression(`inputs.beepboop_operation == '${dispatchedOperation(operation)}'`);
+	return expression(`inputs.beepboop_operation == '${operation}'`);
 }
 function condition(value: unknown): string {
 	const source = String(value ?? '').trim();
@@ -332,7 +330,7 @@ export function integrateWorkflow(
 function workflowName(stream: string, operation: string): string {
 	const named = stream === 'main' ? '' : ` ${stream}`;
 	if (operation === 'prepare') return `Prepare${named} release`;
-	if (operation === 'promote') return named ? `Publish${named}` : 'Publish packages';
+	if (operation === releaseOperation) return named ? `Publish${named}` : 'Publish packages';
 	return `Publish${named} ${operation}`;
 }
 interface Integration {
@@ -346,7 +344,7 @@ export function integrateReleaseWorkflow(
 	snapshot: Snapshot,
 	stream: string,
 	prepare: SetupWorkflow,
-	promote: SetupWorkflow,
+	releaseWorkflow: SetupWorkflow,
 	packages: Package[],
 	actionsRevision?: string,
 	required: string[] = packages.map(packageId),
@@ -355,14 +353,14 @@ export function integrateReleaseWorkflow(
 	distributionFiles?: string[],
 ): Result.Result<Integration, DomainError> {
 	return Result.gen(function*() {
-		const path = `.github/workflows/${promote.file}`;
-		const prepareJob = prepare.job ?? 'prepare', publishJob = promote.job ?? 'publish';
+		const path = `.github/workflows/${releaseWorkflow.file}`;
+		const prepareJob = prepare.job ?? 'prepare', publishJob = releaseWorkflow.job ?? 'publish';
 		const fail = (message: string): Integration => ({
 			content: snapshot.files[path] ?? '',
-			blockers: [`${promote.file}: ${message}`],
+			blockers: [`${releaseWorkflow.file}: ${message}`],
 			notes: [],
 		});
-		if (prepare.file !== promote.file || prepareJob === publishJob) {
+		if (prepare.file !== releaseWorkflow.file || prepareJob === publishJob) {
 			return fail('preparation and publication need different jobs');
 		}
 		const document = parseDocument(snapshot.files[path] ?? 'name: Release\non: {}\njobs: {}\n');
@@ -373,7 +371,7 @@ export function integrateReleaseWorkflow(
 		const built = Object.keys(jobs).filter(name => ownedBinaryJob(name, object(jobs[name])));
 		if (
 			existing && (Object.keys(jobs).length - built.length !== 2
-				|| !guards(jobs[prepareJob], 'prepare') || !guards(jobs[publishJob], 'promote')
+				|| !guards(jobs[prepareJob], 'prepare') || !guards(jobs[publishJob], releaseOperation)
 				|| Object.keys(object(raw.on)).some(event => event !== 'workflow_dispatch'))
 		) {
 			return fail('shared workflows need separate preparation and publication jobs guarded by beepboop_operation');
@@ -386,7 +384,7 @@ export function integrateReleaseWorkflow(
 		if (!existing && isMap(jobsNode)) jobsNode.flow = false;
 		let source = matchEnding(renderWorkflow(document), snapshot.files[path]);
 		const blockers: string[] = [], notes: string[] = [];
-		for (const [operation, choice] of [['prepare', prepare], ['promote', promote]] as const) {
+		for (const [operation, choice] of [['prepare', prepare], [releaseOperation, releaseWorkflow]] as const) {
 			const result = yield* integrateWorkflow(
 				{ ...snapshot, files: { ...snapshot.files, [path]: source } },
 				stream,
@@ -395,8 +393,8 @@ export function integrateReleaseWorkflow(
 				operation === 'prepare' ? packages : published,
 				actionsRevision,
 				required,
-				operation === 'promote' && release,
-				operation === 'promote' ? distributionFiles : undefined,
+				operation === releaseOperation && release,
+				operation === releaseOperation ? distributionFiles : undefined,
 			);
 			source = result.content;
 			blockers.push(...result.blockers);
@@ -406,14 +404,16 @@ export function integrateReleaseWorkflow(
 		combined.setIn(['on', 'workflow_dispatch', 'inputs', 'beepboop_operation'], {
 			description: 'Release step',
 			type: 'choice',
-			options: [dispatchedOperation('prepare'), dispatchedOperation('promote')],
-			default: dispatchedOperation('promote'),
+			options: ['prepare', releaseOperation],
+			default: releaseOperation,
 			required: true,
 		});
 		combined.setIn(['jobs', prepareJob, 'if'], operationGate('prepare'));
-		combined.setIn(['jobs', publishJob, 'if'], operationGate('promote'));
-		for (const name of promote.binaries ? [beginJobId, ...promote.binaries.builds.map(buildJobId)] : []) {
-			combined.setIn(['jobs', name, 'if'], operationGate('promote'));
+		combined.setIn(['jobs', publishJob, 'if'], operationGate(releaseOperation));
+		for (
+			const name of releaseWorkflow.binaries ? [beginJobId, ...releaseWorkflow.binaries.builds.map(buildJobId)] : []
+		) {
+			combined.setIn(['jobs', name, 'if'], operationGate(releaseOperation));
 		}
 		return { content: matchEnding(renderWorkflow(combined), snapshot.files[path]), blockers, notes };
 	});
@@ -559,7 +559,7 @@ function integrate(
 	}
 	const job = object(jobs[jobName]);
 	const binaries = choice.binaries;
-	if (binaries && operation !== 'promote') {
+	if (binaries && operation !== releaseOperation) {
 		fail('binary builds belong to the publication workflow');
 		return { content: original ?? '', blockers, notes };
 	}
@@ -580,7 +580,7 @@ function integrate(
 		}
 	}
 	for (const conflict of binaries ? assetConflicts(binaries) : []) fail(conflict);
-	const stale = binaries || operation !== 'promote'
+	const stale = binaries || operation !== releaseOperation
 		? []
 		: Object.keys(jobs).filter(name => name !== jobName && ownedBinaryJob(name, object(jobs[name])));
 	for (const name of stale) document.deleteIn(['jobs', name]);
@@ -648,7 +648,7 @@ function integrate(
 	if (!original) document.setIn(['jobs', jobName, 'runs-on'], hostedRunners.linux);
 	let steps = Array.isArray(job.steps) ? job.steps.map(object) : [];
 	const uploaded = steps.findIndex(step => step.id === 'beepboop_binaries');
-	if (!binaries && operation === 'promote' && uploaded >= 0) {
+	if (!binaries && operation === releaseOperation && uploaded >= 0) {
 		const download = steps.findIndex(step =>
 			typeof step.uses === 'string' && /^actions\/download-artifact@/.test(step.uses)
 		);
@@ -658,7 +658,7 @@ function integrate(
 	if (steps.filter(step => actionRole(step.uses) === 'begin').length > 1) {
 		fail('multiple begin steps need manual integration');
 	}
-	if (operation === 'promote' && steps.some(step => actionRole(step.uses) === 'prepare')) {
+	if (operation === releaseOperation && steps.some(step => actionRole(step.uses) === 'prepare')) {
 		fail('a preparation job cannot also be the publication job');
 	}
 	if (operation === 'prepare' && steps.some(step => actionRole(step.uses) === 'report')) {
@@ -934,7 +934,7 @@ function integrate(
 		}
 	}
 	if (
-		operation === 'promote' && choice.tagPrefix && !binaries
+		operation === releaseOperation && choice.tagPrefix && !binaries
 		&& !steps.some(step => beepboopAction(step.uses) === 'publish-refs')
 	) {
 		const reportIndex = steps.findIndex(step => actionRole(step.uses) === 'report');
@@ -992,7 +992,7 @@ function integrate(
 		}
 	}
 	if (
-		operation === 'promote' && release && refs >= 0
+		operation === releaseOperation && release && refs >= 0
 		&& !steps.some(step => beepboopAction(step.uses) === 'publish-release')
 	) {
 		steps.splice(refs + 1, 0, {
@@ -1010,7 +1010,7 @@ function integrate(
 	const report = reports.find(step => object(step.with)['execution-id'] === begun)
 		?? (emptied ? undefined : reports[0]);
 	if (
-		operation === 'promote' && report
+		operation === releaseOperation && report
 		&& (!object(report.with).publications || object(report.with)['execution-id'] !== begun)
 	) {
 		fail('report must provide publication results and the begin execution ID');

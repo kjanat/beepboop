@@ -35,7 +35,7 @@ function execution(bump: 'commit' | 'pr', fields: Partial<Execution> = {}): Exec
 						versioning: 'workspace',
 						concurrency: 'queue',
 						prepare: { version: 'manual', bump },
-						promote: { approval: 'required' },
+						release: { approval: 'required' },
 						workflows: {},
 						credentials: [],
 						channels: { stable: 'latest', prerelease: 'next' },
