@@ -1,6 +1,5 @@
-import { Schema } from 'effect';
-import { parseDocument } from 'yaml';
-import type { RunJob } from '@/github/run-state.ts';
+import { Result, Schema } from 'effect';
+import { yaml } from '@/kernel/parse/yaml.ts';
 import { looseStruct, mutableArray, mutableRecord, safeDecode } from '@/kernel/schema/structs.ts';
 
 const jobSchema = looseStruct({
@@ -17,6 +16,11 @@ export interface GateJob {
 }
 export type WorkflowJobs = ReadonlyMap<string, GateJob>;
 export type GateState = 'ready' | 'blocked' | 'waiting';
+export interface ObservedJob {
+	readonly name: string;
+	readonly status: string;
+	readonly conclusion: string | null;
+}
 type JobStatus = 'passed' | 'failed' | 'pending';
 
 export function jobNeeds<T>(needs: T | T[] | undefined): T[] {
@@ -24,9 +28,9 @@ export function jobNeeds<T>(needs: T | T[] | undefined): T[] {
 }
 
 export function workflowJobs(source: string): WorkflowJobs | undefined {
-	const document = parseDocument(source);
-	if (document.errors.length) return undefined;
-	const parsed = safeDecode(workflowSchema, document.toJS());
+	const document = yaml(source);
+	if (Result.isFailure(document)) return undefined;
+	const parsed = safeDecode(workflowSchema, document.success);
 	if (!parsed.success) return undefined;
 	return new Map(
 		Object.entries(parsed.data.jobs).map(([key, job]): [string, GateJob] => {
@@ -69,7 +73,7 @@ export function gateJobs(jobs: WorkflowJobs, publishing: readonly string[]): str
 	return resolvable(jobs, ordered) ? ordered : [];
 }
 
-export function gateState(jobs: WorkflowJobs, keys: readonly string[], run: readonly RunJob[]): GateState {
+export function gateState(jobs: WorkflowJobs, keys: readonly string[], run: readonly ObservedJob[]): GateState {
 	const matching = (display: string) => run.filter(job => job.name === display || job.name.startsWith(`${display} (`));
 	const succeeded = (display: string) => {
 		const found = matching(display);
