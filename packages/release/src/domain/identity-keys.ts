@@ -1,11 +1,15 @@
 import type { Effect } from 'effect';
+import { Struct } from 'effect';
+import { configurationValue } from '@/domain/configuration/schema.ts';
 import type { RepositoryRecord } from '@/domain/inventory.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { sha256Hex } from '@/kernel/schema/ids.ts';
-import { encodeConfigurationV1 } from '@/persistence/codecs/configuration';
+import { encodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Execution, ReleasePlan } from '@/release/domain/execution/types.ts';
 import type { ReleaseSetPlan } from '@/release/domain/planning/plan.ts';
+
+const identifiedConfiguration = mutableStruct(Struct.omit(configurationValue.fields, ['actionsRevision']));
 
 export function executionId(
 	repositoryId: number,
@@ -23,7 +27,7 @@ export function planIdentity(
 	return fromPromise(() =>
 		sha256Hex(JSON.stringify({
 			plan,
-			configuration: provenance?.configuration && encodeConfigurationV1(provenance.configuration),
+			configuration: provenance?.configuration && encodeSync(identifiedConfiguration, provenance.configuration),
 			presetShas: provenance?.presetShas,
 		}))
 	);
