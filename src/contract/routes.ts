@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { tokenPurposes } from '@/auth/contract.ts';
 import { changesResponse } from '@/contract/changes';
 import {
 	acknowledged,
@@ -515,7 +516,7 @@ export const routes = {
 		idempotent: false,
 		request: mutableStruct({
 			permissions: Schema.optional(Schema.Unknown),
-			purpose: Schema.optional(Schema.String),
+			purpose: Schema.optional(Schema.Literals(tokenPurposes)),
 			identity: Schema.optional(Schema.Boolean),
 			executionId: Schema.optional(Schema.String),
 		}),

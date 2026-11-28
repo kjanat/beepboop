@@ -49,13 +49,13 @@ function publishable(repository: Repository): string {
 	}, 'Add the publish workflow').sha;
 }
 
-async function publicationToken(repository: Repository, sha: string): Promise<number> {
+async function publicationToken(repository: Repository, sha: string, purpose = 'publish-actions'): Promise<number> {
 	const bearer = await world.runToken({ repository, runId: 7, sha, file: 'publish-actions.yml', event: 'push' });
 	const response = await world.handle(
 		new Request(`${origin}/api/workflow/token`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({ purpose: 'publish-actions', permissions: { contents: 'write', workflows: 'write' } }),
+			body: JSON.stringify({ purpose, permissions: { contents: 'write', workflows: 'write' } }),
 		}),
 	);
 	return response.status;
@@ -119,7 +119,7 @@ function issuedFor(trees: Record<string, Files>, truncated = false): Promise<boo
 		workflowRun: () => Effect.succeed({ title: '', path: '' }),
 	};
 	const log = { audit: () => Effect.void, execution: () => Effect.undefined };
-	const body = { purpose: 'publish-actions', permissions: { contents: 'write', workflows: 'write' } };
+	const body = { purpose: 'publish-actions', permissions: { contents: 'write', workflows: 'write' } } as const;
 	return Effect.runPromise(issueWorkflowToken(identity, body, 7, issuer, log).pipe(Effect.isSuccess));
 }
 
@@ -168,6 +168,11 @@ test('an older run gets the publication token while only code outside the publis
 		'packages/persistence/src/index.ts': 'export {};\n',
 	}, 'Change server code');
 	expect(await publicationToken(repository, run)).toBe(200);
+});
+
+test('an unknown token purpose is refused at the request boundary', async () => {
+	const repository = widget(world.github);
+	expect(await publicationToken(repository, publishable(repository), 'publish-everything')).toBe(400);
 });
 
 test('an older run is refused once the publish workflow changes', async () => {

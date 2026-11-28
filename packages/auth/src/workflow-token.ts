@@ -1,5 +1,6 @@
 import { Effect, Option, Result } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
+import type { TokenPurpose } from '@/auth/contract.ts';
 import type { BotIdentity } from '@/github/app.ts';
 import type { RevisionFiles } from '@/github/contents.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -166,7 +167,7 @@ export function tokenPermissions(raw: unknown): Effect.Effect<TokenPermissions, 
 
 export interface TokenRequest {
 	permissions?: unknown;
-	purpose?: string;
+	purpose?: TokenPurpose;
 	identity?: boolean;
 	executionId?: string;
 }
@@ -212,9 +213,6 @@ export function issueWorkflowToken(
 			}
 			permissions = { contents: 'write', workflows: 'write' };
 		} else {
-			if (body.purpose !== undefined && body.purpose !== '') {
-				return yield* invalid('Unknown token purpose', ['purpose']);
-			}
 			permissions = yield* tokenPermissions(body.permissions);
 		}
 		const bot = body.identity === true ? yield* issuer.botIdentity : undefined;
