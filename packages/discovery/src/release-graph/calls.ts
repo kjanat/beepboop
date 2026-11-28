@@ -60,9 +60,9 @@ export function localAction(uses: string): string | undefined {
 }
 
 export function liveJobs(document: Record<string, unknown>): [string, Record<string, unknown>][] {
-	return Object.entries(object(document.jobs)).flatMap(([id, value]) => {
+	return Object.entries(object(document.jobs)).flatMap(([id, value]): [string, Record<string, unknown>][] => {
 		const job = object(value);
-		return disabled(job.if) ? [] : [[id, job] as [string, Record<string, unknown>]];
+		return disabled(job.if) ? [] : [[id, job]];
 	});
 }
 
