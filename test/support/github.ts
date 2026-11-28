@@ -611,7 +611,8 @@ export class FakeGitHub {
 				files: changed.map(filename => ({ filename })),
 			});
 		});
-		this.route('GET', new RegExp(`^${repo}/commits/([0-9a-f]{40})/check-runs$`), match => {
+		this.route('GET', new RegExp(`^${repo}/commits/([0-9a-f]{40})/check-runs$`), (match, _url, _body, token) => {
+			this.requireRead(token, 'checks');
 			const repository = this.repository(match[1]);
 			const runs = repository.checks.get(match[2] ?? '') ?? [];
 			return json({
@@ -627,7 +628,10 @@ export class FakeGitHub {
 		this.route(
 			'GET',
 			new RegExp(`^${repo}/commits/([0-9a-f]{40})/status$`),
-			() => json({ state: 'pending', total_count: 0, statuses: [] }),
+			(_match, _url, _body, token) => {
+				this.requireRead(token, 'statuses');
+				return json({ state: 'pending', total_count: 0, statuses: [] });
+			},
 		);
 		this.route('GET', new RegExp(`^${repo}/actions/runs$`), (match, url) => {
 			const repository = this.repository(match[1]);
@@ -773,6 +777,13 @@ export class FakeGitHub {
 	}
 	private id(): number {
 		return this.nextId++;
+	}
+
+	private requireRead(token: string, permission: string) {
+		const grant = this.grants.get(token);
+		if (grant && grant.permissions[permission] !== 'read' && grant.permissions[permission] !== 'write') {
+			throw new HttpError(403, 'Resource not accessible by integration');
+		}
 	}
 
 	async handle(request: Request): Promise<Response> {
