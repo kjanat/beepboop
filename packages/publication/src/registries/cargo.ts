@@ -1,9 +1,10 @@
-import { Effect, Result } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { cargoDiscoverer } from '@/discovery/managers/cargo.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { compareVersions, isPrerelease } from '@/domain/semver.ts';
 import { responseText } from '@/kernel/http/body.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
+import { mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
 import type { Publication } from '@/publication/publication.ts';
 import type { CheckOutcome } from '@/publication/registries/outcome.ts';
 import type { Adapter } from '@/publication/registries/registry.ts';
@@ -18,6 +19,11 @@ import {
 	verificationFailure,
 	verifyRegistry,
 } from '@/publication/registries/verification.ts';
+
+const crateVersionEntry = mutableStruct({
+	version: mutableStruct({ crate: Schema.String, num: Schema.String, yanked: Schema.Boolean, checksum: Schema.String }),
+});
+
 export function crateIndexUrl(name: string): string {
 	const lower = name.toLowerCase();
 	const path = lower.length <= 2
@@ -89,8 +95,8 @@ export const cargoManager = {
 			encodeURIComponent(publication.version)
 		}`;
 		return verifyRegistry(publication, request, url, body => {
-			const entry = object(object(body).version);
-			return { name: entry.crate, version: entry.num, withdrawn: entry.yanked !== false, digest: entry.checksum };
+			const entry = safeDecode(crateVersionEntry, body).data?.version;
+			return entry && { name: entry.crate, version: entry.num, withdrawn: entry.yanked, digest: entry.checksum };
 		}).pipe(
 			Effect.filterOrElse(
 				verified => verified._tag !== 'LookupFailed',

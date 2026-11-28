@@ -579,6 +579,32 @@ test('a crate that the crates.io API cannot answer is checked in the sparse inde
 	expect(crateIndexUrl('Abc')).toBe('https://index.crates.io/3/a/abc');
 });
 
+test('a registry version without its name, version or digest is rejected', async () => {
+	const publication = (manager: 'npm' | 'cargo', name: string): Publication => ({
+		id: `pkg:${manager}/${name}`,
+		manager,
+		name,
+		version: '1.0.0',
+		outcome: 'pending',
+		required: true,
+	});
+	const answer = (body: unknown) => () => Promise.resolve(Response.json(body));
+	const check = (target: Publication, body: unknown) => Effect.runPromise(verifyPublication(target, answer(body)));
+	const npmUrl = 'https://registry.npmjs.org/widget/1.0.0';
+	expect(await check(publication('npm', 'widget'), { name: 'widget', version: '1.0.0', dist: { integrity: 'sha' } }))
+		.toEqual(VerificationOutcome.Published({ version: '1.0.0', url: npmUrl, digest: 'sha' }));
+	expect(await check(publication('npm', 'widget'), { name: 'widget', version: '1.0.0', dist: {} }))
+		.toEqual(VerificationOutcome.Rejected({ url: npmUrl }));
+	expect(await check(publication('npm', 'widget'), []))
+		.toEqual(VerificationOutcome.Rejected({ url: npmUrl }));
+	const crateUrl = 'https://crates.io/api/v1/crates/widget/1.0.0';
+	const crate = { crate: 'widget', num: '1.0.0', checksum: 'c'.repeat(64) };
+	expect(await check(publication('cargo', 'widget'), { version: { ...crate, yanked: false } }))
+		.toEqual(VerificationOutcome.Published({ version: '1.0.0', url: crateUrl, digest: 'c'.repeat(64) }));
+	expect(await check(publication('cargo', 'widget'), { version: crate }))
+		.toEqual(VerificationOutcome.Rejected({ url: crateUrl }));
+});
+
 test('a crate whose latest version the crates.io API cannot answer is read from the sparse index', async () => {
 	const pkg: Package = {
 		manager: 'cargo',

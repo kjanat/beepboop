@@ -72,6 +72,7 @@ test('channel verification releases rejected response after consuming version me
 				name: Reflect.get(body, 'name'),
 				version: Reflect.get(body, 'version'),
 				digest: Reflect.get(body, 'digest'),
+				withdrawn: false,
 			};
 		},
 		'https://registry.test/widget/tags',

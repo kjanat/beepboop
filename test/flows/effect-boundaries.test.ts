@@ -91,7 +91,7 @@ test('JSR version bytes and npm channel reads cancel and unlock on interruption'
 			{ ...publication('npm', 'widget'), channel: 'latest' },
 			input => Promise.resolve(String(input).endsWith('/tags') ? response : Response.json({})),
 			'https://registry.test/widget',
-			() => ({ name: 'widget', version: '1.0.0', digest: 'digest' }),
+			() => ({ name: 'widget', version: '1.0.0', digest: 'digest', withdrawn: false }),
 			'https://registry.test/tags',
 		)
 	);

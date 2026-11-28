@@ -15,10 +15,10 @@ export interface RegistryRequest {
 	body?: string;
 }
 export interface RegistryEntry {
-	name: unknown;
-	version: unknown;
-	digest: unknown;
-	withdrawn?: boolean;
+	readonly name: string;
+	readonly version: string;
+	readonly digest: string;
+	readonly withdrawn: boolean;
 }
 export function registryRequest(
 	request: Fetcher,
@@ -80,7 +80,7 @@ export function verifyRegistry(
 	publication: Publication,
 	request: Fetcher,
 	url: string,
-	decode: (body: unknown) => RegistryEntry,
+	decode: (body: unknown) => RegistryEntry | undefined,
 	channel?: string,
 ): Effect.Effect<CheckOutcome> {
 	const result = checkOutcomes(publication, url);
@@ -90,10 +90,9 @@ export function verifyRegistry(
 		if (missing) return missing;
 		const body: unknown = yield* responseJson(response);
 		const entry = decode(body);
-		const digest = entry.digest;
 		if (
-			entry.name !== publication.name || entry.version !== publication.version || entry.withdrawn === true
-			|| typeof digest !== 'string' || !digest || (publication.digest && publication.digest !== digest)
+			!entry || entry.name !== publication.name || entry.version !== publication.version || entry.withdrawn
+			|| !entry.digest || (publication.digest && publication.digest !== entry.digest)
 		) {
 			return result.rejected();
 		}
@@ -105,7 +104,7 @@ export function verifyRegistry(
 				return result.pending();
 			}
 		}
-		return result.published(digest);
+		return result.published(entry.digest);
 	}).pipe(Effect.scoped, Effect.orElseSucceed(() => result.failed(verificationFailure)));
 }
 export const unpublished: unique symbol = Symbol('unpublished');
