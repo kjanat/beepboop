@@ -10,12 +10,12 @@ import {
 	publishablePackages,
 } from '@/domain/package-identity.ts';
 import type { ReadyRepository } from '@/domain/repository';
-import type { GitHubRunResult } from '@/github/run-state.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { outputsComplete } from '@/release/domain/execution/outputs.ts';
+import type { RunOutcome } from '@/release/domain/execution/run-labels.ts';
 import { githubFailureReason, githubRunLabel } from '@/release/domain/execution/run-labels.ts';
 import type { Configuration, Execution, ReleaseReference, WorkflowBinding } from '@/release/domain/execution/types.ts';
 import { executionId } from '@/release/domain/identity-keys.ts';
@@ -226,7 +226,7 @@ export function settle(execution: Execution, runSucceeded: boolean): Execution {
 		: { ...execution, state };
 }
 /** Settle the publication lifecycle without discarding the provider's outcome. */
-export function settleRun(execution: Execution, result: GitHubRunResult): Execution {
+export function settleRun(execution: Execution, result: RunOutcome): Execution {
 	const prior = execution.github && githubRunLabel(execution.github);
 	const next: Execution = { ...execution, github: result.observation };
 	if (prior && next.reason?.startsWith(prior)) delete next.reason;
@@ -267,7 +267,7 @@ export function recoverable(execution: Execution): boolean {
 export function publishedAfterFailure(execution: Execution): Execution | undefined {
 	if (!recoverable(execution) || execution.runId === undefined) return undefined;
 	const settled = execution.github?.completed
-		? settleRun(execution, { observation: execution.github, jobs: [], retry: undefined })
+		? settleRun(execution, { observation: execution.github, jobs: [] })
 		: settle(execution, false);
 	return settled.state === 'succeeded' ? settled : undefined;
 }

@@ -21,10 +21,12 @@ export function githubRunLabel(state: GitHubRunState): string {
 	}
 }
 
-export function githubFailureReason(result: {
-	observation: GitHubRunState;
-	jobs: readonly { name: string; kind: GitHubJobKind }[];
-}): string {
+export interface RunOutcome {
+	readonly observation: GitHubRunState;
+	readonly jobs: readonly { readonly name: string; readonly kind: GitHubJobKind }[];
+}
+
+export function githubFailureReason(result: RunOutcome): string {
 	const failed = result.jobs.filter(job => job.kind !== 'succeeded' && job.kind !== 'skipped');
 	const summary = githubRunLabel(result.observation);
 	return failed.length ? `${summary}: ${failed.map(job => `${job.name} (${job.kind})`).join(', ')}` : summary;
