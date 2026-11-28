@@ -109,6 +109,7 @@ export interface AutomationBindings extends AuthBindings, Credentials, WinGetBin
 	VAULT_KEYS: string;
 	VAULT_ACTIVE_KEY: string;
 }
+export const vaultKeys = Schema.fromJsonString(mutableRecord(Schema.String, Schema.String));
 
 export class AutomationService {
 	constructor(
@@ -1078,9 +1079,7 @@ export function applicationLayer(
 		Effect.gen(function*() {
 			const db = yield* Database;
 			const { env } = yield* ApplicationConfiguration;
-			const keys = yield* fromJson(env.VAULT_KEYS).pipe(
-				Effect.flatMap(value => fromSync(() => decodeSync(mutableRecord(Schema.String, Schema.String), value))),
-			);
+			const keys = yield* fromSync(() => decodeSync(vaultKeys, env.VAULT_KEYS));
 			return new Vault(
 				new AuditStore(db),
 				{ credentials: new CredentialStore(db), grants: new GrantStore(db), deliveries: new SecretDeliveryStore(db) },
