@@ -10,7 +10,7 @@ export interface ReleaseTrigger {
 	file: string;
 	ref?: string;
 }
-export type Preparation =
+export type PreparationRoute =
 	| { kind: 'workflow'; file: string }
 	| { kind: 'manifests' }
 	| { kind: 'files'; paths: string[] };
@@ -18,7 +18,7 @@ export type ReleaseCapability =
 	| { kind: 'observes'; triggers: ReleaseTrigger[] }
 	| { kind: 'unpublishable' }
 	| { kind: 'promotes'; workflow: string; automatic: boolean }
-	| { kind: 'prepares'; through: Preparation; lands: 'pr' | 'commit' };
+	| { kind: 'prepares'; through: PreparationRoute; lands: 'pr' | 'commit' };
 function dispatched(binding: WorkflowBinding | undefined): binding is WorkflowBinding {
 	return binding !== undefined && binding.mode !== 'observe';
 }
