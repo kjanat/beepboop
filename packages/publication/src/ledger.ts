@@ -1,11 +1,12 @@
 import { Result, Schema } from 'effect';
 import { registryLabel } from '@/domain/catalog.ts';
+import type { Package } from '@/domain/inventory.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { LedgerEntry, LedgerManager, LedgerPackage } from '@/publication/contract.ts';
-import { ledgerManagers } from '@/publication/contract.ts';
+import { ledgerManagers, releasedState } from '@/publication/contract.ts';
 import type { Publication } from '@/publication/publication.ts';
 import type { PublishKind } from '@/publication/publish-pace.ts';
 
@@ -198,17 +199,15 @@ export function fail(
 }
 
 export function released(record: LedgerRecord): boolean {
-	return ['uploaded', 'published', 'reused'].includes(record.status.state);
+	return releasedState(record.status.state);
 }
 
 export function entry(record: LedgerRecord): LedgerEntry {
+	const fields = { purl: record.purl, required: record.required };
 	const status = record.status;
-	return {
-		purl: record.purl,
-		required: record.required,
-		state: status.state,
-		...('error' in status ? { error: status.error } : {}),
-	};
+	return status.state === 'failed-retryable' || status.state === 'failed-permanent'
+		? { ...fields, state: status.state, error: status.error }
+		: { ...fields, state: status.state };
 }
 
 export function view(record: LedgerRecord): LedgerPackage {
@@ -268,6 +267,6 @@ export function pacedPublication(record: LedgerRecord, until: number): Publicati
 	};
 }
 
-export function reservation(publicationStatus: string | undefined): PublishKind {
+export function reservation(publicationStatus: Package['publicationStatus']): PublishKind {
 	return publicationStatus === 'missing' ? 'new' : 'update';
 }

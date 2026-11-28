@@ -7,17 +7,15 @@ export const ledgerManagers = ['cargo', 'pypi', 'npm'] as const;
 export const publishWaitMinutes = 30;
 export type LedgerManager = (typeof ledgerManagers)[number];
 
-export const ledgerStates = [
-	'planned',
-	'claimed',
-	'uploaded',
-	'published',
-	'reused',
-	'rate-limited',
-	'failed-retryable',
-	'failed-permanent',
-] as const;
+const releasedLedgerStates = ['uploaded', 'published', 'reused'] as const;
+const failedLedgerStates = ['failed-retryable', 'failed-permanent'] as const;
+const openLedgerStates = ['planned', 'claimed', ...releasedLedgerStates, 'rate-limited'] as const;
+export const ledgerStates = [...openLedgerStates, ...failedLedgerStates] as const;
 export type LedgerState = (typeof ledgerStates)[number];
+
+export function releasedState(state: LedgerState): boolean {
+	return releasedLedgerStates.some(released => released === state);
+}
 
 export const ledgerPackage = mutableStruct({
 	purl: text,
@@ -33,12 +31,10 @@ export const ledgerPackage = mutableStruct({
 });
 export type LedgerPackage = Decoded<typeof ledgerPackage>;
 
-export const ledgerEntry = mutableStruct({
-	purl: text,
-	required: Schema.Boolean,
-	state: Schema.Literals(ledgerStates),
-	error: Schema.optional(text),
-});
+export const ledgerEntry = Schema.Union([
+	mutableStruct({ purl: text, required: Schema.Boolean, state: Schema.Literals(openLedgerStates) }),
+	mutableStruct({ purl: text, required: Schema.Boolean, state: Schema.Literals(failedLedgerStates), error: text }),
+]);
 export type LedgerEntry = Decoded<typeof ledgerEntry>;
 
 const publish = mutableStruct({ kind: Schema.Literal('publish'), package: ledgerPackage });

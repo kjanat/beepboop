@@ -12,7 +12,7 @@ import { attemptWith, awaitWith, failWith } from '@/kernel/errors/refusal.ts';
 import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 import { decodeSync, mutableArray, mutableRecord, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { LedgerEntry, LedgerPackage } from '@/publication/contract.ts';
-import { claimStep, nextStep, publishWaitMinutes, settledStep } from '@/publication/contract.ts';
+import { claimStep, nextStep, publishWaitMinutes, releasedState, settledStep } from '@/publication/contract.ts';
 import { distributionLicensed, npmManifest, npmMissing, pythonMissing } from '@/publication/runner/metadata.ts';
 
 export class RunnerFailure extends Data.TaggedError('RunnerFailure')<{ readonly message: string }> {}
@@ -289,7 +289,7 @@ export function publishPackages<E>(runner: Runner<E>): Effect.Effect<LedgerEntry
 			...outcome,
 			...(outcome.outcome === 'published' ? { moveOn: true } : {}),
 		});
-	const show = (entry: LedgerEntry) => `${entry.state}${entry.error ? ` (${entry.error})` : ''}`;
+	const show = (entry: LedgerEntry) => `${entry.state}${'error' in entry ? ` (${entry.error})` : ''}`;
 	let secrets: Record<string, string> | undefined;
 	const environment = Effect.gen(function*() {
 		if (secrets) return secrets;
@@ -379,7 +379,7 @@ export function publishPackages<E>(runner: Runner<E>): Effect.Effect<LedgerEntry
 }
 
 export function requireAll(entries: LedgerEntry[]): Effect.Effect<void, RunnerFailure> {
-	const missing = entries.filter(entry => entry.required && !['uploaded', 'published', 'reused'].includes(entry.state));
+	const missing = entries.filter(entry => entry.required && !releasedState(entry.state));
 	if (!missing.length) return Effect.void;
 	return fail(
 		`${missing.length} required publication${missing.length === 1 ? '' : 's'} did not publish: ${
