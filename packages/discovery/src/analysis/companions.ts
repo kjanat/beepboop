@@ -1,5 +1,6 @@
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
+import { tagPrefix } from '@/domain/version-tags.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';
 
 interface Stream {
@@ -54,9 +55,7 @@ function evidence(snapshot: Snapshot, module: string, other: string): string | u
 	return path === undefined ? undefined : `\`${path}\` refers to \`${module}<version>\` and \`${other}<version>\``;
 }
 function moduleOf(pkg: Package): string | undefined {
-	return pkg.manager === 'go' && pkg.versionSource.startsWith('tags:')
-		? pkg.versionSource.slice('tags:'.length)
-		: undefined;
+	return pkg.manager === 'go' ? tagPrefix(pkg.versionSource) : undefined;
 }
 export function companionProposals(choices: CompanionChoices, snapshot: Snapshot, inventory: Inventory): string[] {
 	return inventory.packages.flatMap(pkg => {

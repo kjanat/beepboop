@@ -1,5 +1,6 @@
 import { registryLabel } from '@/domain/catalog.ts';
 import { publicationStages } from '@/domain/publication-stages';
+import { tagPrefix } from '@/domain/version-tags.ts';
 import { listed } from '@/kernel/text/listing.ts';
 import type { SetupChoices, SetupPlan } from '@/setup/types.ts';
 
@@ -68,8 +69,9 @@ export function streamSummary(
 			? [
 				`${promote.tagPrefix}<version>`,
 				...[...new Set([...own, ...(stream.companionModules ?? [])])].flatMap(id => {
-					const source = packages.get(id)?.manager === 'go' ? packages.get(id)?.versionSource ?? '' : '';
-					const prefix = source.startsWith('tags:') ? source.slice('tags:'.length) : '';
+					const pkg = packages.get(id);
+					const source = pkg?.manager === 'go' ? pkg.versionSource : undefined;
+					const prefix = source === undefined ? '' : tagPrefix(source) ?? '';
 					return prefix && prefix !== promote.tagPrefix ? [`${prefix}<version>`] : [];
 				}),
 			]

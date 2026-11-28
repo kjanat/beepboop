@@ -4,6 +4,7 @@ import { isLockfile } from '@/domain/catalog.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
+import { tagPrefix as sourceTagPrefix } from '@/domain/version-tags.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { shellQuote } from '@/kernel/text/shell-quote.ts';
@@ -83,7 +84,7 @@ function completeTaggedStream(
 	const versions = new Set(
 		stream.packages.flatMap(id => {
 			const pkg = byId.get(id);
-			return pkg?.version && !pkg.versionSource.startsWith('tags:') ? [pkg.version] : [];
+			return pkg?.version && sourceTagPrefix(pkg.versionSource) === undefined ? [pkg.version] : [];
 		}),
 	);
 	const [version] = versions;
@@ -99,12 +100,12 @@ function completeTaggedStream(
 	const crates = inventory.packages.filter(pkg =>
 		pkg.manager === 'cargo' && open(pkg) && version !== undefined && pkg.version === version
 	).sort((left, right) => rank(left) - rank(right));
-	const modulePrefix = (pkg: Package) => pkg.versionSource.slice('tags:'.length);
-	const released = (pkg: Package) => (snapshot.tags ?? []).some(tag => tag.startsWith(modulePrefix(pkg)));
-	const modules = inventory.packages.filter(pkg =>
-		pkg.manager === 'go' && open(pkg) && pkg.versionSource.startsWith('tags:')
-	);
-	const added = [...crates, ...modules.filter(pkg => !released(pkg))].map(packageId);
+	const modules = inventory.packages.flatMap(pkg => {
+		const prefix = sourceTagPrefix(pkg.versionSource);
+		return pkg.manager === 'go' && open(pkg) && prefix !== undefined ? [{ pkg, prefix }] : [];
+	});
+	const released = ({ prefix }: { prefix: string }) => (snapshot.tags ?? []).some(tag => tag.startsWith(prefix));
+	const added = [...crates, ...modules.filter(module => !released(module)).map(({ pkg }) => pkg)].map(packageId);
 	const lockfiles = snapshot.paths.filter(isLockfile);
 	const tests = Object.entries(snapshot.files).filter(([path]) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path))
 		.flatMap(([, source]) =>
@@ -125,8 +126,7 @@ function completeTaggedStream(
 			]
 			: []),
 	];
-	const joined = modules.filter(pkg => !released(pkg));
-	const moduleIds = joined.map(packageId);
+	const moduleIds = modules.filter(module => !released(module)).map(({ pkg }) => packageId(pkg));
 	const crateIds = new Map(crates.map(pkg => [pkg.name, packageId(pkg)]));
 	const proposal = graph.streams.find(entry => entry.id === stream.name);
 	const phases = new Map(
@@ -213,8 +213,7 @@ function completeTaggedStream(
 			}
 			: { promote: { file: unusedFile('release-crates', taken), ...publish, tagPrefix } }),
 	};
-	const independent = modules.filter(released).map((pkg): Stream => {
-		const prefix = modulePrefix(pkg);
+	const independent = modules.filter(released).map(({ pkg, prefix }): Stream => {
 		const base = slug(prefix.replace(/\/?v$/, '')) || 'go';
 		const name = unusedName(
 			/^[a-z]/.test(base) ? base.slice(0, 64) : `go-${base}`.slice(0, 64),

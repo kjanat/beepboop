@@ -1,3 +1,4 @@
+import { tagPrefix } from '@/domain/version-tags.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { shellQuote } from '@/kernel/text/shell-quote.ts';
@@ -18,7 +19,8 @@ export function preparationReasons(plan: SetupPlan, selection: Selection): strin
 		reasons.push('This repository delegates version preparation to a workflow.');
 	}
 	if (
-		selection.packages.length && selection.packages.every(pkg => pkg.versionSource?.startsWith('tags:'))
+		selection.packages.length
+		&& selection.packages.every(pkg => pkg.versionSource !== undefined && tagPrefix(pkg.versionSource) !== undefined)
 		&& !plan.preparation?.versionFileStreams.includes(selection.name)
 	) reasons.push('These packages take their versions from Git tags and need a preparation job.');
 	return reasons;

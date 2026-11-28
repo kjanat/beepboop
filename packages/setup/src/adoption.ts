@@ -6,7 +6,7 @@ import { literalPrefix } from '@/discovery/release-graph/workflows.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
-import { latestTag } from '@/domain/version-tags.ts';
+import { latestTag, tagPrefix as sourceTagPrefix } from '@/domain/version-tags.ts';
 import { identifierPattern } from '@/kernel/schema/ids.ts';
 import { slug, unusedName } from '@/kernel/text/naming.ts';
 import { escapeRegExp } from '@/kernel/text/patterns.ts';
@@ -57,7 +57,7 @@ export function adoptionChoices(
 	const known = new Map(inventory.packages.filter(publishable).map(pkg => [packageId(pkg), pkg]));
 	const fileVersioned = (id: string) => {
 		const pkg = known.get(id);
-		return !!pkg && !pkg.versionSource.startsWith('tags:');
+		return !!pkg && sourceTagPrefix(pkg.versionSource) === undefined;
 	};
 	return graph.streams.map(stream => {
 		const verifiable = stream.targets.filter(target => target.destination !== 'open-vsx');
@@ -175,9 +175,9 @@ export function adoptionChoices(
 							ref: `refs/tags/${prefix}*`,
 							publications: channel ? [] : [
 								...required.filter(id => {
-									const source = known.get(id)?.versionSource ?? '';
-									return scoped.has(id)
-										&& (!source.startsWith('tags:') || prefix === '' || source === `tags:${prefix}`);
+									const pkg = known.get(id);
+									const tagged = pkg === undefined ? undefined : sourceTagPrefix(pkg.versionSource);
+									return scoped.has(id) && (tagged === undefined || prefix === '' || tagged === prefix);
 								}),
 								...(released(prefix) ? [`pkg:github/${repository}`] : []),
 							],

@@ -5,6 +5,7 @@ import { operations as operationsOf } from '@/domain/configuration/schema.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, parseReleaseIdentity, publishablePackages } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
+import { tagPrefix } from '@/domain/version-tags.ts';
 import type { Diagnostic, DiagnosticSubject } from '@/kernel/errors/diagnostics.ts';
 
 function versioned(reference: string): boolean {
@@ -92,7 +93,7 @@ export function validateAgainst(
 					subject,
 					`Stream ${name} companionModules names ${reference}, which discovery did not find`,
 				);
-			} else if (!matches.some(pkg => pkg.manager === 'go' && pkg.versionSource.startsWith('tags:'))) {
+			} else if (!matches.some(pkg => pkg.manager === 'go' && tagPrefix(pkg.versionSource) !== undefined)) {
 				report(
 					'warning',
 					'companion-module',
