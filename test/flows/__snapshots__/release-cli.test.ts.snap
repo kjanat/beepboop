@@ -33,7 +33,7 @@ Beepboop commits the version bump to main, then publishes once that commit is ve
 package  registry  version  state      
 -------  --------  -------  -----------
 \x1B[1m\x1B[36mwidget\x1B[39m\x1B[22m   npm       \x1B[35m1.0.1\x1B[39m    \x1B[32m✔\x1B[39m \x1B[32msucceeded\x1B[39m
-Run: \x1B[4m\x1B[34m\x1B]8;;https://github.com/octo/widget/actions/runs/1007\x1B\\https://github.com/octo/widget/actions/runs/1007\x1B]8;;\x1B\\\x1B[39m\x1B[24m
+Run: \x1B[4m\x1B[34m\x1B]8;;https://github.com/octo/widget/actions/runs/1008\x1B\\https://github.com/octo/widget/actions/runs/1008\x1B]8;;\x1B\\\x1B[39m\x1B[24m
 "
 `;
 
@@ -70,6 +70,6 @@ Beepboop commits the version bump to main, then publishes once that commit is ve
 package  registry  version  state      
 -------  --------  -------  -----------
 widget   npm       1.0.1    ✔ succeeded
-Run: https://github.com/octo/widget/actions/runs/1007
+Run: https://github.com/octo/widget/actions/runs/1008
 "
 `;
