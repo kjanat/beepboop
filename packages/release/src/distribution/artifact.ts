@@ -2,11 +2,11 @@ import { Buffer } from 'node:buffer';
 import { Effect, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
-import { filesFromZip, maxDirectoryEntries, maxDistributionFiles } from '@/kernel/archive/zip.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { DistributionFile } from '@/release/distribution/validation.ts';
 import { readDistributionFile } from '@/release/distribution/validation.ts';
+import { filesFromZip, maxDirectoryEntries, maxDistributionFiles } from '@/release/distribution/zip.ts';
 
 export interface DistributionArtifact {
 	id: number;
