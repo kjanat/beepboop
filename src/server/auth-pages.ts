@@ -1,5 +1,5 @@
 import { AuthPages } from '@/auth/pages.ts';
-import { errorPage } from '@/kernel/errors/classify.ts';
+import { errorPage } from '@/server/failure.ts';
 
 export const authPages = AuthPages.of({
 	loginFailed: reason =>

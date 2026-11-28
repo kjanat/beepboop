@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld, origin } from '@root/test/support/world.ts';
-import { errorPage } from '@/kernel/errors/classify.ts';
 import { confirmationCode, loginSecret } from '@/kernel/schema/ids.ts';
+import { errorPage } from '@/server/failure.ts';
 
 let world: World;
 eachWorld(created => {

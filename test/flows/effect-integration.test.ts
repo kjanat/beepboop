@@ -16,7 +16,6 @@ import { Automation, applicationLayer } from '@/automation/service';
 import { routes } from '@/contract/routes';
 import { configurationSchema } from '@/domain/configuration/schema.ts';
 import { semVer } from '@/domain/version.ts';
-import { failure } from '@/kernel/errors/classify.ts';
 import { readEach } from '@/kernel/errors/decoding.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Fetcher } from '@/kernel/http/fetcher.ts';
@@ -24,6 +23,7 @@ import { logFailure } from '@/kernel/logging/failure-log.ts';
 import { decodeSync, encodeSync, mapped } from '@/kernel/schema/structs.ts';
 import { encodeConfigurationV1, storedConfiguration } from '@/persistence/codecs/configuration';
 import { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
+import { failure } from '@/server/failure.ts';
 
 let world: World;
 eachWorld(created => {

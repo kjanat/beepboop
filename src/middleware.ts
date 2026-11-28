@@ -2,9 +2,9 @@ import { defineMiddleware } from 'astro:middleware';
 import { Effect } from 'effect';
 import { administrator } from '@/auth/admin.ts';
 import { Automation, applicationLayer } from '@/automation/service';
-import { failure } from '@/kernel/errors/classify.ts';
 import { jsonLogging } from '@/kernel/logging/json-logging.ts';
 import { bindings } from '@/server/bindings.ts';
+import { failure } from '@/server/failure.ts';
 import { dashboardPaths } from '@/server/sections.ts';
 
 export const onRequest = defineMiddleware(async (context, next) => {

@@ -1,7 +1,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Effect, Logger } from 'effect';
 import { DomainError, precondition } from '@/kernel/errors/domain-error.ts';
-import { failure, toDomainError } from '@/kernel/errors/classify.ts';
+import { toDomainError } from '@/kernel/errors/classify.ts';
+import { failure } from '@/server/failure.ts';
 
 export class Probe extends DurableObject {
 	async check(kind: string): Promise<void> {
