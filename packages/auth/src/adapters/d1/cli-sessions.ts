@@ -1,13 +1,15 @@
 import { Effect, Schema } from 'effect';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import type { Decoded } from '@/kernel/schema/structs.ts';
 import { mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { optionalColumn, parse, sql } from '@/persistence/d1/database';
 
 const subjectRow = mutableStruct({ subject: Schema.String });
 const sessionRow = mutableStruct({ id: Schema.String, created_at: Schema.Finite });
-export type CLISessionRow = Decoded<typeof sessionRow>;
+export interface CLISession {
+	readonly id: string;
+	readonly createdAt: number;
+}
 
 export class CLISessionStore {
 	private readonly sql: Sql;
@@ -36,9 +38,10 @@ export class CLISessionStore {
 	revokeAll(): Effect.Effect<void, DomainError> {
 		return this.sql.run('DELETE FROM cli_sessions').pipe(Effect.asVoid);
 	}
-	list(): Effect.Effect<CLISessionRow[], DomainError> {
+	list(): Effect.Effect<CLISession[], DomainError> {
 		return this.sql.all('SELECT id,created_at FROM cli_sessions ORDER BY created_at DESC').pipe(
 			Effect.flatMap(rows => parse(mutableArray(sessionRow), rows)),
+			Effect.map(rows => rows.map(row => ({ id: row.id, createdAt: row.created_at }))),
 		);
 	}
 }

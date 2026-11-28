@@ -14,7 +14,7 @@ export function secretsPage(data: ViewOf<'secrets'>) {
 	}
 	const copies = new Map<string, (typeof data.deliveries)[number]['state']>();
 	for (const delivery of data.deliveries) {
-		const key = JSON.stringify([delivery.grant_id, delivery.version]);
+		const key = JSON.stringify([delivery.grantId, delivery.version]);
 		if (!copies.has(key)) copies.set(key, delivery.state);
 	}
 	return {

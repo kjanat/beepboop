@@ -24,7 +24,8 @@ export interface CredentialStores {
 export interface SecretWriter extends GitHubRequests {
 	token(name: string, id: number, permissions: Permissions): Effect.Effect<string, DomainError>;
 }
-export type SyncState = 'succeeded' | 'failed';
+export const syncStates = ['succeeded', 'failed'] as const;
+export type SyncState = (typeof syncStates)[number];
 export interface SyncOutcome {
 	readonly id: string;
 	readonly state: SyncState;
@@ -101,7 +102,7 @@ export class Vault {
 		return Effect.gen({ self: this }, function*() {
 			const row = yield* this.stores.credentials.sealed(alias);
 			if (!row) return yield* notFound('credential', 'No stored value under this name', alias);
-			const value = yield* this.open(`${alias}:${row.version}:${row.key_id}`, row.key_id, row);
+			const value = yield* this.open(`${alias}:${row.version}:${row.keyId}`, row.keyId, row);
 			yield* this.audit.record(actor, 'credential.access', alias);
 			return { value, version: row.version };
 		});

@@ -21,9 +21,34 @@ const listedRow = mutableStruct({
 });
 const activeRow = mutableStruct({ alias: Schema.String, version: Schema.Finite, created_at: Schema.Finite });
 
-export type SealedCredential = Decoded<typeof sealedRow>;
-export type ListedCredential = Decoded<typeof listedRow>;
-export type ActiveCredential = Decoded<typeof activeRow>;
+export interface SealedCredential {
+	readonly version: number;
+	readonly keyId: string;
+	readonly iv: string;
+	readonly ciphertext: string;
+}
+export interface CredentialVersion {
+	readonly alias: string;
+	readonly version: number;
+	readonly keyId: string;
+	readonly active: boolean;
+	readonly createdAt: number;
+}
+export interface ActiveCredential {
+	readonly alias: string;
+	readonly version: number;
+	readonly createdAt: number;
+}
+
+function credentialVersion(row: Decoded<typeof listedRow>): CredentialVersion {
+	return {
+		alias: row.alias,
+		version: row.version,
+		keyId: row.key_id,
+		active: row.active === 1,
+		createdAt: row.created_at,
+	};
+}
 
 export interface Sealed {
 	alias: string;
@@ -38,13 +63,17 @@ export class CredentialStore {
 	constructor(db: SqlDatabase | Sql) {
 		this.sql = sql(db);
 	}
-	list(): Effect.Effect<ListedCredential[], DomainError> {
+	list(): Effect.Effect<CredentialVersion[], DomainError> {
 		return this.sql.all('SELECT alias,version,key_id,active,created_at FROM credentials ORDER BY alias,version DESC')
-			.pipe(Effect.flatMap(rows => parse(mutableArray(listedRow), rows)));
+			.pipe(
+				Effect.flatMap(rows => parse(mutableArray(listedRow), rows)),
+				Effect.map(rows => rows.map(credentialVersion)),
+			);
 	}
 	active(): Effect.Effect<ActiveCredential[], DomainError> {
 		return this.sql.all('SELECT alias,version,created_at FROM credentials WHERE active=1 ORDER BY alias').pipe(
 			Effect.flatMap(rows => parse(mutableArray(activeRow), rows)),
+			Effect.map(rows => rows.map(row => ({ alias: row.alias, version: row.version, createdAt: row.created_at }))),
 		);
 	}
 	activeVersion(alias: string): Effect.Effect<number | undefined, DomainError> {
@@ -54,7 +83,12 @@ export class CredentialStore {
 	}
 	sealed(alias: string): Effect.Effect<SealedCredential | undefined, DomainError> {
 		return this.sql.first('SELECT version,key_id,iv,ciphertext FROM credentials WHERE alias=? AND active=1', alias)
-			.pipe(Effect.flatMap(row => row === null ? Effect.undefined : parse(sealedRow, row)));
+			.pipe(Effect.flatMap(optionalColumn(sealedRow, row => ({
+				version: row.version,
+				keyId: row.key_id,
+				iv: row.iv,
+				ciphertext: row.ciphertext,
+			}))));
 	}
 	nextVersion(alias: string): Effect.Effect<number, DomainError> {
 		return this.sql.first('SELECT MAX(version) AS version FROM credentials WHERE alias=?', alias).pipe(

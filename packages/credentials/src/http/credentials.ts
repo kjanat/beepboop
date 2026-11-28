@@ -33,9 +33,24 @@ function stored(credentials: CredentialStore, alias: string): Effect.Effect<void
 
 export function listCredentials(endpoints: CredentialEndpoints) {
 	return Effect.all({
-		credentials: endpoints.credentials.list(),
+		credentials: endpoints.credentials.list().pipe(Effect.map(versions =>
+			versions.map(version => ({
+				alias: version.alias,
+				version: version.version,
+				key_id: version.keyId,
+				active: Number(version.active),
+				created_at: version.createdAt,
+			}))
+		)),
 		grants: endpoints.grants.list().pipe(Effect.map(grants => grants.map(grantRow))),
-		deliveries: endpoints.deliveries.list(),
+		deliveries: endpoints.deliveries.list().pipe(Effect.map(deliveries =>
+			deliveries.map(delivery => ({
+				grant_id: delivery.grantId,
+				version: delivery.version,
+				state: delivery.state,
+				updated_at: delivery.updatedAt,
+			}))
+		)),
 	});
 }
 
