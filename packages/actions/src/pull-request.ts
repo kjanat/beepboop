@@ -16,12 +16,9 @@ import { shaPattern } from '@/kernel/schema/ids.ts';
 import { array, record, text } from '@/kernel/schema/result.ts';
 
 export type PullRequestOperation = 'created' | 'updated' | 'none';
-export interface PullRequestResult {
-	operation: PullRequestOperation;
-	number?: number;
-	url?: string;
-	headSha?: string;
-}
+export type PullRequestResult =
+	| { operation: 'none'; number?: never; url?: never; headSha?: never }
+	| { operation: PullRequestOperation; number: number; url: string; headSha: string };
 
 type Entry =
 	| { path: string; mode: string; type: 'blob' | 'commit'; sha: string }

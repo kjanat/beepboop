@@ -159,7 +159,12 @@ test('labels and assignees are added on creation and repaired without replacing 
 
 	pull.labels = ['triage'];
 	pull.assignees = ['hubot'];
-	expect(await open(repository, checkout.dir, inputs)).toEqual({ ...created, operation: 'updated' });
+	expect(await open(repository, checkout.dir, inputs)).toEqual({
+		operation: 'updated',
+		number: pull.number,
+		url: `https://github.com/octo/widget/pull/${pull.number}`,
+		headSha: pull.head.sha,
+	});
 	expect(pull.labels).toEqual(['triage', 'release', 'maintenance']);
 	expect(pull.assignees).toEqual(['hubot', 'octocat']);
 
