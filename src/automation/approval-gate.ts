@@ -109,7 +109,12 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				return yield* metadataProblemsOf(execution);
 			});
 			const commitGates = Effect.fnUntraced(function*(subject: GateSubject) {
-				const token = yield* gateway.token(subject.repository, subject.repositoryId);
+				const token = yield* gateway.token(subject.repository, subject.repositoryId, {
+					contents: 'read',
+					actions: 'read',
+					checks: 'read',
+					statuses: 'read',
+				});
 				const base = `/repos/${subject.repository}`;
 				const manifest: string[] = [];
 				const repository = yield* store.repositories.get(subject.repositoryId);
