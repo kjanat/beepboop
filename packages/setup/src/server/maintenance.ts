@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { Effect, Result, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { pullRequest } from '@/automation/preparation-pull-requests';
@@ -6,7 +7,9 @@ import type { Store } from '@/automation/store';
 import { discover } from '@/discovery/discover.ts';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { canonicalConfiguration, outdatedConfiguration } from '@/domain/configuration/canonical.ts';
+import type { ResolvedConfiguration } from '@/domain/configuration/presets.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
+import { configurationPath } from '@/domain/configuration/schema.ts';
 import type { Edit, Inventory, Snapshot } from '@/domain/inventory.ts';
 import { packageId, selectorKey } from '@/domain/package-identity.ts';
 import { packageMarkdown } from '@/domain/package-label';
@@ -44,13 +47,26 @@ import type { SetupChoices } from '@/setup/types.ts';
 
 const editsSchema = mutableArray(mutableStruct({ path: Schema.String, before: Schema.String, after: Schema.String }));
 export function sameEdits(left: Edit[], right: Edit[]): boolean {
-	const sorted = (edits: Edit[]) => JSON.stringify([...edits].sort((a, b) => a.path.localeCompare(b.path)));
-	return sorted(left) === sorted(right);
+	const sorted = (edits: Edit[]) => [...edits].sort((a, b) => a.path.localeCompare(b.path));
+	return isDeepStrictEqual(sorted(left), sorted(right));
+}
+function repositoryConfiguration(
+	gateway: RepositoryGateway,
+	raw: unknown,
+): Effect.Effect<ResolvedConfiguration, DomainError> {
+	return resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
+		Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
+	);
+}
+function currentInventory(store: Store, snapshot: Snapshot): Effect.Effect<Inventory, DomainError> {
+	return store.repositories.get(snapshot.repository.id).pipe(
+		Effect.map(stored => withRegistryStatus(discover(snapshot), stored?.inventory)),
+	);
 }
 export function setupEdits(saved: Record<string, unknown> | undefined): Edit[] {
 	if (Array.isArray(saved?.edits)) return decodeSync(editsSchema, saved.edits);
 	return typeof saved?.content === 'string'
-		? [{ path: '.github/beepboop.json', before: '', after: saved.content }]
+		? [{ path: configurationPath, before: '', after: saved.content }]
 		: [];
 }
 
@@ -135,8 +151,7 @@ export function maintainSetup(
 		const generated = yield* generatedFiles(gateway, name, id, pull.head);
 		if (!generated && saved.head !== pull.head) return;
 		const previous = generated ?? (yield* fromSync(() => setupEdits(saved)));
-		const stored = yield* store.repositories.get(id);
-		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
+		const inventory = yield* currentInventory(store, snapshot);
 		const summary = `Inspected [${snapshot.sha}](https://github.com/${name}/commit/${snapshot.sha}).\n\n`
 			+ 'Discovered packages:\n'
 			+ inventory.packages.map(pkg =>
@@ -157,13 +172,11 @@ export function maintainSetup(
 			// Do not overwrite a newer explicit setup operation or another reconciliation's journal.
 			replaceDocument(db, 'onboarding', 'repository_id', id, row.document, next);
 		yield* Effect.gen(function*() {
-			const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
-			const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
-				Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
-			);
-			const original = previous.find(edit => edit.path === '.github/beepboop.json')?.before ?? '';
+			const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files[configurationPath] ?? '{}'));
+			const resolved = yield* repositoryConfiguration(gateway, raw);
+			const original = previous.find(edit => edit.path === configurationPath)?.before ?? '';
 			const choices = requested?.choices
-				?? ((snapshot.files['.github/beepboop.json'] ?? '') === original && !followsProposal(saved, pull.body)
+				?? ((snapshot.files[configurationPath] ?? '') === original && !followsProposal(saved, pull.body)
 					? saved.choices
 					: undefined);
 			const workflowPermission = yield* gateway.canEditWorkflows(name, id);
@@ -250,8 +263,8 @@ export function maintainSetup(
 				...result,
 				sourceSha: snapshot.sha,
 				checkedSha: snapshot.sha,
-				content: plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after
-					?? snapshot.files['.github/beepboop.json'],
+				content: plan.edits.find(edit => edit.path === configurationPath)?.after
+					?? snapshot.files[configurationPath],
 				choices: plan.choices,
 				options: setupOptions(plan),
 				inferred: plan.adoption !== undefined,
@@ -304,22 +317,19 @@ function migrateSetup(
 ): Effect.Effect<void, DomainError> {
 	return Effect.gen(function*() {
 		const { name, id } = snapshot.repository;
-		const source = snapshot.files['.github/beepboop.json'];
+		const source = snapshot.files[configurationPath];
 		const choices = savedSetup(saved).saved;
 		if (source === undefined) return;
 		if (!choices) return yield* formatSetup(store, gateway, snapshot, saved, document);
 		const raw = yield* fromSync((): unknown => JSON.parse(source));
-		const stored = yield* store.repositories.get(id);
-		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
+		const inventory = yield* currentInventory(store, snapshot);
 		const missing = saved.migration !== 'proposed' && setupMissing(raw, choices);
 		const canonical = canonicalConfiguration(raw, inventory.packages);
 		const format = outdatedConfiguration(raw, inventory.packages)
 			? yield* fromPromise(() => sha256Hex(JSON.stringify(canonical)))
 			: undefined;
 		if (!missing && (format === undefined || saved.formatMigration === format)) return;
-		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
-			Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
-		);
+		const resolved = yield* repositoryConfiguration(gateway, raw);
 		const branch = setupBranch(snapshot);
 		const head = yield* setupHead(gateway, name, id, branch);
 		const workflowPermission = yield* gateway.canEditWorkflows(name, id);
@@ -346,7 +356,7 @@ function migrateSetup(
 			...saved,
 			...result,
 			sourceSha: snapshot.sha,
-			content: plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after ?? source,
+			content: plan.edits.find(edit => edit.path === configurationPath)?.after ?? source,
 			choices: plan.choices,
 			options: setupOptions(plan),
 			inferred: plan.adoption !== undefined,
@@ -372,20 +382,19 @@ const formatSetup = Effect.fn('formatSetup')(function*(
 	pull?: { number: number; head: string; branch: string; body: string },
 ): Effect.fn.Return<void, DomainError> {
 	const { name, id } = snapshot.repository;
-	const source = snapshot.files['.github/beepboop.json'];
+	const source = snapshot.files[configurationPath];
 	if (source === undefined) return;
 	const parsed = Result.try((): unknown => JSON.parse(source));
 	if (Result.isFailure(parsed)) return;
 	const raw = parsed.success;
-	const stored = yield* store.repositories.get(id);
-	const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
+	const inventory = yield* currentInventory(store, snapshot);
 	if (!outdatedConfiguration(raw, inventory.packages)) return;
 	const canonical = canonicalConfiguration(raw, inventory.packages);
 	const format = yield* fromPromise(() => sha256Hex(JSON.stringify(canonical)));
 	if (saved.formatMigration === format) return;
 	if (!pull && document === undefined && (yield* openSetupPull(gateway, name, id))) return;
 	const after = formatJson(yield* Effect.fromResult(json(canonical)));
-	const edits = [{ path: '.github/beepboop.json', before: source, after }];
+	const edits = [{ path: configurationPath, before: source, after }];
 	const branch = pull?.branch ?? setupBranch(snapshot);
 	const head = pull ? pull.head : yield* setupHead(gateway, name, id, branch);
 	const result = yield* pullRequest(gateway, {
@@ -437,14 +446,11 @@ export function currentOptions(
 ): Effect.Effect<ReturnType<typeof setupOptions>, DomainError> {
 	return Effect.gen(function*() {
 		const snapshot = yield* repositorySnapshot(gateway, repository.name, repository.id);
-		const stored = yield* store.repositories.get(repository.id);
-		const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'));
-		const resolved = yield* resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
-			Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
-		);
+		const raw = yield* fromSync((): unknown => JSON.parse(snapshot.files[configurationPath] ?? '{}'));
+		const resolved = yield* repositoryConfiguration(gateway, raw);
 		const plan = yield* previewSetup(
 			snapshot,
-			withRegistryStatus(discover(snapshot), stored?.inventory),
+			yield* currentInventory(store, snapshot),
 			choices,
 			{ head: null, publishing },
 			resolved.configuration,
