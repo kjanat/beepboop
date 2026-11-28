@@ -90,7 +90,7 @@ export interface Workflow {
 	releaseTypes: string[];
 	workflowRuns: string[];
 	dispatchInputs: string[];
-	dispatchText: string;
+	dispatchDefinitions: Readonly<Record<string, unknown>>;
 	callInputs: string[];
 	generator?: string;
 	truncated?: true;
@@ -916,7 +916,7 @@ export function workflowModels(snapshot: Snapshot): Workflow[] {
 			releaseTypes: triggerList(on.release, 'types'),
 			workflowRuns: triggerList(on.workflow_run, 'workflows'),
 			dispatchInputs: Object.keys(object(object(on.workflow_dispatch).inputs)),
-			dispatchText: JSON.stringify(object(object(on.workflow_dispatch).inputs)),
+			dispatchDefinitions: object(object(on.workflow_dispatch).inputs),
 			callInputs: Object.keys(object(object(on.workflow_call).inputs)),
 			...(generator ? { generator } : {}),
 			jobs,

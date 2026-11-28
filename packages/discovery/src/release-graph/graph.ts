@@ -1337,17 +1337,18 @@ export function inferReleaseGraph(snapshot: Snapshot, inventory: Inventory): Rel
 		const recoveries = memberFiles.flatMap(file => {
 			const workflow = graph.byFile.get(file);
 			if (!workflow) return [];
-			const inputs = object(JSON.parse(workflow.dispatchText));
-			return Object.entries(inputs).filter(([input, value]) => {
+			return Object.entries(workflow.dispatchDefinitions).filter(([input, value]) => {
 				if (
 					/run[-_]?id|existing|resume|recover|backfill|destination|registry/i.test(`${input} ${JSON.stringify(value)}`)
 				) {
 					return true;
 				}
 				const options = object(value).options;
-				return options !== undefined
-					&& (JSON.stringify(options).match(/"(?:npm|jsr|pypi|crates-io|mirror|oci|docker|aur|winget)"/g)?.length ?? 0)
-						>= 2;
+				return Array.isArray(options)
+					&& options.filter(option =>
+						typeof option === 'string'
+						&& /^(?:npm|jsr|pypi|crates-io|mirror|oci|docker|aur|winget)$/.test(option)
+					).length >= 2;
 			}).map(([input]) => `${code(file)} input ${code(input)}`);
 		});
 		const aliases = [
