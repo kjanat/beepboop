@@ -283,9 +283,7 @@ export class CoordinatorClient extends Context.Service<CoordinatorClient, {
 			rpc: (stub: CoordinatorRpc) => Promise<unknown>,
 		): Effect.Effect<S['Type'], DomainError> =>
 			fromPromise(() => rpc(coordinator(repositoryId))).pipe(
-				Effect.flatMap(value =>
-					Schema.is(schema)(value) ? Effect.succeed(value) : fromSync(() => decodeSync(schema, value))
-				),
+				Effect.filterOrElse(Schema.is(schema), value => fromSync(() => decodeSync(schema, value))),
 			);
 		const send = (
 			repositoryId: number,
