@@ -3038,6 +3038,15 @@ describe('release streams', () => {
 		expect(nightly?.publications).toEqual([]);
 	});
 
+	test('an editor extension needs a publisher and name to be reported as unfinished', () => {
+		const extension = (manifest: Record<string, unknown>) =>
+			plan(inMemory({ 'package.json': JSON.stringify({ engines: { vscode: '^1.90.0' }, ...manifest }) }, 9, 'octo/ext'))
+				.graph.incomplete.filter(product => product.kind === 'vscode-extension').map(product => product.name);
+		expect(extension({ publisher: 'octo', name: 'ext' })).toEqual(['octo.ext']);
+		expect(extension({ name: 'ext' })).toEqual([]);
+		expect(extension({ publisher: 'octo' })).toEqual([]);
+	});
+
 	test('every fixture explains its groupings and omissions deterministically', async () => {
 		const names = (await Array.fromAsync(
 			new Bun.Glob('*.json').scan(new URL('../fixtures/repositories/', import.meta.url).pathname),

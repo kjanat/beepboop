@@ -1653,8 +1653,10 @@ function incompleteProducts(
 			} catch {
 				continue;
 			}
+			const { publisher, name: extension } = manifest;
 			if (typeof object(manifest.engines).vscode !== 'string') continue;
-			const name = `${String(manifest.publisher ?? '')}.${String(manifest.name ?? path)}`;
+			if (typeof publisher !== 'string' || typeof extension !== 'string') continue;
+			const name = `${publisher}.${extension}`;
 			if (targeted.has(name)) continue;
 			const scripts = object(manifest.scripts);
 			const recipe = Object.entries(scripts).find(([, command]) =>
