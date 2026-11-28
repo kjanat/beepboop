@@ -4,7 +4,7 @@ import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import type { DispatchedExecution, TokenIssuer } from '@/auth/workflow-token.ts';
 import { issueWorkflowToken } from '@/auth/workflow-token.ts';
 import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
-import { dispatchedExecution } from '@/release/domain/execution/execution.ts';
+import { dispatchedExecution } from '@/release/http/workflow.ts';
 
 const identity: RunIdentity = {
 	repositoryId: 1,

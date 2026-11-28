@@ -1,5 +1,4 @@
 import { Clock, Effect } from 'effect';
-import type { DispatchedExecution } from '@/auth/workflow-token.ts';
 import { managerSpec } from '@/domain/catalog.ts';
 import type { DiscoveredWorkflow, Package, RepositoryRecord } from '@/domain/inventory.ts';
 import {
@@ -173,15 +172,6 @@ export function runTitle(execution: Execution): string {
 }
 export function expectedRunTitle(execution: Execution): string {
 	return execution.titled ? runTitle(execution) : `Release operation ${execution.id}`;
-}
-export function dispatchedExecution(execution: Execution): DispatchedExecution {
-	return {
-		repositoryId: execution.repositoryId,
-		state: execution.state,
-		...(execution.runId === undefined ? {} : { runId: execution.runId }),
-		...(execution.workflow ? { workflow: { file: execution.workflow.file, ref: execution.workflow.ref } } : {}),
-		runTitle: expectedRunTitle(execution),
-	};
 }
 function requiredIds(execution: Execution): readonly string[] {
 	return execution.workflow?.publications

@@ -1,4 +1,5 @@
 import { Effect, Schema } from 'effect';
+import type { DispatchedExecution } from '@/auth/workflow-token.ts';
 import { issueWorkflowToken } from '@/auth/workflow-token.ts';
 import { repositorySnapshot } from '@/automation/snapshot';
 import { routes } from '@/contract/routes';
@@ -15,7 +16,7 @@ import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { outcomes } from '@/publication/publication.ts';
-import { createExecution, dispatchedExecution } from '@/release/domain/execution/execution.ts';
+import { createExecution, expectedRunTitle } from '@/release/domain/execution/execution.ts';
 import type { Artifact, Execution } from '@/release/domain/execution/types.ts';
 import { plannedPublicationUrls } from '@/release/domain/publication-urls.ts';
 import { beginRelease, releasePlan } from '@/release/http/releases.ts';
@@ -23,6 +24,16 @@ import type { EnrolledContext } from '@/server/handlers/kit';
 import { workflow, workflowToken } from '@/server/handlers/kit';
 
 const reportedOutcomes = [...outcomes, 'rate-limited'] as const;
+
+export function dispatchedExecution(execution: Execution): DispatchedExecution {
+	return {
+		repositoryId: execution.repositoryId,
+		state: execution.state,
+		...(execution.runId === undefined ? {} : { runId: execution.runId }),
+		...(execution.workflow ? { workflow: { file: execution.workflow.file, ref: execution.workflow.ref } } : {}),
+		runTitle: expectedRunTitle(execution),
+	};
+}
 const reportedFields = mutableStruct({
 	id: Schema.String.check(Schema.isMinLength(1)),
 	manager: Schema.Literals(reportableManagerNames).annotate({ message: 'Invalid publication' }),
