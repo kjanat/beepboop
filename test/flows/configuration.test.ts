@@ -14,7 +14,7 @@ import { decodeRepositoryV1 } from '@/discovery/repositories/codec-v1.ts';
 import { validateAgainst } from '@/discovery/validation/validate.ts';
 import type { ManagerName } from '@/domain/catalog.ts';
 import { parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
-import { configurationSchema, issueMessage, refPolicyValue } from '@/domain/configuration/schema.ts';
+import { configurationSchema, issueMessage } from '@/domain/configuration/schema.ts';
 import {
 	identityOf,
 	identityPackageName,
@@ -23,6 +23,7 @@ import {
 	releaseIdentity,
 } from '@/domain/package-identity.ts';
 import { packageIdentity, parsePackageIdentity, purlDefinitions } from '@/domain/purl/index.ts';
+import { refPolicyValue } from '@/domain/refs.ts';
 import { workflowSetup } from '@/domain/workflow-setup.ts';
 import { record } from '@/kernel/schema/result.ts';
 import type { Contract, Decoded, Encoded, ValidationContext } from '@/kernel/schema/structs.ts';

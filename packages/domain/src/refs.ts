@@ -1,15 +1,25 @@
-import { Effect } from 'effect';
+import type { Effect } from 'effect';
+import { Schema } from 'effect';
+import { digestHex } from '@/kernel/crypto/digest.ts';
 import { fromPromise } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
+import { stringsSchema } from '@/kernel/schema/result.ts';
+import type { Decoded } from '@/kernel/schema/structs.ts';
+import { mutableArray, mutableStruct, refined } from '@/kernel/schema/structs.ts';
 
-export interface RefPolicy {
-	phase: 'version' | 'aliases';
-	prefix: string;
-	aliases: ('major' | 'minor')[];
-	signed: boolean;
-	immutable?: boolean;
-	distribution?: { files: string[]; ancestry: 'ours' };
-}
+export const refPolicyValue = refined(
+	mutableStruct({
+		phase: Schema.Literals(['version', 'aliases']),
+		prefix: Schema.String,
+		aliases: mutableArray(Schema.Literals(['major', 'minor'])),
+		signed: Schema.Boolean,
+		immutable: Schema.optional(Schema.Boolean),
+		distribution: Schema.optional(mutableStruct({ files: stringsSchema, ancestry: Schema.Literal('ours') })),
+	}),
+	value => !value.distribution || (value.phase === 'version' && value.signed && value.immutable === true),
+	'Distribution publication requires signed version refs and immutable Releases',
+);
+export type RefPolicy = Decoded<typeof refPolicyValue>;
 export interface RefState {
 	name: string;
 	oid: string;
@@ -67,7 +77,5 @@ export function tagObjectId(object: string): Effect.Effect<string, DomainError> 
 	const data = new Uint8Array(header.length + bytes.length);
 	data.set(header);
 	data.set(bytes, header.length);
-	return fromPromise(() => crypto.subtle.digest('SHA-1', data)).pipe(
-		Effect.map(digest => [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')),
-	);
+	return fromPromise(() => digestHex('SHA-1', data));
 }

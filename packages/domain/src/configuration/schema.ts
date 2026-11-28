@@ -18,6 +18,7 @@ import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { parseReleaseIdentity } from '@/domain/package-identity.ts';
 import { presetReferencePattern } from '@/domain/preset.ts';
 import { purl } from '@/domain/purl/index.ts';
+import { refPolicyValue } from '@/domain/refs.ts';
 import { releaseStart, releaseStarts, versionBump } from '@/domain/release-start.ts';
 import {
 	approvalOfPublishWhen,
@@ -58,18 +59,6 @@ import {
 
 const managerName = Schema.Literals(managerNames);
 
-export const refPolicyValue = refined(
-	mutableStruct({
-		phase: Schema.Literals(['version', 'aliases']),
-		prefix: Schema.String,
-		aliases: mutableArray(Schema.Literals(['major', 'minor'])),
-		signed: Schema.Boolean,
-		immutable: Schema.optional(Schema.Boolean),
-		distribution: Schema.optional(mutableStruct({ files: strings, ancestry: Schema.Literal('ours') })),
-	}),
-	value => !value.distribution || (value.phase === 'version' && value.signed && value.immutable === true),
-	'Distribution publication requires signed version refs and immutable Releases',
-);
 const binding = {
 	outputs: Schema.optional(mutableArray(outputSchema)),
 	artifactInputs: Schema.optional(mutableArray(inputSchema)),
@@ -172,7 +161,7 @@ export const packageReference = mapped(
 		const identity = parseReleaseIdentity(value);
 		if (Result.isSuccess(identity)) return purl(identity.success);
 		ctx.addIssue({ code: 'custom', message: identity.failure.message });
-		return undefined as never;
+		return value;
 	},
 	value => value,
 ).annotate({
