@@ -10,24 +10,20 @@ export interface RunJob {
 	steps?: readonly unknown[] | null | undefined;
 }
 
-const conclusions = {
-	success: 'succeeded',
-	failure: 'failed',
-	cancelled: 'cancelled',
-	skipped: 'skipped',
-	neutral: 'neutral',
-	timed_out: 'timed-out',
-	action_required: 'action-required',
-	startup_failure: 'startup-failure',
-	stale: 'stale',
-} as const satisfies Record<string, GitHubJobKind>;
+const conclusions: ReadonlyMap<unknown, GitHubJobKind> = new Map<unknown, GitHubJobKind>([
+	['success', 'succeeded'],
+	['failure', 'failed'],
+	['cancelled', 'cancelled'],
+	['skipped', 'skipped'],
+	['neutral', 'neutral'],
+	['timed_out', 'timed-out'],
+	['action_required', 'action-required'],
+	['startup_failure', 'startup-failure'],
+	['stale', 'stale'],
+]);
 
 function kind(status: unknown, conclusion: unknown): GitHubJobKind {
-	if (status === 'completed') {
-		return typeof conclusion === 'string' && Object.hasOwn(conclusions, conclusion)
-			? conclusions[conclusion as keyof typeof conclusions]
-			: 'unknown';
-	}
+	if (status === 'completed') return conclusions.get(conclusion) ?? 'unknown';
 	if (conclusion !== null && conclusion !== undefined) return 'unknown';
 	if (status === 'in_progress') return 'running';
 	if (['queued', 'requested', 'pending', 'waiting'].includes(String(status))) return 'waiting';
