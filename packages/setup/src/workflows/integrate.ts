@@ -4,9 +4,10 @@ import type { Alias, Document, Node } from 'yaml';
 import { isAlias, isMap, isNode, isSeq, parseDocument, visit } from 'yaml';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { workflowEvents } from '@/discovery/release-graph/calls.ts';
+import { actionRole, beepboopAction, beepboopActionReference } from '@/discovery/workflow-analysis/beepboop-action.ts';
 import { jobNeeds } from '@/discovery/workflow-analysis/job-gate.ts';
 import { beginJobId, begunSource, ownedBinaryJob } from '@/discovery/workflow-analysis/owned-binary-job.ts';
-import { actionRole, jobObstacles } from '@/discovery/workflow-analysis/workflow-evidence.ts';
+import { jobObstacles } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import type { Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId } from '@/domain/package-identity.ts';
 import { hostedRunners } from '@/domain/runners.ts';
@@ -38,10 +39,6 @@ export function publishMinutes(packages: number): number {
 const executionInput = expression('inputs.beepboop_execution_id');
 const runName = expression('inputs.beepboop_title || github.workflow');
 
-function beepboopAction(value: unknown): string | undefined {
-	if (typeof value !== 'string') return;
-	return /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)([\w-]+)(?:@[\w./-]+)?$/.exec(value)?.[1];
-}
 function jobsOf(source: string | undefined): Record<string, unknown> {
 	return object(Result.getOrElse(yaml(source ?? ''), (): Record<string, unknown> => ({})).jobs);
 }
@@ -62,8 +59,11 @@ export interface WorkflowCredentials {
 	credentials: WorkflowCredential[];
 	unresolved: string[];
 }
+export function dispatchedOperation(operation: string): string {
+	return operation === 'promote' ? 'publish' : operation;
+}
 function operationGate(operation: string): string {
-	return expression(`inputs.beepboop_operation == '${operation === 'promote' ? 'publish' : operation}'`);
+	return expression(`inputs.beepboop_operation == '${dispatchedOperation(operation)}'`);
 }
 function condition(value: unknown): string {
 	const source = String(value ?? '').trim();
@@ -406,8 +406,8 @@ export function integrateReleaseWorkflow(
 		combined.setIn(['on', 'workflow_dispatch', 'inputs', 'beepboop_operation'], {
 			description: 'Release step',
 			type: 'choice',
-			options: ['prepare', 'publish'],
-			default: 'publish',
+			options: [dispatchedOperation('prepare'), dispatchedOperation('promote')],
+			default: dispatchedOperation('promote'),
 			required: true,
 		});
 		combined.setIn(['jobs', prepareJob, 'if'], operationGate('prepare'));
@@ -674,7 +674,7 @@ function integrate(
 		if (['action.yml', 'action.yaml'].some(file => snapshot.files[`actions/${name}/${file}`])) {
 			return `$/actions/${name}`;
 		}
-		return `kjanat/beepboop/actions/${name}@${actionsRevision ?? 'v1'}`;
+		return beepboopActionReference(name, actionsRevision);
 	};
 	if (existingBegin) {
 		if (object(existingBegin.with).stream !== stream || object(existingBegin.with).operation !== operation) {
@@ -851,10 +851,12 @@ function integrate(
 			|| !prepareSteps.some(step => object(step.with).mode === 'submit' && object(step.with).context === context)
 		) fail('preparation needs apply and submit steps using the begin context');
 	} else if (binaries && steps.some(step => ['report', 'publish'].includes(actionRole(step.uses) ?? ''))) {
-		const uses = (pattern: RegExp) => steps.findIndex(step => typeof step.uses === 'string' && pattern.test(step.uses));
-		const download = uses(/^actions\/download-artifact@/), release = uses(/\/actions\/publish-release\b/);
+		const download = steps.findIndex(step =>
+			typeof step.uses === 'string' && /^actions\/download-artifact@/.test(step.uses)
+		);
+		const release = steps.findIndex(step => beepboopAction(step.uses) === 'publish-release');
 		const tagging = steps.findIndex(step =>
-			typeof step.uses === 'string' && /\/actions\/(?:token|publish-refs|publish-release)\b/.test(step.uses)
+			['token', 'publish-refs', 'publish-release'].includes(beepboopAction(step.uses) ?? '')
 		);
 		const report = steps.findIndex(step => actionRole(step.uses) === 'report');
 		if (steps.some(step => step.id === 'beepboop_binaries')) {
@@ -933,20 +935,17 @@ function integrate(
 	}
 	if (
 		operation === 'promote' && choice.tagPrefix && !binaries
-		&& !steps.some(step => typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses))
+		&& !steps.some(step => beepboopAction(step.uses) === 'publish-refs')
 	) {
 		const reportIndex = steps.findIndex(step => actionRole(step.uses) === 'report');
 		steps.splice(reportIndex < 0 ? steps.length : reportIndex, 0, ...refSteps(id, action));
 	}
 	steps = steps.map(step => {
-		if (typeof step.uses !== 'string' || !/\/actions\/publish-refs\b/.test(step.uses)) return step;
+		if (beepboopAction(step.uses) !== 'publish-refs') return step;
 		const env = object(step.env);
 		const source = /^\$\{\{\s*steps\.([A-Za-z_][\w-]*)\.outputs\.token\s*\}\}$/.exec(String(object(step.with).token))
 			?.[1];
-		const issued = steps.some(entry =>
-			entry.id === source && typeof entry.uses === 'string'
-			&& /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)token(?:@[\w./-]+)?$/.test(entry.uses)
-		);
+		const issued = steps.some(entry => entry.id === source && beepboopAction(entry.uses) === 'token');
 		const insert = (key: string) => /^\$\{\{\s*insert\s*\}\}$/.test(key);
 		const stale = (key: string) =>
 			insert(key) && /^\$\{\{\s*fromJSON\(steps\.[A-Za-z_][\w-]*\.outputs\.gitId\)\s*\}\}$/.test(String(env[key]));
@@ -955,8 +954,7 @@ function integrate(
 		const kept = Object.fromEntries(Object.entries(env).filter(([key]) => !stale(key)));
 		return { ...step, env: { ...kept, ...gitIdentity(source) } };
 	});
-	const refStep = (step: Record<string, unknown>) =>
-		typeof step.uses === 'string' && /\/actions\/publish-refs\b/.test(step.uses);
+	const refStep = (step: Record<string, unknown>) => beepboopAction(step.uses) === 'publish-refs';
 	const beforeRefs = steps.findIndex(refStep);
 	if (
 		distributionScript && beforeRefs >= 0
@@ -995,7 +993,7 @@ function integrate(
 	}
 	if (
 		operation === 'promote' && release && refs >= 0
-		&& !steps.some(step => typeof step.uses === 'string' && /\/actions\/publish-release\b/.test(step.uses))
+		&& !steps.some(step => beepboopAction(step.uses) === 'publish-release')
 	) {
 		steps.splice(refs + 1, 0, {
 			uses: action('publish-release'),

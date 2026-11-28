@@ -1,10 +1,14 @@
 import { Document } from 'yaml';
+import { beepboopActionReference } from '@/discovery/workflow-analysis/beepboop-action.ts';
 import { hostedRunners } from '@/domain/runners.ts';
 import { renderWorkflow } from '@/setup/workflows/actions.ts';
 import { expression } from '@/setup/workflows/binaries.ts';
 
-export function startWorkflow(streams: readonly string[], actionsRevision: string | undefined): string {
-	const [first = 'main'] = streams;
+export function startWorkflow(
+	streams: readonly [string, ...string[]],
+	actionsRevision: string | undefined,
+): string {
+	const [first] = streams;
 	return renderWorkflow(
 		new Document({
 			name: 'Start release',
@@ -28,7 +32,7 @@ export function startWorkflow(streams: readonly string[], actionsRevision: strin
 					'runs-on': hostedRunners.linux,
 					permissions: { 'id-token': 'write' },
 					steps: [{
-						uses: `kjanat/beepboop/actions/release@${actionsRevision ?? 'v1'}`,
+						uses: beepboopActionReference('release', actionsRevision),
 						with: { stream: expression('inputs.stream'), version: expression('inputs.version || inputs.bump') },
 					}],
 				},

@@ -1,6 +1,7 @@
 import { Result } from 'effect';
 import { object } from '@/discovery/managers/manifest-editing.ts';
 import { workflowEvents } from '@/discovery/release-graph/calls.ts';
+import { actionRole } from '@/discovery/workflow-analysis/beepboop-action.ts';
 import { jobNeeds } from '@/discovery/workflow-analysis/job-gate.ts';
 import { ownedBinaryJob } from '@/discovery/workflow-analysis/owned-binary-job.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -22,12 +23,6 @@ export interface WorkflowEvidence {
 	publishes: boolean;
 }
 
-export function actionRole(value: unknown): string | undefined {
-	if (typeof value !== 'string') return;
-	return /^(?:(?:\$|\.)\/actions\/|kjanat\/beepboop\/actions\/)(begin|prepare|report|publish)(?:@[\w./-]+)?$/.exec(
-		value,
-	)?.[1];
-}
 export function workflowEvidence(file: string, source: string): Result.Result<WorkflowEvidence, DomainError> {
 	return yaml(source).pipe(Result.map(document => evidenceOf(file, document)));
 }

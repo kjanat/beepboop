@@ -13,7 +13,7 @@ import { canonicalConfiguration } from '@/domain/configuration/canonical.ts';
 import { withoutDefaults } from '@/domain/configuration/minimal.ts';
 import { mergeConfiguration, parseRepositoryConfiguration } from '@/domain/configuration/presets.ts';
 import type { Configuration } from '@/domain/configuration/schema.ts';
-import { configurationDiagnostics } from '@/domain/configuration/schema.ts';
+import { configurationDiagnostics, configurationPath } from '@/domain/configuration/schema.ts';
 import type { Inventory, Snapshot } from '@/domain/inventory.ts';
 import { matchesPackage, packageId, selectorKey } from '@/domain/package-identity.ts';
 import { packageMarkdown } from '@/domain/package-label';
@@ -49,6 +49,7 @@ import { streamSummary } from '@/setup/summary.ts';
 import type { SetupChoices, SetupPlan, SetupWorkflow } from '@/setup/types.ts';
 import { actionReleaseOffer } from '@/setup/workflows/action-release.ts';
 import {
+	dispatchedOperation,
 	integrateReleaseWorkflow,
 	integrateWorkflow,
 	workflowActions,
@@ -118,7 +119,7 @@ export function inferredConfiguration(
 				return file && workflowActions(source).has('begin') ? [file] : [];
 			}),
 		);
-		if (snapshot.files['.github/beepboop.json'] !== undefined || !beginning.size) return undefined;
+		if (snapshot.files[configurationPath] !== undefined || !beginning.size) return undefined;
 		const baseline: SetupBaseline = { head: null };
 		const { raw, workflows, requested } = yield* proposedSetup(snapshot, inventory, baseline);
 		const unbuilt: SetupChoices = {
@@ -136,8 +137,8 @@ export function inferredConfiguration(
 			raw,
 		);
 		const { plan } = yield* drafted(snapshot, inventory, adopted, raw, workflows, baseline);
-		if (plan.blockers.length || plan.edits.some(edit => edit.path !== '.github/beepboop.json')) return undefined;
-		return plan.edits.find(edit => edit.path === '.github/beepboop.json')?.after;
+		if (plan.blockers.length || plan.edits.some(edit => edit.path !== configurationPath)) return undefined;
+		return plan.edits.find(edit => edit.path === configurationPath)?.after;
 	});
 }
 function draftSetup(
@@ -595,7 +596,7 @@ function drafted(
 					operation === 'promote' && object(binding.refs).prefix === 'v' && current.packageTags === undefined
 					&& packageTags.length
 				) updated.packageTags = packageTags;
-				if (shared) inputs.beepboop_operation = operation === 'promote' ? 'publish' : 'prepare';
+				if (shared) inputs.beepboop_operation = dispatchedOperation(operation);
 				else delete inputs.beepboop_operation;
 				if (Object.keys(inputs).length) binding.inputs = inputs;
 				else delete binding.inputs;
@@ -722,20 +723,22 @@ function drafted(
 				if (generated.content !== before) edits.push({ path, before, after: generated.content });
 			}
 		}
-		const dispatched = choices.streams.flatMap(stream => stream.start?.includes('action') ? [stream.name] : []);
-		if (dispatched.length) {
+		const [firstDispatched, ...laterDispatched] = choices.streams.flatMap(stream =>
+			stream.start?.includes('action') ? [stream.name] : []
+		);
+		if (firstDispatched !== undefined) {
 			if (selectedFiles.has(startWorkflowFile)) {
 				blockers.push(`${startWorkflowFile}: one workflow cannot start releases and run a release role.`);
 			}
 			const path = `.github/workflows/${startWorkflowFile}`, before = snapshot.files[path] ?? '';
-			const after = startWorkflow(dispatched, choices.actionsRevision);
+			const after = startWorkflow([firstDispatched, ...laterDispatched], choices.actionsRevision);
 			if (after !== before) edits.push({ path, before, after });
 		}
 		if (!choices.streams.length) blockers.push('Select at least one release stream.');
 		if (choices.actionsRevision) configuration.actionsRevision = choices.actionsRevision;
 		else delete configuration.actionsRevision;
 		configuration.$schema ??= 'https://beepboop.kjanat.dev/schema/v1.json';
-		const fresh = !snapshot.files['.github/beepboop.json'];
+		const fresh = !snapshot.files[configurationPath];
 		if (fresh && Object.hasOwn(streams, 'main')) configuration.extends = [defaultPreset];
 		configuration.streams = streams;
 		configuration.managers = [...managers].sort();
@@ -763,14 +766,14 @@ function drafted(
 		} else {
 			blockers.push(validated.failure.message);
 		}
-		const before = snapshot.files['.github/beepboop.json'] ?? '';
+		const before = snapshot.files[configurationPath] ?? '';
 		const stored = yield* fromSync((): unknown => JSON.parse(before || '{}'));
 		const written = withoutDefaults(canonicalConfiguration(configuration, inventory.packages), stored);
 		// Do not reformat an unchanged configuration simply to make a PR.
 		const after = JSON.stringify(stored) === JSON.stringify(written)
 			? before
 			: formatJson(yield* Effect.fromResult(json(written)));
-		if (after !== before) edits.unshift({ path: '.github/beepboop.json', before, after });
+		if (after !== before) edits.unshift({ path: configurationPath, before, after });
 		const prior = baseline.prior
 			? { url: baseline.prior.url, superseded: !!before && baseline.prior.content !== before }
 			: undefined;

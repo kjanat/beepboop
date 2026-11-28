@@ -3,7 +3,8 @@ import { object } from '@/discovery/managers/manifest-editing.ts';
 import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import { workflowEvents } from '@/discovery/release-graph/calls.ts';
-import { actionRole, workflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
+import { actionRole } from '@/discovery/workflow-analysis/beepboop-action.ts';
+import { workflowEvidence } from '@/discovery/workflow-analysis/workflow-evidence.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { yaml } from '@/kernel/parse/yaml.ts';
 export const workflowDiscoverer: DiscovererOf<'workflow'> = {
