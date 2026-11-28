@@ -1,9 +1,9 @@
 import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration } from '@/domain/configuration/schema.ts';
-import type { Channel, ChannelOutcome, RegistryOutcome } from '@/domain/destinations.ts';
+import type { Channel, ChannelOutcome, RegistryOutcome, RegistryState } from '@/domain/destinations.ts';
 import type { PackagePublication } from '@/domain/package-publication.ts';
 import type { PackageIdentity } from '@/domain/purl/index.ts';
-import type { Access } from '@/domain/repository';
+import type { Access } from '@/domain/repository.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 
 export interface HookReference {
@@ -24,7 +24,7 @@ export interface Package {
 	/** Absent only on legacy records; normalized at discovery and persistence boundaries. */
 	identity?: PackageIdentity;
 	previousModule?: { name: string; version: string };
-	publicationStatus?: 'published' | 'missing' | 'failed' | 'unchecked';
+	publicationStatus?: RegistryState['state'];
 	destinations?: RegistryOutcome[];
 	channels?: Channel[];
 	generated?: boolean;

@@ -1,3 +1,4 @@
+import type { SemVer } from '@/domain/version.ts';
 import type { Parsed } from '@/kernel/schema/result.ts';
 import { matches } from '@/kernel/schema/result.ts';
 
@@ -16,7 +17,7 @@ function precedence(version: string): { core: bigint[]; pre: string[] } {
 		pre: dash < 0 ? [] : main.slice(dash + 1).split('.'),
 	};
 }
-export function aliasSeries(version: import('./version.ts').SemVer, alias: 'major' | 'minor'): string {
+export function aliasSeries(version: SemVer, alias: 'major' | 'minor'): string {
 	return precedence(version).core.slice(0, alias === 'major' ? 1 : 2).join('.');
 }
 export function isPrerelease(version: string): boolean {
