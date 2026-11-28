@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Schema, SchemaGetter, SchemaTransformation } from 'effect';
 import { tokenPurposes } from '@/auth/contract.ts';
 import { changesResponse } from '@/contract/changes';
 import {
@@ -65,13 +65,13 @@ export const executionFilter = mutableStruct({
 	repository: Schema.optional(text),
 	stream: Schema.optional(text),
 	operation: Schema.optional(text),
-	states: Schema.optional(
-		refined(
-			text,
-			value => value.split(',').every(state => (executionStates as readonly string[]).includes(state)),
-			'Unknown execution state',
-		),
-	),
+	states: Schema.optional(text.pipe(
+		Schema.decodeTo(Schema.Array(Schema.String), {
+			decode: SchemaGetter.split(),
+			encode: SchemaGetter.transform(states => states.join(',')),
+		}),
+		Schema.decodeTo(Schema.Array(Schema.Literals(executionStates)), SchemaTransformation.passthroughSupertype()),
+	)),
 	version: Schema.optional(text),
 	limit: Schema.optional(
 		numberFromInput.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(1)).check(

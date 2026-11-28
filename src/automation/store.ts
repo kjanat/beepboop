@@ -20,7 +20,8 @@ import type { CompletionCandidate } from '@/release/adapters/d1/completions.ts';
 import { CompletionStore } from '@/release/adapters/d1/completions.ts';
 import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 import type { ActivityEntry, Execution } from '@/release/domain/execution/types.ts';
-import { executionOrderSql, newestActiveFirst, validJson } from '@/release/domain/execution-order.ts';
+import { executionOrderSql, validJson } from '@/release/adapters/d1/execution-order.ts';
+import { newestActiveFirst } from '@/release/domain/execution-order.ts';
 
 export interface UnreadableExecution {
 	kind: 'unreadable';
@@ -188,11 +189,9 @@ export class Store {
 			conditions.push(`${validJson(`$.${column}`)}=?`);
 			values.push(value);
 		}
-		const wanted = filter.states?.split(',');
-		if (wanted !== undefined) {
-			const stored = wanted;
-			conditions.push(`state IN (${stored.map(() => '?').join(',')})`);
-			values.push(...stored);
+		if (filter.states !== undefined) {
+			conditions.push(`state IN (${filter.states.map(() => '?').join(',')})`);
+			values.push(...filter.states);
 		}
 		const limit = Math.min(filter.limit ?? 200, 200);
 		return Effect.gen({ self: this }, function*() {

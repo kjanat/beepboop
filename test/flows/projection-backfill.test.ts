@@ -120,7 +120,7 @@ test('cold requests repair one bounded tail and refuse partial execution or comp
 		const listed = await Effect.runPromise(new Store(db).executions());
 		expect(listed[0]?.state).toBe('verifying');
 		expect(listed[0]?.id).toBe('old-1199');
-		expect(await Effect.runPromise(new Store(db).filteredExecutions({ states: 'verifying' }))).toHaveLength(1);
+		expect(await Effect.runPromise(new Store(db).filteredExecutions({ states: ['verifying'] }))).toHaveLength(1);
 		expect(db.queries.some(query => query.writes)).toBe(false);
 	} finally {
 		db.sqlite.close();
@@ -147,7 +147,7 @@ test('old writer inserts and higher-revision updates invalidate metadata and sta
 				{ entity: 'release', id: 'release', repositoryId: 1, revision: 1, document: release(), updatedAt: 20 },
 			]),
 		);
-		expect(await Effect.runPromise(store.filteredExecutions({ states: 'awaiting-approval' }))).toHaveLength(1);
+		expect(await Effect.runPromise(store.filteredExecutions({ states: ['awaiting-approval'] }))).toHaveLength(1);
 		await db.prepare('UPDATE executions SET revision=2,state=?,document=? WHERE id=?').bind(
 			'blocked',
 			JSON.stringify({ ...row, attempts: 1 }),
@@ -156,7 +156,7 @@ test('old writer inserts and higher-revision updates invalidate metadata and sta
 		expect(db.sqlite.query('SELECT state_version FROM executions WHERE id=?').get(row.id)).toEqual({
 			state_version: null,
 		});
-		expect(await Effect.runPromise(store.filteredExecutions({ states: 'blocked' }))).toHaveLength(1);
+		expect(await Effect.runPromise(store.filteredExecutions({ states: ['blocked'] }))).toHaveLength(1);
 		await db.prepare('UPDATE releases SET revision=2,document=?,updated_at=40 WHERE id=?').bind(
 			release('0.5.0', 40),
 			'release',

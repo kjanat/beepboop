@@ -1194,14 +1194,14 @@ test('the state filter matches the state a stored blocked run decodes to and kee
 		).bind(row.id, finished.repositoryId, 'blocked', JSON.stringify(row.document), row.updatedAt).run();
 	}
 	const store = new Store(world.db);
-	const found = async (states: string, limit?: number) =>
+	const found = async (states: Execution['state'][], limit?: number) =>
 		(await Effect.runPromise(store.filteredExecutions({ states, ...(limit === undefined ? {} : { limit }) })))
 			.map(execution => [execution.id, execution.state]);
-	expect(await found('verifying')).toEqual([[finished.id, 'verifying']]);
-	expect(await found('awaiting-approval')).toEqual([['legacy-approval', 'awaiting-approval']]);
-	expect(await found('blocked')).toEqual([['legacy-blocked', 'blocked']]);
-	expect(await found('blocked', 1)).toEqual([['legacy-blocked', 'blocked']]);
-	expect(await found('verifying,awaiting-approval', 1)).toEqual([[finished.id, 'verifying']]);
+	expect(await found(['verifying'])).toEqual([[finished.id, 'verifying']]);
+	expect(await found(['awaiting-approval'])).toEqual([['legacy-approval', 'awaiting-approval']]);
+	expect(await found(['blocked'])).toEqual([['legacy-blocked', 'blocked']]);
+	expect(await found(['blocked'], 1)).toEqual([['legacy-blocked', 'blocked']]);
+	expect(await found(['verifying', 'awaiting-approval'], 1)).toEqual([[finished.id, 'verifying']]);
 });
 
 test('a promotion whose workflow branch was deleted fails with the missing ref named', async () => {
