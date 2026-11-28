@@ -199,7 +199,12 @@ test('session expiry reads the supplied clock when the operation runs', async ()
 			}),
 		batch: () => Effect.succeed([]),
 	};
-	const open = new SessionStore(sql).open('login-flow', 'id', {}, 5000);
+	const open = new SessionStore(sql).open('login-flow', 'id', {
+		state: 'state',
+		verifier: 'verifier',
+		cli: null,
+		return: '/',
+	}, 5000);
 	await Effect.runPromise(
 		Effect.gen(function*() {
 			yield* TestClock.setTime(1000);
@@ -298,7 +303,12 @@ test('the application layer uses explicitly supplied database, GitHub, HTTP and 
 		Effect.gen(function*() {
 			const service = yield* Automation;
 			expect(yield* service.gateway.call('/injected', 'token')).toEqual({ injected: 'github' });
-			yield* service.sessions.open('login-flow', 'id', {}, 1000);
+			yield* service.sessions.open(
+				'login-flow',
+				'id',
+				{ state: 'state', verifier: 'verifier', cli: null, return: '/' },
+				1000,
+			);
 			expect(service.dependencies.transport).toBe(http);
 			expect(service.vault()).toBe(vault);
 		}).pipe(

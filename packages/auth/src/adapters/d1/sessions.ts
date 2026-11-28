@@ -1,28 +1,37 @@
-import { Effect } from 'effect';
+import { Effect, Result, Schema } from 'effect';
+import type { SessionDocument, SessionKind } from '@/auth/session-documents.ts';
+import { sessionDocuments } from '@/auth/session-documents.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Sql, SqlDatabase } from '@/persistence/d1/database';
 import { optionalColumn, sql } from '@/persistence/d1/database';
 import { documentRow } from '@/persistence/d1/document-row';
-
-export const sessionKinds = ['login-flow', 'security-challenge', 'elevation', 'cli-approval'] as const;
-export type SessionKind = (typeof sessionKinds)[number];
 
 export class SessionStore {
 	private readonly sql: Sql;
 	constructor(db: SqlDatabase | Sql) {
 		this.sql = sql(db);
 	}
-	open(kind: SessionKind, id: string, document: unknown, lifetime: number): Effect.Effect<void, DomainError> {
+	open<K extends SessionKind>(
+		kind: K,
+		id: string,
+		document: SessionDocument<K>,
+		lifetime: number,
+	): Effect.Effect<void, DomainError> {
 		return this.insert('INSERT', kind, id, document, lifetime);
 	}
-	offer(kind: SessionKind, id: string, document: unknown, lifetime: number): Effect.Effect<void, DomainError> {
+	offer<K extends SessionKind>(
+		kind: K,
+		id: string,
+		document: SessionDocument<K>,
+		lifetime: number,
+	): Effect.Effect<void, DomainError> {
 		return this.insert('INSERT OR IGNORE', kind, id, document, lifetime);
 	}
-	private insert(
+	private insert<K extends SessionKind>(
 		verb: 'INSERT' | 'INSERT OR IGNORE',
-		kind: SessionKind,
+		kind: K,
 		id: string,
-		document: unknown,
+		document: SessionDocument<K>,
 		lifetime: number,
 	): Effect.Effect<void, DomainError> {
 		return Effect.clockWith(clock => {
@@ -35,14 +44,22 @@ export class SessionStore {
 			).pipe(Effect.asVoid);
 		});
 	}
-	take(id: string): Effect.Effect<string | undefined, DomainError> {
+	take<K extends SessionKind>(kind: K, id: string): Effect.Effect<SessionDocument<K> | undefined, DomainError> {
 		return Effect.clockWith(clock => {
 			return this.sql.first(
-				'DELETE FROM sessions WHERE id=? AND expires_at>? RETURNING document',
+				'DELETE FROM sessions WHERE id=? AND (kind=? OR kind IS NULL) AND expires_at>? RETURNING document',
 				id,
+				kind,
 				clock.currentTimeMillisUnsafe(),
 			).pipe(
 				Effect.flatMap(optionalColumn(documentRow, row => row.document)),
+				Effect.map(document => {
+					if (document === undefined) return undefined;
+					const decoded = Result.try((): unknown => JSON.parse(document)).pipe(
+						Result.flatMap(Schema.decodeUnknownResult(sessionDocuments[kind])),
+					);
+					return Result.getOrUndefined(decoded);
+				}),
 			);
 		});
 	}

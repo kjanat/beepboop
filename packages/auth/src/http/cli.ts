@@ -2,11 +2,10 @@ import { Effect } from 'effect';
 import { cliSubject } from '@/auth/cli-sessions.ts';
 import { AuthPages } from '@/auth/pages.ts';
 import type { AuthBindings, AuthenticationDependencies } from '@/auth/service.ts';
-import { fromJson, fromPromise, toDomainError } from '@/kernel/errors/classify.ts';
+import { fromPromise, toDomainError } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { responseText } from '@/kernel/http/body.ts';
 import { cliToken, confirmationCode, loginSecretPattern, sha256Hex } from '@/kernel/schema/ids.ts';
-import { record, string } from '@/kernel/schema/result.ts';
 
 /** Browser approval and a one-time, verifier-bound exchange, using the existing OAuth login. */
 export function cliAuthRoute(
@@ -23,14 +22,12 @@ export function cliAuthRoute(
 			const verifier = yield* responseText(request).pipe(Effect.mapError(({ cause }) => toDomainError(cause)));
 			if (!loginSecretPattern.test(verifier)) return json({ error: 'Invalid login verifier' }, 400);
 			const hash = yield* fromPromise(() => sha256Hex(verifier));
-			const document = yield* dependencies.sessions.take(`cli-approval:${hash}`);
-			if (document === undefined) return json({ pending: true }, 202);
-			const approval = yield* Effect.fromResult(record(yield* fromJson(document)));
+			const approval = yield* dependencies.sessions.take('cli-approval', `cli-approval:${hash}`);
+			if (approval === undefined) return json({ pending: true }, 202);
 			if (approval.subject !== env.ADMIN_SUBJECT) return json({ error: 'Access denied' }, 403);
 			const token = cliToken();
-			const subject = yield* Effect.fromResult(string(approval.subject));
 			// Store only hashes of terminal credentials; the browser never receives them.
-			yield* dependencies.cliSessions.create(yield* fromPromise(() => sha256Hex(token)), subject);
+			yield* dependencies.cliSessions.create(yield* fromPromise(() => sha256Hex(token)), approval.subject);
 			return json({ token });
 		}
 		if (url.pathname === '/auth/cli/logout' && request.method === 'POST') {

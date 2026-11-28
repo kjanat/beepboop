@@ -1,6 +1,5 @@
 import { Effect } from 'effect';
 import { routes } from '@/contract/routes';
-import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { admin, elevated } from '@/server/handlers/kit';
 
 export const securityEndpoints = {
@@ -23,11 +22,7 @@ export const securityEndpoints = {
 		(input, { service, actor }) =>
 			Effect.gen(function*() {
 				const authenticators = service.authentication.authenticators;
-				const keys = yield* authenticators.list(actor);
-				if (!keys.some(key => key.id === input.id)) {
-					return yield* notFound('security-key', 'Unknown security key', input.id);
-				}
-				if (keys.length < 2) return yield* precondition('Cannot remove the last enrolled key');
+				yield* authenticators.removable(actor, input.id);
 				return {
 					commit: Effect.gen(function*() {
 						yield* authenticators.remove(actor, input.id);

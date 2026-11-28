@@ -4,13 +4,14 @@ import { accessCookie, cookie, flowCookie, refreshCookie } from '@/auth/cookies.
 import { cliAuthRoute } from '@/auth/http/cli.ts';
 import { AuthPages } from '@/auth/pages.ts';
 import type { AuthBindings, AuthenticationDependencies } from '@/auth/service.ts';
-import { fromJson, fromPromise, recover } from '@/kernel/errors/classify.ts';
+import type { LoginFlow } from '@/auth/session-documents.ts';
+import { fromPromise, recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { loginSecretPattern } from '@/kernel/schema/ids.ts';
-import { record, text } from '@/kernel/schema/result.ts';
+import { text } from '@/kernel/schema/result.ts';
 
 function cookieHeader(name: string, value: string, seconds: number): string {
 	return `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${seconds}`;
@@ -28,7 +29,7 @@ function sessionHeaders(tokens: SessionTokens | undefined, location?: string): H
 	return headers;
 }
 export interface LoginCompletion {
-	consumeFlow(id: string): Effect.Effect<string | undefined, DomainError>;
+	consumeFlow(id: string): Effect.Effect<LoginFlow | undefined, DomainError>;
 	exchange(code: string, verifier: string): Effect.Effect<SessionTokens, DomainError>;
 	verify(access: string): Effect.Effect<string, DomainError>;
 }
@@ -50,8 +51,8 @@ export function returnPath(value: unknown): string {
 		? `${url.pathname}${url.search}`
 		: '/';
 }
-function loginTarget(cli: unknown, target: unknown): string {
-	return typeof cli === 'string' && loginSecretPattern.test(cli)
+function loginTarget(cli: string | null, target: unknown): string {
+	return cli !== null && loginSecretPattern.test(cli)
 		? `/auth/cli/authorize?challenge=${cli}`
 		: returnPath(target);
 }
@@ -62,17 +63,15 @@ export function completeLogin(
 	return Effect.gen(function*() {
 		const id = cookie(request, flowCookie);
 		if (!id) return yield* loginFailed('This sign-in link has no login attempt behind it. Cookies may be blocked.');
-		const document = yield* steps.consumeFlow(id);
-		if (!document) return new Response(null, { status: 302, headers: { Location: '/auth/login' } });
+		const flow = yield* steps.consumeFlow(id);
+		if (!flow) return new Response(null, { status: 302, headers: { Location: '/auth/login' } });
 		return yield* Effect.gen(function*() {
-			const flow = yield* Effect.fromResult(record(yield* fromJson(document)));
 			const url = new URL(request.url);
 			if (url.searchParams.get('state') !== flow.state) {
 				return new Response(null, { status: 302, headers: { Location: '/auth/login' } });
 			}
 			const code = yield* Effect.fromResult(text(url.searchParams.get('code')));
-			const verifier = yield* Effect.fromResult(text(flow.verifier));
-			const tokens = yield* steps.exchange(code, verifier);
+			const tokens = yield* steps.exchange(code, flow.verifier);
 			yield* steps.verify(tokens.access);
 			return new Response(null, { status: 302, headers: sessionHeaders(tokens, loginTarget(flow.cli, flow.return)) });
 		}).pipe(recover(error => loginFailed(decodeError(error))));
@@ -122,9 +121,11 @@ export function authRoute(
 			const { url, challenge } = yield* fromPromise(signal =>
 				dependencies.client(signal).authorize(`${env.APPLICATION_ORIGIN}/auth/callback`, 'code', { pkce: true })
 			);
+			if (challenge.verifier === undefined) return yield* precondition('Login challenge has no PKCE verifier');
 			const id = crypto.randomUUID();
 			yield* dependencies.sessions.open('login-flow', id, {
-				...challenge,
+				state: challenge.state,
+				verifier: challenge.verifier,
 				cli: parameters.get('cli'),
 				return: returnPath(parameters.get('return')),
 			}, 600000);
@@ -135,7 +136,7 @@ export function authRoute(
 		}
 		if (path === '/auth/callback') {
 			return yield* completeLogin(request, {
-				consumeFlow: id => dependencies.sessions.take(id),
+				consumeFlow: id => dependencies.sessions.take('login-flow', id),
 				exchange: (code, verifier) =>
 					Effect.gen(function*() {
 						const result = yield* fromPromise(signal =>

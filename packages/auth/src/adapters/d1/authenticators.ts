@@ -44,17 +44,22 @@ export class AuthenticatorStore {
 			),
 		);
 	}
-	enrollInitial(id: string, subject: string, document: string): Written {
+	enrollInitial(subject: string, credential: SavedCredential): Written {
 		return this.sql.run(
 			'INSERT INTO authenticators(id,subject,document) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM authenticators WHERE subject=?)',
-			id,
+			credential.id,
 			subject,
-			document,
+			JSON.stringify(credential),
 			subject,
 		);
 	}
-	enroll(id: string, subject: string, document: string): Written {
-		return this.sql.run('INSERT INTO authenticators(id,subject,document) VALUES(?,?,?)', id, subject, document);
+	enroll(subject: string, credential: SavedCredential): Written {
+		return this.sql.run(
+			'INSERT INTO authenticators(id,subject,document) VALUES(?,?,?)',
+			credential.id,
+			subject,
+			JSON.stringify(credential),
+		);
 	}
 	replace(id: string, document: string, next: SavedCredential): Written {
 		return replaceDocument(this.sql, 'authenticators', 'id', id, document, next);

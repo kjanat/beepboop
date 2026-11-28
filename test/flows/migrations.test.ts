@@ -7,9 +7,11 @@ import { AuditStore } from '@/persistence/d1/audit';
 const now = Date.now();
 const later = now + 600_000;
 const event = JSON.stringify({ id: 'release:1' });
+const flow = JSON.stringify({ state: 'state', verifier: 'verifier', cli: null, return: '/' });
+const approval = JSON.stringify({ subject: 'admin' });
 
 const deployedWrites: { sql: string; values: (string | number)[] }[] = [
-	{ sql: 'INSERT INTO sessions(id,document,expires_at) VALUES(?,?,?)', values: ['flow-1', '{}', later] },
+	{ sql: 'INSERT INTO sessions(id,document,expires_at) VALUES(?,?,?)', values: ['flow-1', flow, later] },
 	{
 		sql:
 			'INSERT INTO authenticators(id,subject,document) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM authenticators WHERE subject=?)',
@@ -19,7 +21,7 @@ const deployedWrites: { sql: string; values: (string | number)[] }[] = [
 	{ sql: 'INSERT INTO cli_sessions(id,subject,created_at) VALUES(?,?,?)', values: ['cli-1', 'admin', now] },
 	{
 		sql: 'INSERT OR IGNORE INTO sessions(id,document,expires_at) VALUES(?,?,?)',
-		values: ['cli-approval:1', '{}', later],
+		values: ['cli-approval:1', approval, later],
 	},
 	{
 		sql:
@@ -103,8 +105,8 @@ test('the deployed Worker keeps writing after every migration, and this version 
 	}
 
 	const sessions = new SessionStore(db);
-	expect(await Effect.runPromise(sessions.take('flow-1'))).toBe('{}');
-	expect(await Effect.runPromise(sessions.take('cli-approval:1'))).toBe('{}');
+	expect(await Effect.runPromise(sessions.take('login-flow', 'flow-1'))).toEqual(JSON.parse(flow));
+	expect(await Effect.runPromise(sessions.take('cli-approval', 'cli-approval:1'))).toEqual(JSON.parse(approval));
 	expect(await Effect.runPromise(new AuditStore(db).recent())).toEqual([
 		{ id: 'audit-1', actor: 'admin', action: 'release.prepare', target: 'execution-1', createdAt: now },
 	]);

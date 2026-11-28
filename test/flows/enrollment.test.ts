@@ -4,7 +4,6 @@ import { bearer, field, text } from '@root/test/support/http.ts';
 import type { World } from '@root/test/support/world.ts';
 import { adminSubject, eachWorld, origin } from '@root/test/support/world.ts';
 import { Effect } from 'effect';
-import { SessionStore } from '@/auth/adapters/d1/sessions.ts';
 import type { CborValue } from '@/cli/fido2/cbor';
 import { encode } from '@/cli/fido2/cbor';
 
@@ -203,12 +202,12 @@ test('overlapping additional enrollment requests redeem the same proof only once
 
 test('legacy enrollment challenges expire instead of inferring an authorized mode', async () => {
 	const api = bearer(world, await world.cliSession());
-	await world.run(new SessionStore(world.db).open('security-challenge', 'legacy', {
-		subject: adminSubject,
-		register: true,
-		first: false,
-		challenge: 'old',
-	}, 120_000));
+	world.db.execute('INSERT INTO sessions(id,kind,document,expires_at) VALUES(?,?,?,?)', [
+		'legacy',
+		'security-challenge',
+		JSON.stringify({ subject: adminSubject, register: true, first: false, challenge: 'old' }),
+		Date.now() + 120_000,
+	]);
 	expect((await api('/api/authenticators/verify', { id: 'legacy', response: {} })).status).toBe(403);
 	expect(world.db.execute('SELECT id FROM authenticators', []).rows).toHaveLength(0);
 });

@@ -10,13 +10,13 @@ import type { AuthenticatorStore, SavedCredential, StoredCredential } from '@/au
 import type { SessionStore } from '@/auth/adapters/d1/sessions.ts';
 import { consumeElevation, grantElevation } from '@/auth/elevation.ts';
 import type { AuthBindings } from '@/auth/service.ts';
+import type { SecurityChallenge } from '@/auth/session-documents.ts';
 import { base64, bytes } from '@/kernel/crypto/base64.ts';
-import { fromJson, fromPromise, fromSync } from '@/kernel/errors/classify.ts';
+import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
-import { decodeRequest, forbidden, precondition } from '@/kernel/errors/domain-error.ts';
+import { decodeRequest, forbidden, notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import { record } from '@/kernel/schema/result.ts';
-import type { Decoded } from '@/kernel/schema/structs.ts';
-import { mapped, mutableArray, mutableStruct, safeDecode } from '@/kernel/schema/structs.ts';
+import { mapped, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
 
 const clientExtensionResults = Schema.Unknown.pipe(
 	Schema.decodeTo(mutableStruct({}), {
@@ -60,14 +60,6 @@ export function enrollmentRefusal(register: boolean, enrolled: number): string |
 	return !register && enrolled === 0 ? 'Enroll a security key first.' : undefined;
 }
 
-const challengeFields = { subject: Schema.String, challenge: Schema.String };
-const registrationFields = { ...challengeFields, label: Schema.optional(Schema.String) };
-const securityChallenge = Schema.Union([
-	mutableStruct({ kind: Schema.Literal('authenticate'), ...challengeFields }),
-	mutableStruct({ kind: Schema.Literal('register-initial'), ...registrationFields }),
-	mutableStruct({ kind: Schema.Literal('register-additional'), ...registrationFields }),
-]);
-type SecurityChallenge = Decoded<typeof securityChallenge>;
 type RegistrationChallenge = Exclude<SecurityChallenge, { kind: 'authenticate' }>;
 type SecurityRequest = { kind: 'authenticate' } | {
 	kind: 'register';
@@ -164,10 +156,16 @@ export class Authenticators {
 				return yield* precondition('A physical security key is required');
 			}
 			const c = result.registrationInfo.credential;
-			const document = JSON.stringify({ ...c, label: challenge.label, publicKey: base64(c.publicKey) });
+			const credential: SavedCredential = {
+				id: c.id,
+				publicKey: base64(c.publicKey),
+				counter: c.counter,
+				...(c.transports === undefined ? {} : { transports: c.transports }),
+				...(challenge.label === undefined ? {} : { label: challenge.label }),
+			};
 			const insert = challenge.kind === 'register-initial'
-				? this.store.enrollInitial(c.id, subject, document)
-				: this.store.enroll(c.id, subject, document);
+				? this.store.enrollInitial(subject, credential)
+				: this.store.enroll(subject, credential);
 			if ((yield* insert).meta.changes !== 1) {
 				return yield* precondition('Initial key was already enrolled; authenticate with the existing key');
 			}
@@ -176,11 +174,8 @@ export class Authenticators {
 	}
 	verify(subject: string, id: string, response: unknown): Effect.Effect<{ proof?: string }, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const document = yield* this.sessions.take(id);
-			if (document === undefined) return yield* forbidden('Challenge expired');
-			const parsedChallenge = safeDecode(securityChallenge, yield* fromJson(document));
-			if (!parsedChallenge.success) return yield* forbidden('Challenge expired; request a new security-key challenge');
-			const challenge = parsedChallenge.data;
+			const challenge = yield* this.sessions.take('security-challenge', id);
+			if (challenge === undefined) return yield* forbidden('Challenge expired; request a new security-key challenge');
 			if (challenge.subject !== subject) return yield* forbidden('Challenge subject mismatch');
 			const rpID = new URL(this.env.APPLICATION_ORIGIN).hostname;
 			if (challenge.kind !== 'authenticate') return yield* this.register(subject, challenge, response, rpID);
@@ -217,6 +212,15 @@ export class Authenticators {
 		return this.credentials(subject).pipe(
 			Effect.map(credentials => credentials.map((c) => ({ id: c.id, label: c.label ?? 'Security key' }))),
 		);
+	}
+	removable(subject: string, id: string): Effect.Effect<void, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const credentials = yield* this.credentials(subject);
+			if (!credentials.some(credential => credential.id === id)) {
+				return yield* notFound('security-key', 'Unknown security key', id);
+			}
+			if (credentials.length < 2) return yield* precondition('Cannot remove the last enrolled key');
+		});
 	}
 	remove(subject: string, id: string): Effect.Effect<void, DomainError> {
 		return this.store.remove(subject, id).pipe(
