@@ -11,6 +11,7 @@ import { routes } from '@/contract/routes';
 import type { ExecutionStateView, ExecutionView } from '@/contract/views';
 import { executionStates } from '@/contract/views';
 import { checkChoices } from '@/domain/release-gates.ts';
+import { repositoryNamePattern } from '@/domain/repository-name.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 
 const recoveryVerb = { reconcile: 'Reconciling', retry: 'Retrying', redispatch: 'Dispatching' } as const;
@@ -30,8 +31,6 @@ interface RunFilters {
 	limit?: number | undefined;
 }
 
-const ownerName = /^[\w.-]+\/[\w.-]+$/;
-
 function listedRepository(
 	client: Client,
 	filters: Pick<RunFilters, 'repository' | 'all'>,
@@ -42,7 +41,7 @@ function listedRepository(
 		if (filters.repository === undefined) {
 			return yield* checkoutRepository(cwd).pipe(Effect.orElseSucceed(() => undefined));
 		}
-		if (ownerName.test(filters.repository)) return filters.repository;
+		if (repositoryNamePattern.test(filters.repository)) return filters.repository;
 		return (yield* client.call(routes.repositoriesResolve, { repository: filters.repository })).name;
 	});
 }
