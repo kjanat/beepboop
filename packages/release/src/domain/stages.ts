@@ -1,3 +1,4 @@
+import { publicationStages } from '@/domain/publication-stages.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 
 function configuredStages(run: Execution): Map<string, string[]> {
@@ -8,13 +9,8 @@ function configuredStages(run: Execution): Map<string, string[]> {
 		['promote', [...stream.promote.workflow?.needs ?? [], 'prepare']],
 		...Object.entries(stream.workflows).map(([name, binding]): [string, string[]] => [name, binding.needs ?? []]),
 	]);
-	const ordered = new Map<string, string[]>();
-	while (ordered.size < needs.size) {
-		const waiting = [...needs].filter(([name]) => !ordered.has(name));
-		const ready = waiting.filter(([, wanted]) => wanted.every(need => ordered.has(need) || !needs.has(need)));
-		for (const [name, wanted] of ready.length ? ready : waiting) ordered.set(name, wanted);
-	}
-	return ordered;
+	const order = publicationStages([...needs.keys()], Object.fromEntries(needs)).flat();
+	return new Map(order.map(name => [name, needs.get(name) ?? []]));
 }
 
 function follows(stage: string, started: ReadonlySet<string>, needs: ReadonlyMap<string, string[]>): boolean {
