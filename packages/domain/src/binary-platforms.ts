@@ -354,5 +354,5 @@ export const platforms: Record<BinaryTarget, Platform> = {
 };
 
 export function supportedTargets(toolchain: 'go' | 'cargo'): BinaryTarget[] {
-	return (Object.keys(platforms) as BinaryTarget[]).filter(target => !!platforms[target][toolchain]);
+	return binaryTargets.filter(target => platforms[target][toolchain] !== false);
 }
