@@ -38,3 +38,11 @@ export function releaseEventId(
 		execution.releaseSet ? `:${execution.releaseSet.preparationId}:${execution.releaseSet.group}` : ''
 	}`;
 }
+
+export function sameReleaseEvent(
+	left: Pick<Execution, 'repositoryId' | 'eventId' | 'sourceSha' | 'configurationSha'>,
+	right: Pick<Execution, 'repositoryId' | 'eventId' | 'sourceSha' | 'configurationSha'>,
+): boolean {
+	return left.repositoryId === right.repositoryId && left.eventId === right.eventId
+		&& left.sourceSha === right.sourceSha && left.configurationSha === right.configurationSha;
+}

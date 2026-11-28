@@ -4,6 +4,7 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { sha256DigestPattern } from '@/kernel/schema/ids.ts';
 import type { Artifact, Execution } from '@/release/domain/execution/types.ts';
+import { sameReleaseEvent } from '@/release/domain/identity-keys.ts';
 
 export interface ResolvedInput extends InputDeclaration {
 	executionId: string;
@@ -32,9 +33,7 @@ export function resolveInputs(
 		return Effect.forEach(execution.workflow?.artifactInputs ?? [], input => {
 			const matches = dependencies.filter(dependency =>
 				execution.dependencies.includes(dependency.id) && dependency.operation === input.operation
-				&& dependency.repositoryId === execution.repositoryId && dependency.stream === execution.stream
-				&& dependency.eventId === execution.eventId && dependency.configurationSha === execution.configurationSha
-				&& dependency.sourceSha === execution.sourceSha
+				&& dependency.stream === execution.stream && sameReleaseEvent(dependency, execution)
 			);
 			const producer = matches[0];
 			if (matches.length !== 1 || !producer || producer.state !== 'succeeded') {

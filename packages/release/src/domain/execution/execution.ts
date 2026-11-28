@@ -18,7 +18,7 @@ import { outputsComplete } from '@/release/domain/execution/outputs.ts';
 import type { RunOutcome } from '@/release/domain/execution/run-labels.ts';
 import { githubFailureReason, githubRunLabel } from '@/release/domain/execution/run-labels.ts';
 import type { Configuration, Execution, ReleaseReference, WorkflowBinding } from '@/release/domain/execution/types.ts';
-import { executionId } from '@/release/domain/identity-keys.ts';
+import { executionId, sameReleaseEvent } from '@/release/domain/identity-keys.ts';
 import { freezePackageTags, packageTagGroups } from '@/release/domain/package-tags.ts';
 import { streamModuleTags } from '@/release/domain/refs.ts';
 
@@ -337,10 +337,7 @@ export function validatePublicationIdentity(
 export function dependenciesReady(execution: Execution, candidates: Execution[]): boolean {
 	return execution.dependencies.every(id =>
 		candidates.some(dependency =>
-			dependency.id === id
-			&& dependency.state === 'succeeded' && dependency.repositoryId === execution.repositoryId
-			&& dependency.eventId === execution.eventId && dependency.sourceSha === execution.sourceSha
-			&& dependency.configurationSha === execution.configurationSha
+			dependency.id === id && dependency.state === 'succeeded' && sameReleaseEvent(dependency, execution)
 		)
 	);
 }
