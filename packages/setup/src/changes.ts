@@ -1,5 +1,6 @@
 import { parse } from 'yaml';
 import { readableConfiguration } from '@/domain/configuration/names.ts';
+import { configurationPath } from '@/domain/configuration/schema.ts';
 import type { Edit, Snapshot } from '@/domain/inventory.ts';
 import { onboardingBranch, updateBranch } from '@/domain/setup-branches.ts';
 import {
@@ -13,7 +14,6 @@ import {
 } from '@/domain/setup-terms.ts';
 import { listed } from '@/kernel/text/listing.ts';
 
-const configurationPath = '.github/beepboop.json';
 const longestTitle = 72;
 
 export function setupBranch(snapshot: Snapshot): string {

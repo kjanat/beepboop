@@ -3,7 +3,7 @@ import type { RepositoryStore } from '@/discovery/adapters/d1/repositories.ts';
 import { discover } from '@/discovery/discover.ts';
 import { validateAgainst } from '@/discovery/validation/validate.ts';
 import { resolveConfiguration } from '@/domain/configuration/presets.ts';
-import { configurationDiagnostics, configurationProblem } from '@/domain/configuration/schema.ts';
+import { configurationDiagnostics, configurationPath, configurationProblem } from '@/domain/configuration/schema.ts';
 import type { Inventory, RepositoryRecord, Snapshot } from '@/domain/inventory.ts';
 import type { Access, RepositoryDiscovery } from '@/domain/repository';
 import { repositoryReference } from '@/domain/repository-name.ts';
@@ -114,7 +114,7 @@ export class RepositoryCatalog {
 				diagnostics: [],
 				updatedAt: clock.currentTimeMillisUnsafe(),
 			};
-			const document = snapshot.files['.github/beepboop.json']
+			const document = snapshot.files[configurationPath]
 				?? (yield* this.sources.inferConfiguration(snapshot, discover(snapshot)).pipe(
 					Effect.catch(error => logFailure('setup.inference-failed', error).pipe(Effect.as(undefined))),
 				));
