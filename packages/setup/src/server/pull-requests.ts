@@ -1,6 +1,7 @@
 import { Effect, Schema } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { enableAutoMerge } from '@/automation/preparation-pull-requests';
+import { configurationPath } from '@/domain/configuration/schema.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import { setupBranches } from '@/domain/setup-branches.ts';
 import { autoMergeMethods } from '@/domain/setup-terms.ts';
@@ -147,6 +148,11 @@ export function openSetupPull(gateway: RepositoryGateway, name: string, id: numb
 		};
 	});
 }
+function setupPullNumber(name: string, url: string): number | undefined {
+	const prefix = `https://github.com/${name}/pull/`;
+	const number = url.startsWith(prefix) ? url.slice(prefix.length) : '';
+	return /^[1-9][0-9]*$/.test(number) ? Number(number) : undefined;
+}
 export function setupMerge(
 	gateway: RepositoryGateway,
 	name: string,
@@ -154,19 +160,17 @@ export function setupMerge(
 	url: string,
 ): Effect.Effect<{ sha: string; body: string } | undefined, DomainError> {
 	return Effect.gen(function*() {
-		const prefix = `https://github.com/${name}/pull/`;
-		const number = url.startsWith(prefix) ? url.slice(prefix.length) : '';
-		if (!/^[1-9][0-9]*$/.test(number)) return undefined;
+		const number = setupPullNumber(name, url);
+		if (number === undefined) return undefined;
 		const token = yield* gateway.token(name, id, { contents: 'read', pull_requests: 'read' });
 		const pull = yield* gateway.read(pullSchema, `/repos/${name}/pulls/${number}`, token);
 		if (pull.merged !== true || pull.head.repo.id !== id || !setupBranches.includes(pull.head.ref)) {
 			return undefined;
 		}
-		const sha = yield* gateway.mergeCommit(name, number, token);
+		const sha = yield* gateway.mergeCommit(name, String(number), token);
 		return sha === undefined ? undefined : { sha, body: typeof pull.body === 'string' ? pull.body : '' };
 	});
 }
-const configurationPath = '.github/beepboop.json';
 export const setupAutoMerge = {
 	workflows: 'This setup PR edits workflows, so it waits for your review. Beepboop left auto-merge off.',
 	revoked:
@@ -236,9 +240,8 @@ export function autoMergeSetup(
 	format: unknown,
 ): Effect.Effect<void, DomainError> {
 	return Effect.gen(function*() {
-		const prefix = `https://github.com/${name}/pull/`;
-		const number = url.startsWith(prefix) ? url.slice(prefix.length) : '';
-		if (!/^[1-9][0-9]*$/.test(number)) return yield* precondition('Invalid setup PR identity');
+		const number = setupPullNumber(name, url);
+		if (number === undefined) return yield* precondition('Invalid setup PR identity');
 		const token = yield* gateway.token(name, id, { contents: 'write', pull_requests: 'write' });
 		const comment = (body: string) =>
 			gateway.call(`/repos/${name}/issues/${number}/comments`, token, 'POST', { body }).pipe(Effect.ignore);

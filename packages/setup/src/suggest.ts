@@ -8,6 +8,7 @@ import type { BinaryCandidate, BinaryRelease } from '@/domain/binary-platforms.t
 import { defaultBinaryTargets, unconfigured } from '@/domain/binary-platforms.ts';
 import { legacyConfiguration } from '@/domain/configuration/names.ts';
 import type { Configuration } from '@/domain/configuration/schema.ts';
+import { configurationPath } from '@/domain/configuration/schema.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
 import { packageId, selectorKey } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
@@ -37,7 +38,7 @@ export function withRegistryStatus(inventory: Inventory, stored: Inventory | und
 }
 /** Suggestions are editable policy, never permission to apply or publish. */
 export function storedConfiguration(snapshot: Snapshot): Effect.Effect<Record<string, unknown>, DomainError> {
-	return fromSync(() => object(legacyConfiguration(JSON.parse(snapshot.files['.github/beepboop.json'] ?? '{}'))));
+	return fromSync(() => object(legacyConfiguration(JSON.parse(snapshot.files[configurationPath] ?? '{}'))));
 }
 export function evidence(snapshot: Snapshot, inventory: Inventory): Effect.Effect<WorkflowEvidence[], DomainError> {
 	return Effect.forEach(
