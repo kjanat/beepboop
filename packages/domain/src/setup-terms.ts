@@ -137,3 +137,12 @@ export const existingTriggersDescription = described(
 	existingTriggersNames,
 	existingTriggersSentences,
 );
+
+export const reservedOperations = ['prepare', 'promote'] as const;
+export const streamVersioning = ['workspace', 'independent', 'none'] as const;
+
+export const preparationResultFields = {
+	url: Schema.String,
+	head: Schema.String,
+	kind: Schema.optional(Schema.Literal('commit')),
+};

@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import type { WatchedRegistry } from '@/domain/catalog.ts';
 import { jsrPackageNamePattern, notificationKinds, watchedRegistries } from '@/domain/catalog.ts';
-import { credentialAliasPattern } from '@/kernel/schema/ids.ts';
+import { credentialAliasPattern, notificationDestinationIdPattern } from '@/kernel/schema/ids.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mapped, matchesPattern, mutableArray, mutableStruct, refined } from '@/kernel/schema/structs.ts';
 
@@ -20,7 +20,7 @@ export const watchInput = refined(
 );
 
 export const destinationInput = mutableStruct({
-	id: Schema.optional(Schema.String.check(matchesPattern(credentialAliasPattern))),
+	id: Schema.optional(Schema.String.check(matchesPattern(notificationDestinationIdPattern))),
 	name: mapped(Schema.String, Schema.String, value => value.trim(), value => value).check(Schema.isMinLength(1)).check(
 		Schema.isMaxLength(80),
 	),

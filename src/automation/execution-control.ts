@@ -16,6 +16,7 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { approvalShaPattern } from '@/kernel/schema/ids.ts';
 import { matches, sha } from '@/kernel/schema/result.ts';
+import { expiresAfter } from '@/kernel/schema/timestamp.ts';
 import type { Committed } from '@/persistence/durable/journal.ts';
 import { Journal } from '@/persistence/durable/journal.ts';
 import { DurableStorage } from '@/persistence/durable/storage.ts';
@@ -463,7 +464,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						if (execution.operation === 'prepare' && !execution.plan && !execution.managed) {
 							return yield* precondition('This preparation has no plan; prepare the release from Prepare a release');
 						}
-						if (execution.artifacts.some((a) => Date.parse(a.expiresAt) <= clock.currentTimeMillisUnsafe())) {
+						if (execution.artifacts.some((a) => !expiresAfter(a.expiresAt, clock.currentTimeMillisUnsafe()))) {
 							return yield* precondition('Artifacts expired; use the configured preparation/recovery producer');
 						}
 						const publications = reopened(execution.publications);

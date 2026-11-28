@@ -1,6 +1,6 @@
 import { Clock, Effect, Result } from 'effect';
 import type { JwsKeyResolver } from 'micro509/jose';
-import { verified } from '@/auth/jwt.ts';
+import { boundedToken, verified } from '@/auth/jwt.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { forbidden, precondition, unauthenticated } from '@/kernel/errors/domain-error.ts';
 import { integer, sha, text } from '@/kernel/schema/result.ts';
@@ -30,7 +30,7 @@ export function workflowIdentity(
 ): Effect.Effect<RunIdentity, DomainError> {
 	return Effect.gen(function*() {
 		const token = request.headers.get('authorization')?.replace(/^Bearer /, '');
-		if (!token || token.length > 20000) return yield* unauthenticated('Workflow authentication required');
+		if (!boundedToken(token)) return yield* unauthenticated('Workflow authentication required');
 		const now = yield* Clock.currentTimeMillis;
 		const { claims: payload } = yield* verified(token, {
 			key: issuerKeys,

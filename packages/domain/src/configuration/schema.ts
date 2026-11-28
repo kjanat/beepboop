@@ -5,20 +5,17 @@ import {
 	defaultWinGetTagPrefix,
 	jobKeyPattern,
 	managerNames,
-	refPattern,
 	relativeWinGetConfig,
-	tagPrefixPattern,
-	validRef,
-	validTagPrefix,
 	winGetConfigPattern,
 	winGetTagPrefixPattern,
 	workflowFilePattern,
 } from '@/domain/catalog.ts';
+import { distributionPathProblem } from '@/domain/distribution-validation.ts';
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
 import { parseReleaseIdentity } from '@/domain/package-identity.ts';
 import { presetReferencePattern } from '@/domain/preset.ts';
 import { purl } from '@/domain/purl/index.ts';
-import { releaseStart, releaseStarts, versionBump } from '@/domain/release-start.ts';
+import { approvalPolicies, releaseStart, releaseStarts, versionBump } from '@/domain/release-start.ts';
 import {
 	approvalOfPublishWhen,
 	bumpOfVersionLands,
@@ -27,6 +24,8 @@ import {
 	packageTagsSentence,
 	publishWhen,
 	publishWhenDescription,
+	reservedOperations,
+	streamVersioning,
 	versioningOfVersionScope,
 	versionLands,
 	versionLandsDescription,
@@ -37,7 +36,13 @@ import {
 	versionScopeDescription,
 } from '@/domain/setup-terms.ts';
 import { versionFileSchema } from '@/domain/version-files.ts';
-import { actionsRevisionPattern, workflowSetup, workflowSetupValue } from '@/domain/workflow-setup.ts';
+import {
+	actionsRevisionPattern,
+	tagPrefixSchema,
+	workflowRefSchema,
+	workflowSetup,
+	workflowSetupValue,
+} from '@/domain/workflow-setup.ts';
 import { dependencyOrder } from '@/kernel/collections/dependency-order.ts';
 import type { Diagnostic, DiagnosticCode } from '@/kernel/errors/diagnostics.ts';
 import { isDiagnosticCode } from '@/kernel/errors/diagnostics.ts';
@@ -97,7 +102,7 @@ export const streamValue = mutableStruct({
 	packages: Schema.optional(strings),
 	companionModules: Schema.optional(strings),
 	packageTags: Schema.optional(strings),
-	versioning: Schema.Literals(['workspace', 'independent', 'none']),
+	versioning: Schema.Literals(streamVersioning),
 	concurrency: Schema.Literals(['queue', 'supersede-pending']),
 	prepare: mutableStruct({
 		strategy: Schema.optional(Schema.Literals(['managed', 'workflow'])),
@@ -107,7 +112,7 @@ export const streamValue = mutableStruct({
 		versionPrMerge: Schema.optional(Schema.Literals(versionPrMerges)),
 	}),
 	promote: mutableStruct({
-		approval: Schema.Literals(['required', 'merge', 'push']),
+		approval: Schema.Literals(approvalPolicies),
 		workflow: Schema.optional(bindingValue),
 	}),
 	start: Schema.optional(mutableArray(releaseStart)),
@@ -152,7 +157,7 @@ export const configurationValue = mutableStruct({
 	subscriptions: mutableArray(subscriptionValue),
 });
 
-export const reservedOperations = ['prepare', 'promote'] as const;
+export { reservedOperations } from '@/domain/setup-terms.ts';
 export type ReservedOperation = (typeof reservedOperations)[number];
 const identifier = Schema.String.check(matchesPattern(identifierPattern));
 
@@ -196,7 +201,7 @@ const cron = refined(
 );
 
 const refPolicyFields = {
-	prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix').pipe(
+	prefix: tagPrefixSchema.pipe(
 		Schema.withDecodingDefault(Effect.succeed('v')),
 	),
 	aliases: refined(
@@ -221,8 +226,8 @@ const refPolicyInput = Schema.Union([
 		distribution: strictStruct({
 			files: refined(
 				mutableArray(nonempty).check(Schema.isMinLength(1)),
-				files => new Set(files).size === files.length,
-				'Distribution files must be a nonempty unique list',
+				files => distributionPathProblem(files) === undefined,
+				'Use distinct, non-overlapping repository-relative distribution file paths outside Git and workflows',
 			),
 			ancestry: Schema.Literal('ours'),
 		}),
@@ -249,11 +254,7 @@ function bindingSchema() {
 	const shape = strictStruct({
 		file: Schema.String.check(matchesPattern(workflowFilePattern, { message: 'Workflow must be a filename' })),
 		ref: Schema.optional(
-			refined(
-				Schema.String.check(matchesPattern(refPattern, { message: 'Invalid workflow ref' })),
-				validRef,
-				'Invalid workflow ref',
-			),
+			workflowRefSchema,
 		),
 		inputs: Schema.optional(mutableRecord(Schema.String, Schema.Union([Schema.String, Schema.Boolean, Schema.Finite]))),
 		required: Schema.optional(Schema.Boolean),
@@ -341,11 +342,11 @@ function streamSchema() {
 	const workflows = mutableRecord(identifier, binding);
 	const shape = strictStruct({
 		versionScope: Schema.optional(versionScope).annotate({ description: versionScopeDescription }),
-		versioning: Schema.optional(Schema.Literals(['workspace', 'independent', 'none'])).annotate({ deprecated: true }),
+		versioning: Schema.optional(Schema.Literals(streamVersioning)).annotate({ deprecated: true }),
 		versionFiles: Schema.optional(mutableArray(versionFileSchema)),
 		versionSource: Schema.optional(strictStruct({
 			kind: Schema.Literal('tags'),
-			prefix: refined(Schema.String.check(matchesPattern(tagPrefixPattern)), validTagPrefix, 'Invalid tag prefix'),
+			prefix: tagPrefixSchema,
 		})),
 		packages: Schema.optional(packageReferences),
 		companionModules: Schema.optional(packageReferences).annotate({ description: companionModulesSentence }),
@@ -360,7 +361,7 @@ function streamSchema() {
 		}).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 		promote: strictStruct({
 			publishWhen: Schema.optional(publishWhen).annotate({ description: publishWhenDescription }),
-			approval: Schema.optional(Schema.Literals(['required', 'merge', 'push'])).annotate({ deprecated: true }),
+			approval: Schema.optional(Schema.Literals(approvalPolicies)).annotate({ deprecated: true }),
 			workflow: Schema.optional(binding),
 		}).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 		startFrom: Schema.optional(releaseStarts),

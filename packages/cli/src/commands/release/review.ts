@@ -5,11 +5,12 @@ import { registryOf, table } from '@/cli/render/look';
 import { failure } from '@/cli/render/output';
 import type { ResponseOf, routes } from '@/contract/routes';
 import { packageLabel } from '@/domain/package-label';
-import { versionBump } from '@/domain/release-start.ts';
+import { approvalPolicies, versionBump } from '@/domain/release-start.ts';
 import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
 import {
 	publishWhenNames,
 	publishWhenSentences,
+	streamVersioning,
 	versionPrMerge,
 	versionPrMergeSentences,
 } from '@/domain/setup-terms.ts';
@@ -19,7 +20,7 @@ import type { Contract, Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray, mutableStruct, schemaIssues } from '@/kernel/schema/structs.ts';
 
 export const streamSchema = looseStruct({
-	versioning: Schema.Literals(['workspace', 'independent', 'none']),
+	versioning: Schema.Literals(streamVersioning),
 	packages: Schema.optional(mutableArray(Schema.String)),
 	versionSource: Schema.optional(mutableStruct({ kind: Schema.Literal('tags') })),
 	versionFiles: Schema.optional(mutableArray(Schema.Unknown)),
@@ -30,7 +31,7 @@ export const streamSchema = looseStruct({
 		versionPrMerge: Schema.optional(versionPrMerge),
 	}),
 	promote: looseStruct({
-		approval: Schema.Literals(['required', 'merge', 'push']),
+		approval: Schema.Literals(approvalPolicies),
 		workflow: Schema.optional(mutableStruct({ file: Schema.String })),
 	}),
 });

@@ -22,8 +22,11 @@ export function selectedReleasePackages(
 	selected?: string[],
 ): Effect.Effect<Package[], DomainError> {
 	return Effect.gen(function*() {
-		if (selected?.some(name => !inventory.packages.some(pkg => publishable(pkg) && matchesPackage(name, pkg)))) {
-			return yield* precondition('Unknown selected publishable package');
+		const unknown = selected?.find(name =>
+			!inventory.packages.some(pkg => publishable(pkg) && matchesPackage(name, pkg))
+		);
+		if (unknown !== undefined) {
+			return yield* precondition(`Unknown publishable package: ${unknown}`);
 		}
 		const packages = publishablePackages(inventory.packages, selected);
 		if (!packages.length) return yield* precondition('No selected publishable packages');
@@ -47,53 +50,73 @@ export function planRelease(
 		const request = yield* parseVersionRequest(target);
 		const packages = yield* selectedReleasePackages(inventory, selected);
 		const version = yield* resolvePackageVersion(packages, request);
-		const diagnostics: string[] = [],
-			changed = new Map<string, string>();
-		const sources = new Set(packages.map((p) => p.versionSource));
-		if (
-			selected
-			&& inventory.packages.some(
-				(p) =>
-					publishable(p)
-					&& sources.has(p.versionSource)
-					&& !packages.some((chosen) => chosen.manager === p.manager && chosen.name === p.name),
-			)
-		) {
-			return yield* precondition('Selected packages share a version source with packages outside the selection');
-		}
-		for (const source of sources) {
-			if (tagPrefix(source) !== undefined) continue;
-			const path = source.split('#')[0];
-			if (!path) return yield* precondition('Invalid version source');
-			const before = changed.get(path) ?? snapshot.files[path];
-			if (before === undefined) return yield* precondition('Missing manifest');
-			changed.set(path, yield* registry.editVersion({ source, before, version, packages }));
-		}
-		yield* registry.updateDependencies({ snapshot, packages, version, changed });
-		const files = { ...snapshot.files, ...Object.fromEntries(changed) };
-		yield* applyVersionFiles(snapshot, files, versionFiles, { release: version });
-		for (const [path, after] of Object.entries(files)) if (after !== snapshot.files[path]) changed.set(path, after);
-
-		const edits = yield* fileEdits(snapshot.files, changed);
-		const requiresPreparation = edits.length > 0
-			&& Object.keys(snapshot.files).some(isLockfile);
-		if (requiresPreparation) {
-			diagnostics.push(
-				'Preparation workflow must regenerate lockfiles and generated version carriers before promotion',
-			);
-		}
-		if (!edits.length) diagnostics.push(alreadyPrepared(version, snapshot.sha));
-		return {
-			lockfiles: Object.keys(snapshot.files).filter(isLockfile),
-			version,
-			sourceSha: snapshot.sha,
+		return yield* planReleaseFiles(
+			snapshot,
+			inventory,
 			packages,
-			edits,
-			diagnostics,
-			requiresPreparation,
-		};
+			version,
+			selected !== undefined,
+			registry,
+			versionFiles,
+		);
 	});
 }
+
+export const planReleaseFiles = Effect.fnUntraced(function*(
+	snapshot: Snapshot,
+	inventory: Inventory,
+	packages: Package[],
+	version: string,
+	selected: boolean,
+	registry: DiscoveryRegistry = discoveryRegistry,
+	versionFiles: VersionFile[] = [],
+): Effect.fn.Return<ReleasePlan, DomainError> {
+	const diagnostics: string[] = [],
+		changed = new Map<string, string>();
+	const sources = new Set(packages.map((p) => p.versionSource));
+	if (
+		selected
+		&& inventory.packages.some(
+			(p) =>
+				publishable(p)
+				&& sources.has(p.versionSource)
+				&& !packages.some((chosen) => chosen.manager === p.manager && chosen.name === p.name),
+		)
+	) {
+		return yield* precondition('Selected packages share a version source with packages outside the selection');
+	}
+	for (const source of sources) {
+		if (tagPrefix(source) !== undefined) continue;
+		const path = source.split('#')[0];
+		if (!path) return yield* precondition('Invalid version source');
+		const before = changed.get(path) ?? snapshot.files[path];
+		if (before === undefined) return yield* precondition('Missing manifest');
+		changed.set(path, yield* registry.editVersion({ source, before, version, packages }));
+	}
+	yield* registry.updateDependencies({ snapshot, packages, version, changed });
+	const files = { ...snapshot.files, ...Object.fromEntries(changed) };
+	yield* applyVersionFiles(snapshot, files, versionFiles, { release: version });
+	for (const [path, after] of Object.entries(files)) if (after !== snapshot.files[path]) changed.set(path, after);
+
+	const edits = yield* fileEdits(snapshot.files, changed);
+	const requiresPreparation = edits.length > 0
+		&& Object.keys(snapshot.files).some(isLockfile);
+	if (requiresPreparation) {
+		diagnostics.push(
+			'Preparation workflow must regenerate lockfiles and generated version carriers before promotion',
+		);
+	}
+	if (!edits.length) diagnostics.push(alreadyPrepared(version, snapshot.sha));
+	return {
+		lockfiles: Object.keys(snapshot.files).filter(isLockfile),
+		version,
+		sourceSha: snapshot.sha,
+		packages,
+		edits,
+		diagnostics,
+		requiresPreparation,
+	};
+});
 
 export function placeholderVersion(version: string | undefined): boolean {
 	return version === '0.0.0';

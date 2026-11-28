@@ -5,6 +5,7 @@ import { GrantStore } from '@/credentials/adapters/d1/grants.ts';
 import type { Grant } from '@/credentials/grant.ts';
 import { grantRow, parseGrant, requestGrant } from '@/credentials/grant.ts';
 import { DomainError } from '@/kernel/errors/domain-error.ts';
+import { credentialAliasPattern } from '@/kernel/schema/ids.ts';
 
 const fields = {
 	id: 'grant-1',
@@ -128,7 +129,7 @@ const malformed: [string, unknown, string, { path: string[]; message: string }][
 	[
 		'an alias with spaces',
 		{ ...rows.Runtime, alias: 'npm token' },
-		'Expected a string matching the RegExp ^[\\w-]+$\n  at ["alias"]',
+		`Expected a string matching the RegExp ${credentialAliasPattern.source}\n  at ["alias"]`,
 		{ path: ['alias'], message: 'Expected a valid value' },
 	],
 	[

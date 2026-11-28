@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { Effect, Schema } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
+import { validDistributionArtifact } from '@/domain/distribution-validation.ts';
 import { filesFromZip, maxDirectoryEntries, maxDistributionFiles } from '@/kernel/archive/zip.ts';
 import { fromPromise, fromSync } from '@/kernel/errors/classify.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -45,7 +46,7 @@ export function readDistributionArtifact(
 		if (directories.size > maxDirectoryEntries) {
 			return yield* precondition('Distribution artifact paths require more than 128 directories');
 		}
-		if (!Number.isSafeInteger(artifact.id) || artifact.id <= 0 || !/^[a-f0-9]{64}$/.test(artifact.digest)) {
+		if (!validDistributionArtifact(artifact.id, artifact.digest)) {
 			return yield* precondition('Invalid distribution artifact ID or digest');
 		}
 		const token = yield* gateway.token(identity.repository, identity.repositoryId, {

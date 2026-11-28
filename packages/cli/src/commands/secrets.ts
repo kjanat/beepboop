@@ -7,7 +7,7 @@ import { lookOf, step } from '@/cli/render/look';
 import { emit, failure, prompted, unprompted } from '@/cli/render/output';
 import { credentialTables } from '@/cli/render/views';
 import { routes } from '@/contract/routes';
-import { credentialAliasPattern, githubSecretNamePattern } from '@/kernel/schema/ids.ts';
+import { credentialAliasDescription, credentialAliasPattern, githubSecretNamePattern } from '@/kernel/schema/ids.ts';
 
 function securityKey(
 	ask: (prompt: { kind: 'password'; message: string }) => Promise<unknown>,
@@ -55,7 +55,7 @@ export const secrets = group('secrets').description('Store secret values and lis
 			.arg(
 				'alias',
 				arg.string({ pattern: credentialAliasPattern }).describe(
-					'Secret name: 1-64 letters, numbers, underscores or hyphens',
+					credentialAliasDescription,
 				),
 			)
 			.flag('value', flag.string().stdin({ argv: false, trim: true }).sensitive())

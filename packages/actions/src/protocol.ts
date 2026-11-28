@@ -3,6 +3,7 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Data, Effect, Result } from 'effect';
 import { isJson } from '@/contract/http.ts';
+import { validDistributionArtifact, validDistributionPath } from '@/domain/distribution-validation.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { attemptWith, awaitWith, errorMessage, failWith, rejectWith } from '@/kernel/errors/refusal.ts';
 import { responseJson } from '@/kernel/http/body.ts';
@@ -132,7 +133,7 @@ export function requestBody(mode: Mode, environment: Environment, now: number): 
 				if (environment.DISTRIBUTION_ARTIFACT_ID || environment.DISTRIBUTION_ARTIFACT_DIGEST) {
 					const id = Number(yield* required(environment, 'DISTRIBUTION_ARTIFACT_ID'));
 					const digest = yield* required(environment, 'DISTRIBUTION_ARTIFACT_DIGEST');
-					if (!Number.isSafeInteger(id) || id <= 0 || !/^[a-f0-9]{64}$/.test(digest)) {
+					if (!validDistributionArtifact(id, digest)) {
 						return yield* refuse('Invalid distribution artifact ID or SHA-256 digest');
 					}
 					return { executionId, artifact: { id, digest } };
@@ -141,12 +142,7 @@ export function requestBody(mode: Mode, environment: Environment, now: number): 
 				if (paths.length === 0) return { executionId };
 				const root = yield* required(environment, 'GITHUB_WORKSPACE');
 				const files = yield* Result.all(paths.map(path => Result.gen(function*() {
-					if (
-						!path || path.startsWith('/') || path.includes('\\') || path.includes('\0')
-						|| path.split('/').some(part => !part || part === '..' || part === '.' || part.toLowerCase() === '.git')
-						|| path.toLowerCase() === '.github' || path.toLowerCase() === '.github/workflows'
-						|| path.toLowerCase().startsWith('.github/workflows/')
-					) return yield* refuse('Invalid distribution path');
+					if (!validDistributionPath(path)) return yield* refuse('Invalid distribution path');
 					const parts = path.split('/');
 					for (let index = 1; index < parts.length; index++) {
 						const directory = yield* attempt(() => lstatSync(join(root, ...parts.slice(0, index))));
