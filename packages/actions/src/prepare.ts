@@ -17,7 +17,7 @@ import { attempt, refuse, required } from '@/actions/protocol.ts';
 import { checkoutAt } from '@/host/git.ts';
 import { runMain } from '@/host/main.ts';
 import { hasPathSegment } from '@/kernel/path/relative-path.ts';
-import { array, record, string, strings, text } from '@/kernel/schema/result.ts';
+import { array, record, sha, string, strings, text } from '@/kernel/schema/result.ts';
 
 interface PlannedEdit {
 	path: string;
@@ -27,7 +27,7 @@ interface PlannedEdit {
 
 interface Preparation {
 	id: string;
-	sourceSha: unknown;
+	sourceSha: string;
 	edits: PlannedEdit[];
 	lockfiles: string[];
 }
@@ -42,8 +42,9 @@ function plannedEdit(value: unknown): Result.Result<PlannedEdit, Invalid> {
 function preparation(source: string): Result.Result<Preparation, Invalid> {
 	return Result.gen(function*() {
 		const input = yield* record(yield* attempt((): unknown => JSON.parse(source)));
-		const context = typeof input.contextFile === 'string'
-			? yield* record(yield* attempt((): unknown => JSON.parse(readFileSync(input.contextFile as string, 'utf8'))))
+		const contextFile = input.contextFile;
+		const context = typeof contextFile === 'string'
+			? yield* record(yield* attempt((): unknown => JSON.parse(readFileSync(contextFile, 'utf8'))))
 			: input;
 		if (context.operation !== 'prepare' || !context.plan || !context.id) {
 			return yield* refuse('Expected a preparation execution');
@@ -51,7 +52,7 @@ function preparation(source: string): Result.Result<Preparation, Invalid> {
 		const plan = yield* record(context.plan);
 		return {
 			id: yield* text(context.id),
-			sourceSha: context.sourceSha,
+			sourceSha: yield* sha(context.sourceSha),
 			edits: yield* Result.all((yield* array(plan.edits)).map(plannedEdit)),
 			lockfiles: plan.lockfiles === undefined ? [] : yield* strings(plan.lockfiles),
 		};
