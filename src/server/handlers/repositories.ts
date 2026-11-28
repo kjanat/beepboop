@@ -12,7 +12,6 @@ import { repositoryName, repositoryReference } from '@/domain/repository-name.ts
 import { fromJson } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, domainError, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
-import { record } from '@/kernel/schema/result.ts';
 import { streamReleases } from '@/release/domain/capability.ts';
 import type { Context } from '@/server/handlers/kit';
 import { admin, storedRepository } from '@/server/handlers/kit';
@@ -165,8 +164,7 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		);
 		const stored = yield* service.store.repositories.get(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
-		const document = yield* service.onboarding.document(id);
-		const saved = document === undefined ? undefined : yield* Effect.fromResult(record(yield* fromJson(document)));
+		const saved = yield* service.setupDocument(id);
 		const branch = setupBranch(snapshot);
 		const head = yield* setupHead(service.gateway, name, id, branch);
 		const branchFiles = head ? yield* generatedFiles(service.gateway, name, id, head) : undefined;

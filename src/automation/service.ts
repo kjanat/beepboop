@@ -85,6 +85,7 @@ import {
 import type { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
 import { sweep } from '@/server/scheduled/sweep.ts';
 import { releaseAfterMerge } from '@/setup/body.ts';
+import type { SetupChoices } from '@/setup/contract.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
 import { inferredConfiguration } from '@/setup/draft.ts';
 import { bodyChoices } from '@/setup/options.ts';
@@ -644,11 +645,29 @@ export class AutomationService {
 		repository: ReadyRepository,
 	): Effect.Effect<{ sha: string; body: string } | undefined, DomainError> {
 		return Effect.gen({ self: this }, function*() {
-			const document = yield* this.onboarding.document(repository.id);
-			if (document === undefined) return undefined;
-			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
-			if (typeof saved.url !== 'string') return undefined;
+			const saved = yield* this.setupDocument(repository.id);
+			if (typeof saved?.url !== 'string') return undefined;
 			return yield* setupMerge(this.gateway, repository.name, repository.id, saved.url);
+		});
+	}
+	setupDocument(repositoryId: number): Effect.Effect<Record<string, unknown> | undefined, DomainError> {
+		return this.onboarding.document(repositoryId).pipe(
+			Effect.flatMap(document =>
+				document === undefined
+					? Effect.undefined
+					: fromJson(document).pipe(Effect.flatMap(value => Effect.fromResult(record(value))))
+			),
+		);
+	}
+	private proposedSetup(
+		repository: RepositoryRecord,
+		pull: number,
+	): Effect.Effect<{ saved: Record<string, unknown>; choices: SetupChoices } | undefined, DomainError> {
+		return Effect.gen({ self: this }, function*() {
+			const saved = yield* this.setupDocument(repository.id);
+			if (saved?.url !== `https://github.com/${repository.name}/pull/${pull}`) return undefined;
+			const choices = yield* fromSync(() => decodeSync(Schema.optional(setupChoicesSchema), saved.choices));
+			return choices && { saved, choices };
 		});
 	}
 	private backfill(
@@ -847,12 +866,9 @@ export class AutomationService {
 			if (pull.head.repo.id !== repository.id || pull.base.repo.id !== repository.id) return;
 			const bot = yield* this.gateway.botIdentity;
 			if (pull.user.id !== bot.id || pull.merged_by.login !== (yield* this.gateway.ownerLogin())) return;
-			const document = yield* this.onboarding.document(repository.id);
-			if (document === undefined) return;
-			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
-			if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
-			const choices = yield* fromSync(() => decodeSync(Schema.optional(setupChoicesSchema), saved.choices));
-			if (!choices) return;
+			const proposed = yield* this.proposedSetup(repository, pull.number);
+			if (!proposed) return;
+			const { saved, choices } = proposed;
 			const generated = setupEdits(saved);
 			const workflowPaths = (file: string | undefined) => file === undefined ? [] : [workflowPath(file)];
 			const workflows = choices.streams.flatMap(stream => [
@@ -931,12 +947,9 @@ export class AutomationService {
 			if (pull.head.repo.id !== repository.id || pull.base.repo.id !== repository.id) return;
 			const bot = yield* this.gateway.botIdentity;
 			if (sender.id === bot.id || pull.user.id !== bot.id) return;
-			const document = yield* this.onboarding.document(repository.id);
-			if (document === undefined) return;
-			const saved = yield* Effect.fromResult(record(yield* fromJson(document)));
-			if (saved.url !== `https://github.com/${repository.name}/pull/${pull.number}`) return;
-			const base = yield* fromSync(() => decodeSync(Schema.optional(setupChoicesSchema), saved.choices));
-			if (!base) return;
+			const proposed = yield* this.proposedSetup(repository, pull.number);
+			if (!proposed) return;
+			const base = proposed.choices;
 			const options = yield* currentOptions(
 				this.store,
 				this.gateway,
