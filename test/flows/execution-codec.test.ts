@@ -3,7 +3,7 @@ import { packedRelease } from '@root/test/support/packed-release.ts';
 import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Schema } from 'effect';
-import { executionSchema } from '@/release/domain/execution/codec-v1.ts';
+import { executionSchema } from '@/release/adapters/codecs/execution-v1.ts';
 
 let world: World;
 eachWorld(created => {

@@ -8,7 +8,7 @@ import { parse } from '@/persistence/d1/database';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import type { CompletionMetadata, ProjectionRules } from '@/persistence/d1/projection';
 import { readyRead } from '@/persistence/d1/ready-read';
-import { decodeEventV1, decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeEventV1, decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 
 export function completionMetadata(document: string, repositoryId: number): CompletionMetadata | undefined {

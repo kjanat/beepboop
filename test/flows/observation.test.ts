@@ -22,7 +22,7 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import { runFailedNote } from '@/release/domain/execution/execution.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { parseSetupPlan } from '@/setup/plan.ts';

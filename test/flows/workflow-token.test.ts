@@ -3,7 +3,7 @@ import { Effect } from 'effect';
 import type { RunIdentity } from '@/auth/actions-oidc.ts';
 import type { DispatchedExecution, TokenIssuer } from '@/auth/workflow-token.ts';
 import { issueWorkflowToken } from '@/auth/workflow-token.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import { dispatchedExecution } from '@/release/domain/execution/execution.ts';
 
 const identity: RunIdentity = {

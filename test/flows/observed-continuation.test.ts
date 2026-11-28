@@ -5,7 +5,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import { Automation } from '@/automation/service';
 import { requireReady } from '@/domain/repository';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import { createExecution } from '@/release/domain/execution/execution.ts';
 import { ReleaseHistory } from '@/release/domain/history.ts';
 

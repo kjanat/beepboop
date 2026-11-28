@@ -4,7 +4,7 @@ import { Effect, Exit, Layer } from 'effect';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { ProjectionSink } from '@/persistence/durable/journal.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import type { ExecutionCommitted } from '@/release/services/coordinator/executions.ts';
 import { Executions, RepositoryRevisions } from '@/release/services/coordinator/executions.ts';

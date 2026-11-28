@@ -6,7 +6,7 @@ import type { Package } from '@/domain/inventory.ts';
 import { requireReady } from '@/domain/repository';
 import { decodeSync } from '@/kernel/schema/structs.ts';
 import { verifyPublication, verifySecondaryPublications } from '@/publication/registries/verify.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import { createExecution } from '@/release/domain/execution/execution.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { plannedPublicationUrls } from '@/release/domain/publication-urls.ts';

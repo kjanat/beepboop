@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { Snapshot } from '@/domain/inventory.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import type { Preparation } from '@/release/domain/preparation-request.ts';
 import { preparationRequest } from '@/release/domain/preparation-request.ts';

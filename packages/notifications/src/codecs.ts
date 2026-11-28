@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 import { decodeSync, mutableStruct } from '@/kernel/schema/structs.ts';
-import { currentState, executionSchema, identifyExecution } from '@/release/domain/execution/codec-v1.ts';
+import { currentState, executionSchema, identifyExecution } from '@/release/adapters/codecs/execution-v1.ts';
 import type { SubscriptionDelivery } from '@/release/domain/execution/types.ts';
 
 const deliveryFields = {

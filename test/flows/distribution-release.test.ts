@@ -14,7 +14,7 @@ import { Store } from '@/automation/store';
 import type { Edit } from '@/domain/inventory.ts';
 import type { RefPlan } from '@/domain/refs.ts';
 import { requireReady } from '@/domain/repository';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import { createExecution, expectedRunTitle } from '@/release/domain/execution/execution.ts';
 
 let world: World, key: SigningKey | undefined;

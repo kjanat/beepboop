@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from 'bun:test';
 import { Effect, Exit } from 'effect';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import { ReleaseHistory } from '@/release/domain/history.ts';
 import { ReconcileHistory } from '@/release/services/coordinator/reconcile-history.ts';
 

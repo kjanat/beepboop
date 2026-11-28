@@ -14,7 +14,7 @@ import type { World } from '@root/test/support/world.ts';
 import { eachWorld } from '@root/test/support/world.ts';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
 import { versionPrMergeSentences, versionScopeNames } from '@/domain/setup-terms.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import { AutomationCoordinator } from '@/server/durable/automation-coordinator.ts';
 import { runCard } from '@/server/views/runs';
 import { behaviourChanges } from '@/setup/changes.ts';

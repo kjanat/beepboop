@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import type { RunJob } from '@/github/run-state.ts';
 import { classifyJob, classifyRun } from '@/github/run-state.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import {
 	publishedAfterFailure,
 	rechecked,

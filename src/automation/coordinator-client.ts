@@ -13,8 +13,6 @@ import { decodeSync, mutableArray } from '@/kernel/schema/structs.ts';
 import type { ClaimStep, NextStep, PublishReport, ReportStep } from '@/publication/contract.ts';
 import { claimStep, nextStep, reportStep } from '@/publication/contract.ts';
 import type { Publication } from '@/publication/publication.ts';
-import type { DistributionArtifact } from '@/release/distribution/artifact.ts';
-import type { DistributionFile } from '@/release/distribution/validation.ts';
 import {
 	automationEventSchema,
 	executionSchema,
@@ -22,7 +20,9 @@ import {
 	preparedReleaseSchema,
 	refPlanSchema,
 	refStatesSchema,
-} from '@/release/domain/execution/codec-v1.ts';
+} from '@/release/adapters/codecs/execution-v1.ts';
+import type { DistributionArtifact } from '@/release/distribution/artifact.ts';
+import type { DistributionFile } from '@/release/distribution/validation.ts';
 import type {
 	Artifact,
 	AutomationEvent,

@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Ref } from 'effect';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import type { Committed } from '@/persistence/durable/journal.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import type { ReleaseHistory } from '@/release/domain/history.ts';
 
 export class ReconcileHistory extends Context.Service<ReconcileHistory, {

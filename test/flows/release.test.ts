@@ -32,7 +32,7 @@ import {
 	strictStruct,
 	withValidation,
 } from '@/kernel/schema/structs.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import { createExecution, runFailedNote } from '@/release/domain/execution/execution.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { executionId, releaseEventId } from '@/release/domain/identity-keys.ts';

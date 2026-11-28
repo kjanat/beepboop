@@ -4,8 +4,8 @@ import { Effect } from 'effect';
 import { ProjectionBackfill } from '@/automation/projection-backfill.ts';
 import { Store } from '@/automation/store';
 import { ProjectionStore } from '@/persistence/d1/projection';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import { projectionRules } from '@/release/adapters/d1/completions.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
 
 function execution(id: string, verifying = false) {
 	return {

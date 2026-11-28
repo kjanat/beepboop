@@ -6,7 +6,7 @@ import { decodeDeliveryV1 } from '@/notifications/codecs.ts';
 import type { Sql } from '@/persistence/d1/database';
 import { parse } from '@/persistence/d1/database';
 import { documentRow, rowDocument } from '@/persistence/d1/document-row';
-import { decodeEventV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeEventV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import type { AutomationEvent, SubscriptionDelivery } from '@/release/domain/execution/types.ts';
 
 export class ReleaseEvents {

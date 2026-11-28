@@ -2,7 +2,7 @@ import type { Api, Reply } from '@root/test/support/http.ts';
 import { field, text } from '@root/test/support/http.ts';
 import { one } from '@root/test/support/lists.ts';
 import type { VersionPrMerge } from '@/domain/setup-terms.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 
 export interface ReleaseRequest {

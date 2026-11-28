@@ -16,11 +16,11 @@ import { rowDocument } from '@/persistence/d1/document-row';
 import { GateSkipStore } from '@/persistence/d1/gate-skips';
 import { jsonBatches } from '@/persistence/d1/json-batches';
 import { readyRead } from '@/persistence/d1/ready-read';
+import { decodeExecutionV1 } from '@/release/adapters/codecs/execution-v1.ts';
 import type { CompletionCandidate } from '@/release/adapters/d1/completions.ts';
 import { CompletionStore } from '@/release/adapters/d1/completions.ts';
-import { decodeExecutionV1 } from '@/release/domain/execution/codec-v1.ts';
-import type { ActivityEntry, Execution } from '@/release/domain/execution/types.ts';
 import { executionOrderSql, validJson } from '@/release/adapters/d1/execution-order.ts';
+import type { ActivityEntry, Execution } from '@/release/domain/execution/types.ts';
 import { newestActiveFirst } from '@/release/domain/execution-order.ts';
 
 export interface UnreadableExecution {
