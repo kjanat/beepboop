@@ -59,11 +59,11 @@ import { startWorkflow } from '@/setup/workflows/start.ts';
 
 export const branchConflictBlocker =
 	'Someone else committed to the setup branch, so Beepboop stopped updating it. Take over to replace their commits with this proposal.';
+export type WorkflowAccess = { readonly kind: 'granted' } | { readonly kind: 'missing'; readonly appPage: string };
 export interface SetupBaseline {
 	publishing?: PublishingAccess;
 	head: string | null;
-	workflowPermission?: boolean;
-	appPage?: string;
+	workflowAccess?: WorkflowAccess;
 	branchConflict?: boolean;
 	prior?: { url: string; content?: string; sourceSha?: string };
 	presetShas?: Record<string, string>;
@@ -777,11 +777,10 @@ function drafted(
 		const prior = baseline.prior
 			? { url: baseline.prior.url, superseded: !!before && baseline.prior.content !== before }
 			: undefined;
-		if (baseline.workflowPermission === false && edits.some(edit => edit.path.startsWith('.github/workflows/'))) {
+		const access = baseline.workflowAccess;
+		if (access?.kind === 'missing' && edits.some(edit => edit.path.startsWith('.github/workflows/'))) {
 			blockers.push(
-				`The GitHub App installation needs Workflows: write permission before this proposal can edit workflows. Update permissions for ${
-					baseline.appPage ?? 'the GitHub App'
-				} and approve the installation update, then preview again.`,
+				`The GitHub App installation needs Workflows: write permission before this proposal can edit workflows. Update permissions for ${access.appPage} and approve the installation update, then preview again.`,
 			);
 		}
 		const plan = {

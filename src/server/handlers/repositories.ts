@@ -12,6 +12,7 @@ import { repositoryName, repositoryReference } from '@/domain/repository-name.ts
 import { fromJson } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { conflict, domainError, invalid, notFound, precondition } from '@/kernel/errors/domain-error.ts';
+import { record } from '@/kernel/schema/result.ts';
 import { streamReleases } from '@/release/domain/capability.ts';
 import type { Context } from '@/server/handlers/kit';
 import { admin, storedRepository } from '@/server/handlers/kit';
@@ -19,7 +20,14 @@ import { setupBody } from '@/setup/body.ts';
 import { setupBranch, setupTitle } from '@/setup/changes.ts';
 import { branchConflictBlocker, previewSetup } from '@/setup/draft.ts';
 import { setupOptions } from '@/setup/options.ts';
-import { followsProposal, observationsKept, sameEdits, savedSetup, setupEdits } from '@/setup/server/maintenance.ts';
+import {
+	followsProposal,
+	observationsKept,
+	sameEdits,
+	savedSetup,
+	setupEdits,
+	workflowAccess,
+} from '@/setup/server/maintenance.ts';
 import { generatedFiles, openSetupPull, setupHead } from '@/setup/server/pull-requests.ts';
 import { withRegistryStatus } from '@/setup/suggest.ts';
 
@@ -157,7 +165,8 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		);
 		const stored = yield* service.store.repositories.get(id);
 		const inventory = withRegistryStatus(discover(snapshot), stored?.inventory);
-		const saved = yield* service.setupDocument(id);
+		const document = yield* service.onboarding.document(id);
+		const saved = document === undefined ? undefined : yield* Effect.fromResult(record(yield* fromJson(document)));
 		const branch = setupBranch(snapshot);
 		const head = yield* setupHead(service.gateway, name, id, branch);
 		const branchFiles = head ? yield* generatedFiles(service.gateway, name, id, head) : undefined;
@@ -168,13 +177,11 @@ function setupReview(input: { repository: string; choices?: unknown }, context: 
 		const proposed = open !== undefined && (snapshot.files['.github/beepboop.json'] ?? '') === priorConfiguration
 			&& !followsProposal(saved, open.body);
 		const choices = input.choices ?? (proposed ? saved?.choices : undefined);
-		const workflowPermission = yield* service.gateway.canEditWorkflows(name, id);
 		const plan = yield* previewSetup(snapshot, inventory, choices, {
 			publishing: service.publishingAccess(snapshot.repository),
 			...savedSetup(saved),
 			head,
-			workflowPermission,
-			...(!workflowPermission ? { appPage: yield* service.gateway.appPage } : {}),
+			workflowAccess: yield* workflowAccess(service.gateway, name, id),
 			branchConflict,
 			presetShas: resolved.presetShas,
 			...(typeof saved?.url === 'string'

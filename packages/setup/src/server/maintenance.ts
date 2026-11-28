@@ -30,6 +30,7 @@ import { marked } from '@/setup/blocks.ts';
 import { releaseAfterMerge, releaseAfterMergeBox, setupBody } from '@/setup/body.ts';
 import { changeDetails, setupBranch, setupTitle } from '@/setup/changes.ts';
 import { setupChoicesSchema } from '@/setup/contract.ts';
+import type { WorkflowAccess } from '@/setup/draft.ts';
 import { previewSetup } from '@/setup/draft.ts';
 import { setupOptions } from '@/setup/options.ts';
 import type { PublishingAccess } from '@/setup/publishing.ts';
@@ -57,6 +58,16 @@ function repositoryConfiguration(
 	return resolveConfiguration(raw, ref => gateway.preset(ref)).pipe(
 		Effect.mapError(error => error instanceof Schema.SchemaError ? toDomainError(error) : error),
 	);
+}
+export function workflowAccess(
+	gateway: RepositoryGateway,
+	name: string,
+	id: number,
+): Effect.Effect<WorkflowAccess, DomainError> {
+	return Effect.gen(function*() {
+		if (yield* gateway.canEditWorkflows(name, id)) return { kind: 'granted' };
+		return { kind: 'missing', appPage: yield* gateway.appPage };
+	});
 }
 function currentInventory(store: Store, snapshot: Snapshot): Effect.Effect<Inventory, DomainError> {
 	return store.repositories.get(snapshot.repository.id).pipe(
@@ -179,14 +190,12 @@ export function maintainSetup(
 				?? ((snapshot.files[configurationPath] ?? '') === original && !followsProposal(saved, pull.body)
 					? saved.choices
 					: undefined);
-			const workflowPermission = yield* gateway.canEditWorkflows(name, id);
 			const repaired = saved.observationsKept === true ? choices : storedObservation(choices, raw, inventory);
 			const plan = yield* previewSetup(snapshot, inventory, repaired, {
 				publishing,
 				...savedSetup(saved),
 				head: pull.head,
-				workflowPermission,
-				...(!workflowPermission ? { appPage: yield* gateway.appPage } : {}),
+				workflowAccess: yield* workflowAccess(gateway, name, id),
 				presetShas: resolved.presetShas,
 				prior: { url: pull.url, content: typeof saved.content === 'string' ? saved.content : undefined },
 			}, resolved.configuration);
@@ -332,13 +341,11 @@ function migrateSetup(
 		const resolved = yield* repositoryConfiguration(gateway, raw);
 		const branch = setupBranch(snapshot);
 		const head = yield* setupHead(gateway, name, id, branch);
-		const workflowPermission = yield* gateway.canEditWorkflows(name, id);
 		const plan = yield* previewSetup(snapshot, inventory, undefined, {
 			publishing,
 			saved: choices,
 			head,
-			workflowPermission,
-			...(!workflowPermission ? { appPage: yield* gateway.appPage } : {}),
+			workflowAccess: yield* workflowAccess(gateway, name, id),
 			presetShas: resolved.presetShas,
 		}, resolved.configuration);
 		if (plan.blockers.length || !plan.edits.length) return;
