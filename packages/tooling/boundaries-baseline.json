@@ -144,18 +144,6 @@
 		"specifier": "@/automation/gateway.ts"
 	},
 	{
-		"file": "packages/release/src/domain/execution/codec-v1.ts",
-		"specifier": "@/contract/views"
-	},
-	{
-		"file": "packages/release/src/domain/execution/types.ts",
-		"specifier": "@/contract/views"
-	},
-	{
-		"file": "packages/release/src/domain/package-tags.ts",
-		"specifier": "@/contract/views"
-	},
-	{
 		"file": "packages/release/src/http/executions.ts",
 		"specifier": "@/automation/service"
 	},

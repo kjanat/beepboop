@@ -3,6 +3,8 @@ import { githubJobKinds } from '@/domain/github-run-state.ts';
 import { releaseGate } from '@/domain/release-gates.ts';
 import type { Decoded } from '@/kernel/schema/structs.ts';
 import { looseStruct, mutableArray, mutableStruct } from '@/kernel/schema/structs.ts';
+import type { ExecutionState } from '@/release/domain/execution/states.ts';
+import { approvalRequest, executionStates } from '@/release/domain/execution/states.ts';
 
 export const tones = ['ok', 'active', 'waiting', 'warn', 'error', 'neutral'] as const;
 export type Tone = (typeof tones)[number];
@@ -13,22 +15,8 @@ export interface Status {
 	detail?: string;
 }
 
-export const executionStates = [
-	'pending',
-	'awaiting-approval',
-	'blocked',
-	'ready',
-	'dispatching',
-	'running',
-	'verifying',
-	'succeeded',
-	'failed',
-	'cancelled',
-	'uncertain',
-] as const;
-export type ExecutionStateView = (typeof executionStates)[number];
-
-export const approvalRequest = mutableStruct({ actor: Schema.String, sourceSha: Schema.String });
+export { approvalRequest, executionStates };
+export type ExecutionStateView = ExecutionState;
 
 export const executionView = looseStruct({
 	id: Schema.String,
@@ -63,20 +51,8 @@ export const binaryProgress = mutableStruct({
 });
 export type BinaryProgress = Decoded<typeof binaryProgress>;
 
-export const packageTagOutcomes = ['exists', 'conflict', 'unpublished', 'publishable', 'created', 'failed'] as const;
-export const packageTagView = mutableStruct({
-	tag: Schema.String,
-	version: Schema.String,
-	commit: Schema.String,
-	outcome: Schema.Literals(packageTagOutcomes),
-	reason: Schema.optional(Schema.String),
-});
-export type PackageTagView = Decoded<typeof packageTagView>;
-export const packageTagPage = mutableStruct({
-	results: mutableArray(packageTagView),
-	next: Schema.optional(Schema.String),
-});
-export type PackageTagPage = Decoded<typeof packageTagPage>;
+export type { PackageTagPage, PackageTagView } from '@/release/domain/package-tag-page.ts';
+export { packageTagOutcomes, packageTagPage, packageTagView } from '@/release/domain/package-tag-page.ts';
 
 export const planReview = looseStruct({
 	sourceSha: Schema.String,

@@ -14,6 +14,7 @@ import { conflict, decodeRequest, forbidden, precondition } from '@/kernel/error
 import { logRecovered } from '@/kernel/logging/failure-log.ts';
 import { mutableStruct } from '@/kernel/schema/structs.ts';
 import type { Publication } from '@/publication/publication.ts';
+import { outcomes } from '@/publication/publication.ts';
 import { createExecution, dispatchedExecution } from '@/release/domain/execution/execution.ts';
 import type { Artifact, Execution } from '@/release/domain/execution/types.ts';
 import { plannedPublicationUrls } from '@/release/domain/publication-urls.ts';
@@ -21,7 +22,7 @@ import { beginRelease, releasePlan } from '@/release/http/releases.ts';
 import type { EnrolledContext } from '@/server/handlers/kit';
 import { workflow, workflowToken } from '@/server/handlers/kit';
 
-const outcomes = ['pending', 'succeeded', 'failed', 'cancelled', 'uncertain', 'skipped', 'rate-limited'] as const;
+const reportedOutcomes = [...outcomes, 'rate-limited'] as const;
 const reportedFields = mutableStruct({
 	id: Schema.String.check(Schema.isMinLength(1)),
 	manager: Schema.Literals(reportableManagerNames).annotate({ message: 'Invalid publication' }),
@@ -31,7 +32,7 @@ const reportedFields = mutableStruct({
 	digest: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
 	url: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
 	channel: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
-	outcome: Schema.Literals(outcomes).annotate({ message: 'Invalid publication' }),
+	outcome: Schema.Literals(reportedOutcomes).annotate({ message: 'Invalid publication' }),
 	retryAfter: Schema.optional(Schema.Unknown),
 });
 function publication(raw: unknown): Effect.Effect<Publication, DomainError> {

@@ -5,10 +5,12 @@ import { compare, semVer } from '@/domain/version.ts';
 import { safeDecode } from '@/kernel/schema/structs.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { githubRunLabel } from '@/release/domain/execution/run-labels.ts';
+import type { ExecutionState } from '@/release/domain/execution/states.ts';
+import { settledStates } from '@/release/domain/execution/states.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { listOrder, unfinishedStates } from '@/release/domain/execution-order.ts';
 
-export const activeStates: readonly string[] = ['running', 'ready', 'dispatching', 'verifying'];
+export const activeStates: readonly ExecutionState[] = ['running', 'ready', 'dispatching', 'verifying'];
 
 export function publishesAutomatically(run: Execution): boolean {
 	return run.state === 'awaiting-approval'
@@ -54,7 +56,6 @@ function target(run: Execution): string {
 	]);
 }
 
-const settledStates: readonly string[] = ['succeeded', 'failed', 'cancelled'];
 const awaitedOutcomes: readonly string[] = ['waiting', 'pending', 'rate-limited'];
 
 function publishing(

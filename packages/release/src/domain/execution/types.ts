@@ -1,4 +1,3 @@
-import type { ExecutionStateView } from '@/contract/views';
 import type { ManagerName } from '@/domain/catalog.ts';
 import type { Configuration, WorkflowBinding } from '@/domain/configuration/schema.ts';
 import type { GitHubRunState } from '@/domain/github-run-state.ts';
@@ -10,6 +9,7 @@ import type { AutoMergeMethod, VersionPrMerge } from '@/domain/setup-terms.ts';
 import type { Publication } from '@/publication/publication.ts';
 import type { PublishKind } from '@/publication/publish-pace.ts';
 import type { ResolvedInput } from '@/release/domain/execution/outputs.ts';
+import type { ExecutionState } from '@/release/domain/execution/states.ts';
 import type { FrozenPackageTag } from '@/release/domain/package-tags.ts';
 
 export type { Configuration, Stream, Subscription, WorkflowBinding } from '@/domain/configuration/schema.ts';
@@ -33,7 +33,7 @@ export interface Artifact {
 	digest: string;
 	expiresAt: string;
 }
-export type ExecutionState = ExecutionStateView;
+export type { ExecutionState };
 export type RefNamespace = 'heads' | 'tags';
 export interface ReleaseReference {
 	group?: string;

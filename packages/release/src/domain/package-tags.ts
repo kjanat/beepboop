@@ -1,5 +1,4 @@
 import { Clock, Effect, Option } from 'effect';
-import type { PackageTagPage, PackageTagView } from '@/contract/views';
 import type { Package } from '@/domain/inventory.ts';
 import { matchesPackage, packageId, publicationIdentity } from '@/domain/package-identity.ts';
 import { publishable } from '@/domain/package-publication.ts';
@@ -9,6 +8,7 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { canVerifyPublication } from '@/publication/registries/verify.ts';
+import type { PackageTagPage, PackageTagView } from '@/release/domain/package-tag-page.ts';
 
 export interface PackageTagGroup {
 	prefix: string;
@@ -27,13 +27,11 @@ export interface Release {
 	version: string;
 	commit: string;
 }
-export type PackageTagState = 'exists' | 'conflict' | 'missing';
-export interface PackageTagRow extends Release {
-	tag: string;
-	probes: PackageTagProbe[];
-	state: PackageTagState;
-	target?: string;
-}
+export type PackageTagState =
+	| { readonly state: 'exists' }
+	| { readonly state: 'missing' }
+	| { readonly state: 'conflict'; readonly target: string };
+export type PackageTagRow = Release & { tag: string; probes: PackageTagProbe[] } & PackageTagState;
 export type PackageTagResult = PackageTagView;
 export const packageTagWindow = 10_000;
 export const packageTagBudget = 20_000;
@@ -96,17 +94,11 @@ function packageTagRow(
 	const tag = `${prefix}${release.version}`;
 	const existing = refs.find(ref => ref.name === tag);
 	const state: PackageTagState = existing === undefined
-		? 'missing'
+		? { state: 'missing' }
 		: existing.commit === release.commit
-		? 'exists'
-		: 'conflict';
-	return {
-		...release,
-		tag,
-		probes,
-		state,
-		...(existing && state === 'conflict' ? { target: existing.commit } : {}),
-	};
+		? { state: 'exists' }
+		: { state: 'conflict', target: existing.commit };
+	return { ...release, tag, probes, ...state };
 }
 
 export function packageTagRows(

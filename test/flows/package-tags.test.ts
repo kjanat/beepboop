@@ -181,7 +181,7 @@ test('package tag rows cover each released version and keep tags on another comm
 			releases,
 			refs,
 		).map(
-			row => [row.tag, row.state, row.target],
+			row => [row.tag, row.state, row.state === 'conflict' ? row.target : undefined],
 		),
 	).toEqual([
 		['svg-data-v1.0.0', 'conflict', other],

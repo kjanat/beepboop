@@ -1,7 +1,8 @@
 import type { ManagerName } from '@/domain/catalog.ts';
 import type { PackageIdentity } from '@/domain/purl/index.ts';
 
-export type Outcome = 'pending' | 'succeeded' | 'failed' | 'cancelled' | 'uncertain' | 'skipped';
+export const outcomes = ['pending', 'succeeded', 'failed', 'cancelled', 'uncertain', 'skipped'] as const;
+export type Outcome = (typeof outcomes)[number];
 interface PublicationFields {
 	identity?: PackageIdentity;
 	id: string;

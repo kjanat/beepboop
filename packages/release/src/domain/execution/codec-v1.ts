@@ -1,5 +1,4 @@
 import { Schema } from 'effect';
-import { approvalRequest, executionStates } from '@/contract/views';
 import { githubRunState } from '@/domain/github-run-state.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import { inputSchema, outputSchema, platformSchema } from '@/domain/outputs.ts';
@@ -13,8 +12,10 @@ import { decodeSync, mutableArray, mutableStruct } from '@/kernel/schema/structs
 import { storedBinding, storedConfiguration } from '@/persistence/codecs/configuration';
 import { identity, managerName, pkg, shas } from '@/persistence/codecs/v1';
 import type { Publication } from '@/publication/publication.ts';
+import { outcomes } from '@/publication/publication.ts';
 import { completion } from '@/release/domain/execution/execution.ts';
 import type { ResolvedInput } from '@/release/domain/execution/outputs.ts';
+import { approvalRequest, executionStates } from '@/release/domain/execution/states.ts';
 import type {
 	Artifact,
 	AutomationEvent,
@@ -58,7 +59,7 @@ const releaseSetPlan: Schema.Codec<ReleaseSetPlan, unknown> = mutableStruct({
 	requiresPreparation: Schema.Boolean,
 });
 const plan = Schema.Union([releasePlan, releaseSetPlan]);
-const outcome = Schema.Literals(['pending', 'succeeded', 'failed', 'cancelled', 'uncertain', 'skipped']);
+const outcome = Schema.Literals(outcomes);
 const publicationFields = mutableStruct({
 	identity: Schema.optional(identity),
 	id: Schema.String,
