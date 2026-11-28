@@ -4,7 +4,6 @@ import { jsonIndent, object } from '@/discovery/managers/manifest-editing.ts';
 import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import { jsrManifest, jsrPackageNamePattern } from '@/domain/catalog.ts';
-import { identityOf } from '@/domain/package-identity.ts';
 import { registry } from '@/domain/package-publication.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
@@ -19,7 +18,6 @@ const spdxLicense = new RegExp(`^${licenseTerm}(?: (?:AND|OR|WITH) ${licenseTerm
 
 export const jsrDiscoverer: DiscovererOf<'jsr'> = {
 	name: 'jsr',
-	identity: pkg => identityOf(pkg),
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		const manifests = new Map<string, string>();

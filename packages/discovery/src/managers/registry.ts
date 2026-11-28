@@ -3,10 +3,9 @@ import { pkgbuildChannels } from '@/discovery/managers/pkgbuild.ts';
 import type { ManagerName } from '@/domain/catalog.ts';
 import { channelKey } from '@/domain/destinations.ts';
 import type { Inventory, Package, Snapshot } from '@/domain/inventory.ts';
-import { packageId } from '@/domain/package-identity.ts';
+import { packageId, parseIdentity } from '@/domain/package-identity.ts';
 import { publicationOrder } from '@/domain/publication-order.ts';
-import type { PackageIdentity } from '@/domain/purl/index.ts';
-import { invalidPackageUrl, parsePackageIdentity } from '@/domain/purl/index.ts';
+import type { InvalidPackageUrl, PackageIdentity } from '@/domain/purl/index.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
@@ -15,7 +14,7 @@ import { precondition } from '@/kernel/errors/domain-error.ts';
 export interface Discoverer {
 	readonly name: ManagerName;
 	discover(snapshot: Snapshot): Inventory;
-	identity?(pkg: Package, snapshot: Snapshot): PackageIdentity;
+	identity?(pkg: Package): Result.Result<PackageIdentity, InvalidPackageUrl>;
 	ownsVersionSource?(source: string): boolean;
 	editVersion?(context: VersionEdit): Effect.Effect<string, DomainError>;
 	updateDependencies?(context: DependencyEdit): Effect.Effect<void, DomainError>;
@@ -69,10 +68,9 @@ export class DiscoveryRegistry {
 			const manager: Discoverer = this.adapters[name];
 			const inventory = manager.discover(snapshot);
 			for (const pkg of inventory.packages) {
-				const identified = pkg.identity ?? manager.identity?.(pkg, snapshot);
-				const identity = identified === undefined
-					? Result.fail(invalidPackageUrl(`Manager ${name} did not identify package ${pkg.name}`))
-					: parsePackageIdentity(identified);
+				const identity = pkg.identity === undefined && manager.identity
+					? manager.identity(pkg)
+					: parseIdentity(pkg, snapshot.repository.name);
 				if (Result.isFailure(identity)) {
 					result.diagnostics.push(fileProblem(pkg.manifest, 'invalid-manifest', identity.failure.message));
 					continue;

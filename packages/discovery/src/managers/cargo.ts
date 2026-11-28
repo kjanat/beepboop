@@ -5,7 +5,6 @@ import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import { cargoMembers } from '@/discovery/managers/workspaces.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
-import { packageIdentity } from '@/domain/purl/index.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
@@ -31,7 +30,6 @@ function editWorkspaceVersion(before: string, version: string): string | undefin
 
 export const cargoDiscoverer = {
 	name: 'cargo',
-	identity: pkg => packageIdentity({ type: 'cargo', name: pkg.name, version: pkg.version }),
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		const detected = new Set<import('@/domain/catalog.ts').ManagerName>();

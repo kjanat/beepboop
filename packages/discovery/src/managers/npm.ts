@@ -7,7 +7,6 @@ import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import type { Package } from '@/domain/inventory.ts';
 import { excluded, publishable, registry } from '@/domain/package-publication.ts';
-import { packageIdentity } from '@/domain/purl/index.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -64,15 +63,6 @@ function insertedVersion(before: string, version: string): string {
 
 export const npmDiscoverer: DiscovererOf<'npm'> = {
 	name: 'npm',
-	identity(pkg) {
-		const slash = pkg.name.lastIndexOf('/');
-		return packageIdentity({
-			type: 'npm',
-			name: slash < 0 ? pkg.name : pkg.name.slice(slash + 1),
-			namespace: slash < 0 ? undefined : pkg.name.slice(0, slash),
-			version: pkg.version,
-		});
-	},
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		const detected = new Set<import('@/domain/catalog.ts').ManagerName>();

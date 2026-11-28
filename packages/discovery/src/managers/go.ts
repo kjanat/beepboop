@@ -2,7 +2,6 @@ import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import type { Package } from '@/domain/inventory.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
-import { packageIdentity } from '@/domain/purl/index.ts';
 import { latestTag, majorSuffix, tagSource } from '@/domain/version-tags.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { parentDirectory } from '@/kernel/path/relative-path.ts';
@@ -73,19 +72,6 @@ function codeRoot(split: ModulePath, dir: string, repository: string, vanity: st
 
 export const goDiscoverer: DiscovererOf<'go'> = {
 	name: 'go',
-	identity(pkg) {
-		const slash = pkg.name.lastIndexOf('/');
-		return packageIdentity(
-			slash < 0
-				? { type: 'generic', namespace: 'go', name: pkg.name, version: pkg.version }
-				: {
-					type: 'golang',
-					namespace: pkg.name.slice(0, slash),
-					name: pkg.name.slice(slash + 1),
-					version: pkg.version,
-				},
-		);
-	},
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		const modules: { path: string; mod: GoMod }[] = [];

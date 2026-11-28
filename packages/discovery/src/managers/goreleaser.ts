@@ -7,7 +7,6 @@ import { goreleaserConfig } from '@/domain/catalog.ts';
 import type { Channel } from '@/domain/destinations.ts';
 import type { Snapshot } from '@/domain/inventory.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
-import { packageIdentity } from '@/domain/purl/index.ts';
 import { latestTag, tagSource } from '@/domain/version-tags.ts';
 import type { Diagnostic } from '@/kernel/errors/diagnostics.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
@@ -87,15 +86,6 @@ function channelsOf(path: string, config: Record<string, unknown>, project: stri
 
 export const goreleaserDiscoverer: DiscovererOf<'goreleaser'> = {
 	name: 'goreleaser',
-	identity(pkg, snapshot) {
-		const slash = snapshot.repository.name.lastIndexOf('/');
-		return packageIdentity({
-			type: 'github',
-			namespace: snapshot.repository.name.slice(0, slash),
-			name: snapshot.repository.name.slice(slash + 1),
-			version: pkg.version === undefined ? undefined : `v${pkg.version.replace(/^v/, '')}`,
-		});
-	},
 	discover(snapshot) {
 		const result = emptyInventory();
 		for (const [path, source] of Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b))) {

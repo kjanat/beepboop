@@ -5,7 +5,7 @@ import { isPyproject, privateProject } from '@/discovery/managers/pyproject.ts';
 import type { DiscovererOf } from '@/discovery/managers/registry.ts';
 import { emptyInventory } from '@/discovery/managers/registry.ts';
 import { excluded, registry } from '@/domain/package-publication.ts';
-import { packageIdentity } from '@/domain/purl/index.ts';
+import { parsePackageIdentity } from '@/domain/purl/index.ts';
 import { fileProblem } from '@/kernel/errors/diagnostics.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
 
@@ -16,7 +16,7 @@ export function normalizedProject(name: string): string {
 
 export const pypiDiscoverer: DiscovererOf<'pypi'> = {
 	name: 'pypi',
-	identity: pkg => packageIdentity({ type: 'pypi', name: pkg.name, version: pkg.version }),
+	identity: pkg => parsePackageIdentity({ type: 'pypi', name: pkg.name, version: pkg.version }),
 	discover(snapshot) {
 		const inventory = emptyInventory();
 		for (const [path, source] of Object.entries(snapshot.files)) {
