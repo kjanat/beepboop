@@ -4,6 +4,7 @@ import { matchesPackage, packageId } from '@/domain/package-identity.ts';
 import type { ModuleTag, RefChange, RefPolicy, RefState } from '@/domain/refs.ts';
 import type { SemVer } from '@/domain/version.ts';
 import { aliasSeries, compare, isPrerelease, parseTag, semVer, tagFor } from '@/domain/version.ts';
+import { tagPrefix } from '@/domain/version-tags.ts';
 import { fromSync } from '@/kernel/errors/classify.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { precondition } from '@/kernel/errors/domain-error.ts';
@@ -11,12 +12,12 @@ import type { Execution } from '@/release/domain/execution/types.ts';
 
 /** A Go module publishes a version by its own tag, such as `go/v1.2.3` for the module in `go/`. */
 function moduleTags(packages: readonly Package[], references: string[]): ModuleTag[] {
-	return packages.flatMap(pkg =>
-		pkg.manager === 'go' && pkg.versionSource?.startsWith('tags:')
-			&& references.some(reference => matchesPackage(reference, pkg))
-			? [{ id: packageId(pkg), prefix: pkg.versionSource.slice('tags:'.length) }]
-			: []
-	);
+	return packages.flatMap(pkg => {
+		const prefix = tagPrefix(pkg.versionSource);
+		return pkg.manager === 'go' && prefix !== undefined && references.some(reference => matchesPackage(reference, pkg))
+			? [{ id: packageId(pkg), prefix }]
+			: [];
+	});
 }
 export function moduleTagPrefixes(packages: readonly Package[], references: string[]): string[] {
 	return moduleTags(packages, references).map(tag => tag.prefix);
