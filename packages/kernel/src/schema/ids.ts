@@ -1,3 +1,5 @@
+import { digestHex } from '@/kernel/crypto/digest.ts';
+
 export const shaPattern = /^[0-9a-f]{40}$/;
 export const approvalShaPattern = /^[0-9a-f]{7,40}$/;
 export const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/;
@@ -16,8 +18,6 @@ export function cliToken(): string {
 export function confirmationCode(challenge: string): string {
 	return challenge.slice(0, 8);
 }
-export async function sha256Hex(value: string | ArrayBuffer): Promise<string> {
-	const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
-	return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)))
-		.map(byte => byte.toString(16).padStart(2, '0')).join('');
+export function sha256Hex(value: string | ArrayBuffer): Promise<string> {
+	return digestHex('SHA-256', value);
 }
