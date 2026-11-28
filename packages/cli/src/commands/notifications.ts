@@ -6,7 +6,7 @@ import { lookOf, step } from '@/cli/render/look';
 import { emit, failure } from '@/cli/render/output';
 import { notificationTable } from '@/cli/render/views';
 import { routes } from '@/contract/routes';
-import { notificationKinds, watchedPackagePattern, watchedRegistries } from '@/domain/catalog.ts';
+import { notificationKinds, parseWatchedPackage, watchedPackagePattern } from '@/domain/catalog.ts';
 import { credentialAliasPattern } from '@/kernel/schema/ids.ts';
 
 export const notifications = group('notifications').description('Send package releases to Slack and HTTPS webhooks')
@@ -74,12 +74,11 @@ export const notifications = group('notifications').description('Send package re
 			)
 			.action(({ flags, args, out }) =>
 				runCommand(out)(Effect.gen(function*() {
-					const separator = args.package.indexOf(':');
-					const registry = watchedRegistries.find(candidate => candidate === args.package.slice(0, separator));
-					const name = args.package.slice(separator + 1);
-					if (!registry) {
+					const watched = parseWatchedPackage(args.package);
+					if (!watched) {
 						return yield* Effect.fail(failure('Name the package as npm:name or jsr:@scope/name', 'INVALID_PACKAGE'));
 					}
+					const { registry, name } = watched;
 					const client = yield* Client.at(flags.server);
 					const look = lookOf(out);
 					yield* step(
