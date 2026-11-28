@@ -19,6 +19,7 @@ import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { notFound, precondition } from '@/kernel/errors/domain-error.ts';
 import type { LedgerPackage } from '@/publication/contract.ts';
 import { reopened } from '@/release/domain/execution/execution.ts';
+import { settledStates } from '@/release/domain/execution/states.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { manifestProblems } from '@/release/domain/version.ts';
 import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
@@ -334,7 +335,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 					if (
 						other.id === execution.id || other.operation !== 'promote' || other.stream === execution.stream
 						|| other.repositoryId !== execution.repositoryId
-						|| ['succeeded', 'cancelled', 'failed'].includes(other.state)
+						|| settledStates.includes(other.state)
 					) continue;
 					const provided = packagesOf(other).filter(pkg =>
 						needed.has(`${pkg.manager}:${pkg.name}`)
@@ -350,7 +351,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				const newer = all.find(other =>
 					other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
 					&& other.version === execution.version && other.createdAt > execution.createdAt
-					&& !['succeeded', 'cancelled', 'failed'].includes(other.state)
+					&& !settledStates.includes(other.state)
 				);
 				if (newer) {
 					yield* executions.put({ ...execution, state: 'cancelled', reason: `Superseded by ${newer.id}` });

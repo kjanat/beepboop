@@ -31,6 +31,7 @@ import {
 import { readDistributionArtifact } from '@/release/distribution/artifact.ts';
 import { createDistribution, readDistributionFile, readDistributionMode } from '@/release/distribution/validation.ts';
 import { mergePublications } from '@/release/domain/execution/execution.ts';
+import { retiredStates } from '@/release/domain/execution/states.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import type { PackageTagResult, PackageTagRow, Release } from '@/release/domain/package-tags.ts';
 import {
@@ -199,7 +200,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 				const owned: RefState[] = [];
 				for (const execution of releases) {
 					if (
-						!['failed', 'cancelled'].includes(execution.state)
+						!retiredStates.includes(execution.state)
 						|| (restartId !== undefined && restartId !== execution.id)
 						|| !execution.publications.some(publication =>
 							publication.id === 'refs:promote' && publication.outcome === 'succeeded'
@@ -340,7 +341,7 @@ export class RefPublication extends Context.Service<RefPublication, {
 							return {
 								...base,
 								outcome: 'conflict',
-								reason: `${row.tag} already targets ${(row.target ?? '').slice(0, 12)}`,
+								reason: `${row.tag} already targets ${row.target.slice(0, 12)}`,
 							};
 						}
 						let published = false;

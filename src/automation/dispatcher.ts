@@ -29,6 +29,7 @@ import {
 } from '@/release/domain/execution/execution.ts';
 import { resolveInputs } from '@/release/domain/execution/outputs.ts';
 import { githubFailureReason } from '@/release/domain/execution/run-labels.ts';
+import { runningStates } from '@/release/domain/execution/states.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { AlarmPlanner } from '@/release/services/coordinator/alarm-planner.ts';
 import { Executions } from '@/release/services/coordinator/executions.ts';
@@ -268,7 +269,7 @@ export class Dispatcher extends Context.Service<Dispatcher, {
 					if (
 						!releaseId || active.some(other =>
 							other.stream === execution.stream
-							&& ['dispatching', 'running', 'uncertain'].includes(other.state)
+							&& runningStates.includes(other.state)
 							&& other.releaseSet?.workflowId !== releaseId
 						)
 					) return;

@@ -11,6 +11,7 @@ import { formatTime } from '@/kernel/time.ts';
 import { githubHref, registryHref } from '@/publication/links.ts';
 import type { Publication } from '@/publication/publication.ts';
 import { runFailedNote } from '@/release/domain/execution/execution.ts';
+import { retiredStates, settledStates } from '@/release/domain/execution/states.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { pipelineStages } from '@/release/domain/stages.ts';
 import type { releaseSummaries } from '@/release/domain/summaries.ts';
@@ -104,14 +105,14 @@ export function runCard(run: Execution, now: number) {
 			href: publicationHref(run, publication, publication.outcome === 'succeeded'),
 		})),
 		release: releaseLink(run),
-		retryable: Boolean(run.workflow) && ['failed', 'cancelled'].includes(run.state)
+		retryable: Boolean(run.workflow) && retiredStates.includes(run.state)
 			&& !(run.operation === 'prepare' && !run.plan && !run.managed),
 		checksStop: run.operation === 'promote' && stoppedByGates(run.reason)
 			&& (run.state === 'awaiting-approval'
 				|| (run.state === 'failed' && run.attempts === 0 && run.approvedAt === undefined)),
 		rerunnable: rerunnable(run.reason),
 		reconcilable: run.state === 'uncertain',
-		cancellable: !['succeeded', 'cancelled', 'failed'].includes(run.state),
+		cancellable: !settledStates.includes(run.state),
 	};
 }
 

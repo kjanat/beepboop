@@ -69,6 +69,7 @@ import { setUpJsrPackages } from '@/publication/setup/jsr.ts';
 import type { WinGetBindings } from '@/publication/winget/service.ts';
 import { WinGetService } from '@/publication/winget/service.ts';
 import { createExecution, deriveExecution } from '@/release/domain/execution/execution.ts';
+import { retiredStates } from '@/release/domain/execution/states.ts';
 import type { AutomationEvent, Execution, ReleaseStarted, Stream } from '@/release/domain/execution/types.ts';
 import { executionId } from '@/release/domain/identity-keys.ts';
 import { planVersionFiles } from '@/release/domain/planning/editors.ts';
@@ -107,7 +108,6 @@ export interface AutomationBindings extends AuthBindings, Credentials, WinGetBin
 	VAULT_KEYS: string;
 	VAULT_ACTIVE_KEY: string;
 }
-const retiredStates: readonly string[] = ['cancelled', 'failed'];
 
 export class AutomationService {
 	constructor(

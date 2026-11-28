@@ -22,6 +22,7 @@ import { DurableStorage } from '@/persistence/durable/storage.ts';
 import { Keys } from '@/release/adapters/do/keys.ts';
 import { identifyExecution } from '@/release/domain/execution/codec-v1.ts';
 import { deriveExecution, recoverable, reopened } from '@/release/domain/execution/execution.ts';
+import { retiredStates } from '@/release/domain/execution/states.ts';
 import type { Execution, PreparedRelease, ReleaseStarted } from '@/release/domain/execution/types.ts';
 import { preparationBody } from '@/release/domain/managed.ts';
 import { promotionOperations } from '@/release/domain/planning/promotion-operations.ts';
@@ -242,7 +243,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 			});
 			const dispatchCurrentWorkflow = Effect.fnUntraced(function*(execution: Execution) {
 				const clock = yield* Clock.Clock;
-				if (execution.operation !== 'promote' || !['failed', 'cancelled'].includes(execution.state)) {
+				if (execution.operation !== 'promote' || !retiredStates.includes(execution.state)) {
 					return yield* precondition('Only a failed or cancelled promotion can run the current workflow');
 				}
 				if (execution.attempts === 0 && execution.approvedAt === undefined) {
@@ -344,7 +345,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					if (prior?.operation === 'promote' && execution.approvedBy === 'start') {
 						return yield* restartRelease(prior, execution);
 					}
-					if (prior?.operation === 'prepare' && execution.started && ['failed', 'cancelled'].includes(prior.state)) {
+					if (prior?.operation === 'prepare' && execution.started && retiredStates.includes(prior.state)) {
 						return yield* restartPreparation(prior, execution.started);
 					}
 					if (
@@ -448,7 +449,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 						: (yield* executions.all).find(other =>
 							other.id !== execution.id && other.operation === 'promote' && other.stream === execution.stream
 							&& other.version === execution.version && (other.reclaims?.length ?? 0) > 0
-							&& !['failed', 'cancelled'].includes(other.state)
+							&& !retiredStates.includes(other.state)
 						);
 					if (takeover) {
 						return yield* precondition(
@@ -457,7 +458,7 @@ export class ExecutionControl extends Context.Service<ExecutionControl, {
 					}
 					if (action === 'redispatch') yield* dispatchCurrentWorkflow(execution);
 					else if (action === 'retry') {
-						if (!['failed', 'cancelled'].includes(execution.state)) {
+						if (!retiredStates.includes(execution.state)) {
 							return yield* precondition('Only failed or cancelled operations can be retried');
 						}
 						if (execution.operation === 'prepare' && !execution.plan && !execution.managed) {

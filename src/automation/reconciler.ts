@@ -11,6 +11,7 @@ import { DurableStorage } from '@/persistence/durable/storage.ts';
 import { PublicationLedger } from '@/publication/ledger/service.ts';
 import { Keys } from '@/release/adapters/do/keys.ts';
 import { publishedAfterFailure } from '@/release/domain/execution/execution.ts';
+import { runningStates, settledStates } from '@/release/domain/execution/states.ts';
 import type { Execution } from '@/release/domain/execution/types.ts';
 import { ReleaseHistory } from '@/release/domain/history.ts';
 import { AlarmPlanner, reconcileInterval } from '@/release/services/coordinator/alarm-planner.ts';
@@ -39,7 +40,7 @@ export class Reconciler extends Context.Service<Reconciler, {
 
 			const hasAdvanceWork = Effect.fnUntraced(function*(execution: Execution) {
 				if (
-					!['succeeded', 'failed', 'cancelled', 'pending'].includes(execution.state) || unresolved(execution)
+					(execution.state !== 'pending' && !settledStates.includes(execution.state)) || unresolved(execution)
 					|| publishedAfterFailure(execution)
 				) return true;
 				if (yield* ledger.owesReceipts(execution)) return true;
@@ -86,14 +87,8 @@ export class Reconciler extends Context.Service<Reconciler, {
 							return;
 						}
 						if (!onlyExecution) yield* planner.releaseReconcile;
-						const active = all.filter(
-							(e) => !['succeeded', 'cancelled', 'failed'].includes(e.state),
-						);
-						const busy = new Set(
-							active
-								.filter((e) => ['dispatching', 'running', 'uncertain'].includes(e.state))
-								.map((e) => e.stream),
-						);
+						const active = all.filter(e => !settledStates.includes(e.state));
+						const busy = new Set(active.filter(e => runningStates.includes(e.state)).map(e => e.stream));
 						if (active.some(e => !e.releaseSet?.workflowId) || all.some(unresolved)) {
 							yield* planner.requestReconcile(started + reconcileInterval);
 						}
