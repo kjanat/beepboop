@@ -11,6 +11,7 @@ import {
 	syncCredential,
 } from '@/credentials/http/credentials.ts';
 import { requireReady } from '@/domain/repository';
+import { workflowPath } from '@/domain/workflow-path.ts';
 import { forbidden } from '@/kernel/errors/domain-error.ts';
 import { admin, elevated, readyRepository, workflow } from '@/server/handlers/kit';
 
@@ -62,7 +63,7 @@ export const credentialEndpoints = {
 				const binding = stream.workflows.triage;
 				return binding && stream.credentials.includes(triageCredential)
 					&& (binding.ref === undefined || binding.ref === repository.defaultBranch || binding.ref === ref)
-					&& identity.workflowRef === `${repository.name}/.github/workflows/${binding.file}@${ref}`;
+					&& identity.workflowRef === `${repository.name}/${workflowPath(binding.file)}@${ref}`;
 			});
 			if (!configured) return yield* forbidden('Workflow is not configured for triage credentials');
 			const key = yield* service.vault().runtime(triageCredential, 'triage', identity);

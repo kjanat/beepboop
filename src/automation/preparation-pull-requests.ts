@@ -4,6 +4,7 @@ import { repositorySnapshot } from '@/automation/snapshot';
 import type { Edit, Snapshot } from '@/domain/inventory.ts';
 import { setupBranches } from '@/domain/setup-branches.ts';
 import type { AutoMergeMethod } from '@/domain/setup-terms.ts';
+import { isWorkflowPath } from '@/domain/workflow-path.ts';
 import {
 	comparisonSchema,
 	createdSchema,
@@ -81,8 +82,8 @@ export function pullRequest<R = never>(
 		const token = yield* gateway.token(name, id, {
 			contents: 'write',
 			pull_requests: 'write',
-			...(edits.some(edit => edit.path.startsWith('.github/workflows/'))
-					|| setupEdits?.some(edit => edit.path.startsWith('.github/workflows/'))
+			...(edits.some(edit => isWorkflowPath(edit.path))
+					|| setupEdits?.some(edit => isWorkflowPath(edit.path))
 				? { workflows: 'write' as const }
 				: {}),
 		});
@@ -202,7 +203,7 @@ export function commitVersion<R = never>(
 		const { name, id, defaultBranch } = snapshot.repository;
 		const token = yield* gateway.token(name, id, {
 			contents: 'write',
-			...(edits.some(edit => edit.path.startsWith('.github/workflows/')) ? { workflows: 'write' as const } : {}),
+			...(edits.some(edit => isWorkflowPath(edit.path)) ? { workflows: 'write' as const } : {}),
 		});
 		const branch = encodeURIComponent(defaultBranch);
 		let commit = head;

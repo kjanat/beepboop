@@ -1,11 +1,11 @@
 import { Effect } from 'effect';
 import type { RepositoryGateway } from '@/automation/gateway.ts';
 import { callLimit, liveJobs, ownWorkflow, workflowDocuments } from '@/discovery/release-graph/calls.ts';
+import { isWorkflowPath, workflowPath } from '@/domain/workflow-path.ts';
 import { comparisonSchema } from '@/github/resources.ts';
 import type { DomainError } from '@/kernel/errors/domain-error.ts';
 import { sha } from '@/kernel/schema/result.ts';
 
-const workflowDirectory = '.github/workflows/';
 export function unchangedSince(
 	gateway: RepositoryGateway,
 	repository: string,
@@ -27,11 +27,11 @@ export function unchangedSince(
 		if (comparison.status !== 'ahead' || comparison.files.length >= 300) return false;
 		const changed = comparison.files.map(file => String(file.filename));
 		if (changed.some(path => paths.has(path))) return false;
-		if (!changed.some(path => path.startsWith(workflowDirectory))) return true;
+		if (!changed.some(isWorkflowPath)) return true;
 		const called = yield* calledWorkflows(
 			gateway,
 			repository,
-			[...paths].filter(path => path.startsWith(workflowDirectory)),
+			[...paths].filter(isWorkflowPath),
 			target,
 			token,
 		);
@@ -56,7 +56,7 @@ function calledWorkflows(
 			for (const { document } of workflowDocuments([[path, source]])) {
 				for (const [, job] of liveJobs(document)) {
 					const callee = typeof job.uses === 'string' ? ownWorkflow(job.uses, repository) : undefined;
-					if (callee) queue.push(`${workflowDirectory}${callee.file}`);
+					if (callee) queue.push(workflowPath(callee.file));
 				}
 			}
 		}

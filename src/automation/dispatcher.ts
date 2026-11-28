@@ -6,6 +6,7 @@ import { ReleaseCommits } from '@/automation/release-commits.ts';
 import { ReleaseSets } from '@/automation/release-sets.ts';
 import { runJobs } from '@/automation/run-jobs.ts';
 import { Automation } from '@/automation/service.ts';
+import { workflowPath } from '@/domain/workflow-path.ts';
 import type { WorkflowRun } from '@/github/resources.ts';
 import { dispatchSchema, workflowRunSchema, workflowRunsSchema } from '@/github/resources.ts';
 import type { GitHubRunResult } from '@/github/run-state.ts';
@@ -164,7 +165,7 @@ export class Dispatcher extends Context.Service<Dispatcher, {
 						`/repos/${execution.repository}/actions/runs/${runId}`,
 						token,
 					);
-					if (run.repository.id !== execution.repositoryId || run.path !== `.github/workflows/${workflow.file}`) {
+					if (run.repository.id !== execution.repositoryId || run.path !== workflowPath(workflow.file)) {
 						return yield* precondition('Run identity changed');
 					}
 					const runAttempt = run.run_attempt;
@@ -234,7 +235,7 @@ export class Dispatcher extends Context.Service<Dispatcher, {
 					const matches = data.workflow_runs.filter(
 						(run) =>
 							run.display_title === expectedRunTitle(execution)
-							&& run.path === `.github/workflows/${workflow.file}`
+							&& run.path === workflowPath(workflow.file)
 							&& run.head_branch === workflow.ref?.replace(/^refs\/(heads|tags)\//, '')
 							&& run.repository.id === execution.repositoryId
 							&& !execution.supersededRuns?.includes(run.id),

@@ -18,6 +18,7 @@ import { matchesRef } from '@/domain/ref-policy.ts';
 import type { ReadyRepository } from '@/domain/repository';
 import { readiness } from '@/domain/repository';
 import { tagPrefix } from '@/domain/version-tags.ts';
+import { workflowPath } from '@/domain/workflow-path.ts';
 import type { WorkflowRun } from '@/github/resources.ts';
 import { gitRefSchema, releaseSchema, workflowRunSchema } from '@/github/resources.ts';
 import type { RunJob } from '@/github/run-state.ts';
@@ -82,7 +83,8 @@ export class RunObservation extends Context.Service<RunObservation, {
 				for (const [streamName, stream] of Object.entries(repository.configuration.streams)) {
 					for (const [operation, binding] of Object.entries(stream.workflows)) {
 						for (const [needed, required] of Object.entries(binding.needsJobs ?? {})) {
-							if (run.path !== `.github/workflows/${stream.workflows[needed]?.file}`) continue;
+							const neededBinding = stream.workflows[needed];
+							if (!neededBinding || run.path !== workflowPath(neededBinding.file)) continue;
 							const id = yield* executionId(repository.id, streamName, operation, `observed:${run.id}`);
 							if (yield* executions.stored(id)) continue;
 							if (workflow === undefined) {
@@ -130,7 +132,7 @@ export class RunObservation extends Context.Service<RunObservation, {
 				const branch = run.head_branch;
 				const patterns = Object.values(repository.configuration.streams).flatMap(stream =>
 					Object.values(stream.workflows).flatMap(binding =>
-						run.path === `.github/workflows/${binding.file}` ? [binding.ref ?? repository.defaultBranch] : []
+						run.path === workflowPath(binding.file) ? [binding.ref ?? repository.defaultBranch] : []
 					)
 				);
 				const tagTarget = Effect.fnUntraced(function*(name: string) {
@@ -151,7 +153,7 @@ export class RunObservation extends Context.Service<RunObservation, {
 						const pattern = binding.ref ?? repository.defaultBranch;
 						if (
 							binding.mode !== 'observe'
-							|| run.path !== `.github/workflows/${binding.file}`
+							|| run.path !== workflowPath(binding.file)
 							|| !matchesRef(pattern, ref)
 						) {
 							continue;

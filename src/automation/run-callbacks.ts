@@ -7,6 +7,7 @@ import { repositorySnapshot } from '@/automation/snapshot.ts';
 import type { Edit } from '@/domain/inventory.ts';
 import { parseIdentity } from '@/domain/package-identity.ts';
 import { matchesRef } from '@/domain/ref-policy.ts';
+import { workflowPath } from '@/domain/workflow-path.ts';
 import { workflowRunSchema } from '@/github/resources.ts';
 import { classifyRun } from '@/github/run-state.ts';
 import { toDomainError } from '@/kernel/errors/classify.ts';
@@ -69,7 +70,7 @@ export class RunCallbacks extends Context.Service<RunCallbacks, {
 					) {
 						return yield* precondition('Execution cannot register this run');
 					}
-					const expected = `${identity.repository}/.github/workflows/${workflow.file}@`;
+					const expected = `${identity.repository}/${workflowPath(workflow.file)}@`;
 					if (!identity.workflowRef.startsWith(expected)) return yield* precondition('Workflow binding mismatch');
 					if (execution.runId && execution.runId !== identity.runId) {
 						return yield* precondition('Execution is already bound to a run');
@@ -89,7 +90,7 @@ export class RunCallbacks extends Context.Service<RunCallbacks, {
 					if (
 						run.repository.id !== execution.repositoryId
 						|| run.head_sha !== identity.sha
-						|| run.path !== `.github/workflows/${workflow.file}`
+						|| run.path !== workflowPath(workflow.file)
 						|| run.run_attempt !== identity.attempt
 					) {
 						return yield* precondition('Run identity mismatch');

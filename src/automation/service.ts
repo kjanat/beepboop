@@ -31,6 +31,7 @@ import { compareVersions } from '@/domain/semver.ts';
 import { promotionTagPrefix, releaseTagPrefix } from '@/domain/start-refusal.ts';
 import { semVer } from '@/domain/version.ts';
 import { latestReleaseTag, versionsInFiles } from '@/domain/version-tags.ts';
+import { workflowPath } from '@/domain/workflow-path.ts';
 import { GitHubApp, isolateGitHubApp } from '@/github/app.ts';
 import { workflowRunsSchema } from '@/github/resources.ts';
 import { GitHubTransport, gitHubTransportLayer } from '@/github/transport.ts';
@@ -690,7 +691,7 @@ export class AutomationService {
 				);
 				const run = runs
 					.filter(run =>
-						run.path === `.github/workflows/${binding.file}` && run.head_branch === tag.name
+						run.path === workflowPath(binding.file) && run.head_branch === tag.name
 						&& run.status === 'completed'
 					)
 					.sort((left, right) => right.id - left.id)[0];
@@ -852,11 +853,11 @@ export class AutomationService {
 			const choices = yield* fromSync(() => decodeSync(Schema.optional(setupChoicesSchema), saved.choices));
 			if (!choices) return;
 			const generated = setupEdits(saved);
-			const workflowPath = (file: string | undefined) => file === undefined ? [] : [`.github/workflows/${file}`];
+			const workflowPaths = (file: string | undefined) => file === undefined ? [] : [workflowPath(file)];
 			const workflows = choices.streams.flatMap(stream => [
-				...workflowPath(stream.prepare?.file),
-				...workflowPath(stream.promote?.file),
-				...(stream.operations ?? []).flatMap(entry => workflowPath(entry.file)),
+				...workflowPaths(stream.prepare?.file),
+				...workflowPaths(stream.promote?.file),
+				...(stream.operations ?? []).flatMap(entry => workflowPaths(entry.file)),
 			]);
 			const merged = yield* repositorySnapshot(this.gateway, repository.name, repository.id, pull.merge_commit_sha, [
 				...new Set([...generated.map(edit => edit.path), ...workflows]),
@@ -874,7 +875,7 @@ export class AutomationService {
 						Object.values(stream[operation]?.credentials ?? {}).map(alias => ({ operation, alias }))
 					),
 					...(['prepare', 'promote'] as const).flatMap(operation =>
-						workflowPath(stream[operation]?.file).flatMap(path =>
+						workflowPaths(stream[operation]?.file).flatMap(path =>
 							workflowCredentials(merged.files[path], operation).credentials.map(credential => ({
 								operation,
 								...credential,
@@ -885,7 +886,7 @@ export class AutomationService {
 						Object.values(entry.credentials ?? {}).map(alias => ({ operation: entry.name, alias }))
 					),
 					...(stream.operations ?? []).flatMap(entry =>
-						workflowPath(entry.file).flatMap(path =>
+						workflowPaths(entry.file).flatMap(path =>
 							workflowCredentials(merged.files[path], entry.name).credentials.map(credential => ({
 								operation: entry.name,
 								...credential,

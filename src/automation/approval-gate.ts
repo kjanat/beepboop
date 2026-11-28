@@ -12,6 +12,7 @@ import { checkJobs, deploys } from '@/discovery/workflow-analysis/deployment-job
 import { matchesPackage, packageId, publishablePackages } from '@/domain/package-identity.ts';
 import type { CheckChoice, GateSkip, ReleaseGate } from '@/domain/release-gates.ts';
 import { gatedRelease, gateLabel, gateReasons, sameGate } from '@/domain/release-gates.ts';
+import { workflowPath } from '@/domain/workflow-path.ts';
 import { checkRunsSchema, commitSchema, commitStatusSchema, workflowRunsSchema } from '@/github/resources.ts';
 import { recover } from '@/kernel/errors/classify.ts';
 import { decodeError } from '@/kernel/errors/decoding.ts';
@@ -147,7 +148,7 @@ export class ApprovalGate extends Context.Service<ApprovalGate, {
 				const releaseFiles = new Set(
 					Object.values(subject.configuration.streams).flatMap(stream =>
 						[stream.prepare.workflow, stream.promote.workflow, ...Object.values(stream.workflows)]
-							.flatMap(binding => binding ? [`.github/workflows/${binding.file}`] : [])
+							.flatMap(binding => binding ? [workflowPath(binding.file)] : [])
 					),
 				);
 				const paths = new Map(workflowRuns.map(run => [String(run.id), run.path]));
