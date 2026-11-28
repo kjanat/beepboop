@@ -2,6 +2,8 @@ import { Cache, Clock, Context, DateTime, Duration, Effect, Equal, Exit, Hash, O
 import { signJwt } from 'micro509/jose';
 import { importPkcs8Pem } from 'micro509/keys';
 import { repositoryNamePattern } from '@/domain/repository-name.ts';
+import type { BotIdentity } from '@/github/bot-identity.ts';
+import { botIdentityOf, botLogin } from '@/github/bot-identity.ts';
 import { accessTokenSchema, appSchema, installationSchema, repositorySchema, userSchema } from '@/github/resources.ts';
 import { GitHubTransport } from '@/github/transport.ts';
 import { fromPromise, toDomainError } from '@/kernel/errors/classify.ts';
@@ -19,11 +21,7 @@ export interface AppCredentials {
 
 export type Permissions = Readonly<Record<string, 'read' | 'write'>>;
 
-export interface BotIdentity {
-	login: string;
-	id: number;
-	email: string;
-}
+export type { BotIdentity } from '@/github/bot-identity.ts';
 
 export type InstallationState = 'active' | 'suspended' | 'uninstalled';
 
@@ -257,8 +255,9 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 	const botIdentity = Effect.gen(function*() {
 		const jwt = yield* appToken;
 		const { slug } = yield* read(appSchema, '/app', jwt);
-		if (!/^[a-z0-9-]+$/.test(slug)) return yield* precondition('Invalid App slug');
-		const login = `${slug}[bot]`;
+		const named = botLogin(slug);
+		if (Option.isNone(named)) return yield* precondition('Invalid App slug');
+		const login = named.value;
 		const installation = yield* ownerInstallation(jwt);
 		const { token } = yield* read(
 			accessTokenSchema,
@@ -269,8 +268,7 @@ export const makeGitHubApp = Effect.fnUntraced(function*(credentials: AppCredent
 		);
 		const user = yield* read(userSchema, `/users/${encodeURIComponent(login)}`, token);
 		if (user.login !== login || user.type !== 'Bot') return yield* precondition('App bot identity mismatch');
-		const id = user.id;
-		return { login, id, email: `${id}+${login}@users.noreply.github.com` } satisfies BotIdentity;
+		return botIdentityOf(login, user.id);
 	});
 
 	const bounded = (exit: Exit.Exit<unknown, unknown>) => Exit.isSuccess(exit) ? identityLifetime : Duration.zero;

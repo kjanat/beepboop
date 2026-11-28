@@ -1,13 +1,14 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Clock, Effect, Schema } from 'effect';
+import { Clock, Effect, Option, Schema } from 'effect';
 import type { Environment, Mode } from '@/actions/protocol.ts';
 import { attempt, endpoints, exchange, fail, parseMode, requestBody, required } from '@/actions/protocol.ts';
 import { identityToken, postJson, readServiceOrigin } from '@/actions/session.ts';
+import { parseBotIdentity } from '@/github/bot-identity.ts';
 import { writeOutputTo } from '@/host/github-output.ts';
 import { runMain } from '@/host/main.ts';
 import { mask } from '@/host/workflow-commands.ts';
-import { record, text } from '@/kernel/schema/result.ts';
+import { text } from '@/kernel/schema/result.ts';
 
 function writeResult(mode: Mode, data: Record<string, unknown>, environment: Environment) {
 	const writeOutput = (name: string, value: string) => writeOutputTo(environment.GITHUB_OUTPUT, name, value);
@@ -73,13 +74,9 @@ function writeResult(mode: Mode, data: Record<string, unknown>, environment: Env
 		} else if (mode === 'token') {
 			if (typeof data.token !== 'string') return yield* fail('Invalid token response');
 			if (environment.TOKEN_IDENTITY === 'true') {
-				const bot = yield* Effect.fromResult(record(data.bot));
-				const login = bot.login, id = bot.id, email = bot.email;
-				if (
-					typeof login !== 'string' || !/^[a-z0-9-]+\[bot\]$/.test(login)
-					|| typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0
-					|| email !== `${id}+${login}@users.noreply.github.com`
-				) return yield* fail('Invalid bot identity response');
+				const bot = parseBotIdentity(data.bot);
+				if (Option.isNone(bot)) return yield* fail('Invalid bot identity response');
+				const { login, id, email } = bot.value;
 				yield* writeOutput('bot-login', login);
 				yield* writeOutput('bot-id', String(id));
 				yield* writeOutput('bot-email', email);
