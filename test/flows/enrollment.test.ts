@@ -211,3 +211,16 @@ test('legacy enrollment challenges expire instead of inferring an authorized mod
 	expect((await api('/api/authenticators/verify', { id: 'legacy', response: {} })).status).toBe(403);
 	expect(world.db.execute('SELECT id FROM authenticators', []).rows).toHaveLength(0);
 });
+
+test('CLI logout revokes the bearer session once and refuses other bearers', async () => {
+	const token = await world.cliSession();
+	const logout = (authorization: string) =>
+		world.handle(
+			new Request(`${origin}/auth/cli/logout`, { method: 'POST', headers: { Authorization: authorization } }),
+		);
+	expect((await logout(`Bearer ${token}0`)).status).toBe(401);
+	expect((await logout(`Basic ${token}`)).status).toBe(401);
+	expect((await logout(`Bearer ${token}`)).status).toBe(200);
+	expect((await logout(`Bearer ${token}`)).status).toBe(401);
+	expect(world.db.execute('SELECT id FROM cli_sessions', []).rows).toHaveLength(0);
+});

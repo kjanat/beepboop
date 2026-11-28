@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { cliSubject } from '@/auth/cli-sessions.ts';
+import { cliBearer, cliSubject } from '@/auth/cli-sessions.ts';
 import { AuthPages } from '@/auth/pages.ts';
 import type { AuthBindings, AuthenticationDependencies } from '@/auth/service.ts';
 import { fromPromise, toDomainError } from '@/kernel/errors/classify.ts';
@@ -31,15 +31,12 @@ export function cliAuthRoute(
 			return json({ token });
 		}
 		if (url.pathname === '/auth/cli/logout' && request.method === 'POST') {
-			if (
-				!(yield* cliSubject(request, env, dependencies.cliSessions).pipe(
-					Effect.as(true),
-					Effect.orElseSucceed(() => false),
-				))
-			) {
-				return json({ error: 'CLI session revoked' }, 401);
-			}
-			const token = request.headers.get('authorization')?.slice(7) ?? '';
+			const token = cliBearer(request);
+			const signedIn = yield* cliSubject(request, env, dependencies.cliSessions).pipe(
+				Effect.as(true),
+				Effect.orElseSucceed(() => false),
+			);
+			if (token === undefined || !signedIn) return json({ error: 'CLI session revoked' }, 401);
 			yield* dependencies.cliSessions.revoke(yield* fromPromise(() => sha256Hex(token)));
 			return json({ ok: true });
 		}
